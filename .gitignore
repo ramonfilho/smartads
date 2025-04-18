@@ -1,0 +1,39 @@
+# Crie um .gitignore para projetos de ML
+cat > .gitignore << EOL
+
+# Pastas desnecessárias
+claude/
+clients/
+V0_to_V3/
+reports
+
+# Environments
+.env
+venv/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Notebooks
+.ipynb_checkpoints
+
+# Dados
+data/
+
+# Mac OS
+.DS_Store
+
+# MLflow
+models/
+
+# Configurações locais
+.vscode/
+EOL
