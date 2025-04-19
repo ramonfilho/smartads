@@ -11,13 +11,16 @@ import mlflow
 import pandas as pd
 import numpy as np
 import joblib
-from datetime import datetime
 import re
+from datetime import datetime
 from sklearn.metrics import precision_score, recall_score, f1_score
 
 # Adicionar diretório raiz ao path para importar módulos do projeto
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(project_root)
+
+# Importar a função exata de sanitização que foi usada no treinamento
+from src.evaluation.baseline_model import sanitize_column_names
 
 # Importar apenas os módulos necessários
 from src.evaluation.error_analysis import (
@@ -65,13 +68,50 @@ def custom_error_analysis(val_df, model, target_col, threshold, output_dir):
     """
     # Separar features e target
     feature_cols = [col for col in val_df.columns if col != target_col]
-    X_val = val_df[feature_cols].copy()
-    y_val = val_df[target_col].copy()
+    
+    # Obter nomes de features do modelo
+    model_feature_names = get_model_feature_names(model)
+    if model_feature_names is None:
+        print("AVISO: Não foi possível obter nomes de features do modelo")
+        model_feature_names = feature_cols
+    
+    # Verificar a correspondência entre as features do dataset e do modelo
+    print(f"Verificando compatibilidade de features:")
+    print(f"- Features no modelo: {len(model_feature_names)}")
+    print(f"- Features no dataset: {len(feature_cols)}")
+    
+    # Criar cópia do dataframe antes de modificá-lo
+    df_copy = val_df.copy()
+    
+    # Se os nomes das features não correspondem, aplicar a mesma sanitização
+    # que foi usada durante o treinamento do modelo
+    if set(feature_cols) != set(model_feature_names):
+        print("ATENÇÃO: Diferença entre features do dataset e do modelo.")
+        print("Aplicando a mesma sanitização de colunas usada durante o treinamento...")
+        
+        # Aplicar sanitização usando a mesma função do treinamento
+        sanitize_column_names(df_copy)
+        
+        # Verificar se todos os nomes de features do modelo estão presentes
+        sanitized_cols = [col for col in df_copy.columns if col != target_col]
+        common_cols = set(sanitized_cols).intersection(set(model_feature_names))
+        
+        print(f"- Features comuns após sanitização: {len(common_cols)}")
+        
+        # Se ainda faltam features, adicionar colunas ausentes com valores zero
+        missing_cols = set(model_feature_names) - set(sanitized_cols)
+        if missing_cols:
+            print(f"ATENÇÃO: Adicionando {len(missing_cols)} colunas ausentes com valor zero")
+            for col in missing_cols:
+                df_copy[col] = 0
     
     # Garantir que os dados estejam no formato correto (convertendo int para float)
+    X_val = df_copy[[col for col in model_feature_names if col in df_copy.columns]].copy()
     for col in X_val.columns:
         if pd.api.types.is_integer_dtype(X_val[col].dtype):
             X_val.loc[:, col] = X_val[col].astype(float)
+    
+    y_val = df_copy[target_col]
     
     # Gerar previsões
     print("Gerando previsões para análise...")
@@ -80,7 +120,7 @@ def custom_error_analysis(val_df, model, target_col, threshold, output_dir):
     
     # Análise de falsos negativos de alto valor
     fn_data = analyze_high_value_false_negatives(
-        val_df=val_df,
+        val_df=df_copy,
         y_val=y_val,
         y_pred_val=y_pred,
         y_pred_prob_val=y_pred_prob,
@@ -90,7 +130,7 @@ def custom_error_analysis(val_df, model, target_col, threshold, output_dir):
     
     # Análise de distribuições por tipo de erro
     error_distributions = analyze_feature_distributions_by_error_type(
-        val_df=val_df,
+        val_df=df_copy,
         y_val=y_val,
         y_pred_val=y_pred,
         y_pred_prob_val=y_pred_prob,
@@ -99,7 +139,7 @@ def custom_error_analysis(val_df, model, target_col, threshold, output_dir):
     )
     
     # Preparar DataFrame para clustering
-    analysis_df = val_df.copy()
+    analysis_df = df_copy.copy()
     analysis_df['error_type'] = 'correct'
     fn_mask = (y_val == 1) & (y_pred == 0)
     fp_mask = (y_val == 0) & (y_pred == 1)
@@ -111,7 +151,7 @@ def custom_error_analysis(val_df, model, target_col, threshold, output_dir):
     top_features = []
     if hasattr(model, 'feature_importances_'):
         importance = pd.DataFrame({
-            'feature': feature_cols,
+            'feature': model_feature_names,
             'importance': model.feature_importances_
         }).sort_values('importance', ascending=False)
         top_features = importance['feature'].head(30).tolist()
@@ -120,9 +160,18 @@ def custom_error_analysis(val_df, model, target_col, threshold, output_dir):
         categorical_cols = error_distributions.get('categorical_cols', [])
         top_features = numeric_cols[:20] + categorical_cols[:10]
     
+    # Garantir que as features de clustering existam no DataFrame
+    available_features = [f for f in top_features if f in analysis_df.columns]
+    if len(available_features) == 0:
+        print("ALERTA: Nenhuma das top features está disponível para clustering")
+        print("Usando todas as colunas numéricas disponíveis")
+        available_features = [col for col in analysis_df.columns 
+                             if pd.api.types.is_numeric_dtype(analysis_df[col]) 
+                             and col not in ['error_type', 'probability']]
+    
     clustered_df = cluster_errors(
         analysis_df=analysis_df, 
-        features=[f for f in top_features if f in analysis_df.columns], 
+        features=available_features, 
         n_clusters=5
     )
     
@@ -324,66 +373,7 @@ def run_targeted_error_analysis(
         for i, feat in enumerate(model_features[:5]):
             print(f"  {i+1}. {feat}")
     
-    # 4. Verificar se os datasets têm as colunas necessárias
-    for col in model_features:
-        if col not in val_df.columns:
-            # Se uma coluna essencial estiver ausente, isso pode ser um problema de nomenclatura
-            print(f"ATENÇÃO: Feature do modelo não encontrada: {col}")
-            
-            # Tentar encontrar correspondência aproximada
-            possible_matches = []
-            for df_col in val_df.columns:
-                # Remover caracteres especiais para comparação
-                clean_model_col = re.sub(r'[^a-zA-Z0-9]', '', col)
-                clean_df_col = re.sub(r'[^a-zA-Z0-9]', '', df_col)
-                
-                if clean_model_col == clean_df_col:
-                    possible_matches.append(df_col)
-                    
-            if possible_matches:
-                print(f"  Possíveis correspondências encontradas: {possible_matches}")
-                # Em um caso real, aqui poderia ser implementada uma renomeação automática
-    
-    # 5. Verificar se estamos usando exatamente as mesmas features
-    if set(model_features) != set(val_df.columns.drop(target_col)):
-        print("\nATENÇÃO: As features do modelo e do conjunto de validação não são exatamente as mesmas!")
-        print(f"Features no modelo: {len(model_features)}")
-        print(f"Features no val_df: {len(val_df.columns) - 1} (excluindo target)")
-        
-        # A solução mais simples: usar o mesmo processamento dos dados de treinamento
-        # Esta abordagem replica o que está nos scripts de pré-processamento e seleção de features
-        
-        # Ler o processamento exato usado para criar os dados de treino
-        params_dir = os.path.join(project_root, "src", "evaluation")
-        feature_selection_path = os.path.join(params_dir, "feature_selection_params.joblib")
-        
-        if os.path.exists(feature_selection_path):
-            print(f"Carregando parâmetros de seleção de features: {feature_selection_path}")
-            selection_params = joblib.load(feature_selection_path)
-            
-            selected_features = selection_params.get('selected_features', [])
-            print(f"Encontradas {len(selected_features)} features selecionadas na etapa de treinamento")
-            
-            # Reconstruir o dataframe com apenas as features selecionadas + target
-            if len(selected_features) > 0:
-                # Encontrar features que existem no val_df
-                available_features = [f for f in selected_features if f in val_df.columns]
-                missing_features = set(selected_features) - set(available_features)
-                
-                if missing_features:
-                    print(f"ATENÇÃO: {len(missing_features)} features selecionadas não estão no val_df")
-                    print("Exemplos de features ausentes:")
-                    for f in list(missing_features)[:5]:
-                        print(f"  - {f}")
-                
-                # Criar novo DataFrame apenas com as features selecionadas + target
-                val_df_selected = val_df[available_features + [target_col]]
-                print(f"Usando {len(available_features)} features disponíveis para análise")
-                
-                # Usar este DataFrame para análise
-                val_df = val_df_selected
-    
-    # 6. Executar análise customizada
+    # 4. Executar análise customizada
     print("\n=== Executando análise de erros do modelo Random Forest ===")
     results = custom_error_analysis(
         val_df=val_df,
