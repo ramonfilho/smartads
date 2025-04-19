@@ -1,140 +1,208 @@
-import pandas as pd
+"""
+Módulo para integração de diferentes fontes de dados.
+"""
+
 import os
+import pandas as pd
 from sklearn.model_selection import train_test_split
 
-def create_target_variable(surveys, matches_df):
-    """Cria a variável alvo (target) no dataset de pesquisas.
+def create_target_variable(surveys_df, matches_df):
+    """
+    Cria a variável alvo com base nas correspondências de compras.
     
     Args:
-        surveys: DataFrame com dados de pesquisas
-        matches_df: DataFrame com correspondências
+        surveys_df: DataFrame com respostas da pesquisa
+        matches_df: DataFrame com correspondências entre pesquisas e compradores
         
     Returns:
-        DataFrame com a variável target adicionada
+        DataFrame com a variável alvo adicionada
     """
-    print("\nCreating target variable...")
-    # Cria uma cópia para não modificar o original
-    surveys_with_target = surveys.copy()
+    # Se o surveys_df estiver vazio, retornar um DataFrame vazio com as colunas necessárias
+    if surveys_df.empty:
+        print("No surveys data - creating empty DataFrame with target variable")
+        return pd.DataFrame(columns=['email', 'email_norm', 'target'])
     
-    # Inicializa target com 0
-    surveys_with_target['target'] = 0
-    
-    if not matches_df.empty and 'survey_id' in matches_df.columns:
-        match_survey_ids = set(matches_df['survey_id'])
-        surveys_with_target.loc[surveys_with_target.index.isin(match_survey_ids), 'target'] = 1
-        
-        # Adicionar informação de lançamento às surveys com base nas correspondências
-        if 'lançamento' in matches_df.columns:
-            if 'lançamento' not in surveys_with_target.columns:
-                surveys_with_target['lançamento'] = None
-            
-            # Iterar pelas correspondências para atribuir o lançamento correto
-            for _, match in matches_df.iterrows():
-                if 'lançamento' in match and not pd.isna(match['lançamento']):
-                    surveys_with_target.loc[match['survey_id'], 'lançamento'] = match['lançamento']
-        
-        conversion_rate = surveys_with_target['target'].mean() * 100
-        print(f"Conversion rate: {conversion_rate:.2f}%")
-    else:
+    # Se não houver correspondências, todos os registros são negativos
+    if matches_df.empty:
         print("No matches found - target variable will be all zeros")
+        surveys_df['target'] = 0
+        return surveys_df
     
-    return surveys_with_target
+    # Copiar o DataFrame para não modificar o original
+    result_df = surveys_df.copy()
+    
+    # Adicionar coluna de target inicializada com 0 (não converteu)
+    result_df['target'] = 0
+    
+    # Marcar os registros correspondentes como positivos (converteu)
+    for _, match in matches_df.iterrows():
+        survey_id = match['survey_id']
+        result_df.loc[survey_id, 'target'] = 1
+    
+    print(f"Created target variable: {result_df['target'].sum()} positive examples out of {len(result_df)}")
+    return result_df
 
-def merge_datasets(surveys, utms, buyers=None):
-    """Mescla os datasets de pesquisas, UTMs e compradores.
+def merge_datasets(surveys_df, utm_df, buyers_df):
+    """
+    Mescla as diferentes fontes de dados em um único dataset.
     
     Args:
-        surveys: DataFrame com dados de pesquisas
-        utms: DataFrame com dados de UTM
-        buyers: DataFrame com dados de compradores (opcional)
+        surveys_df: DataFrame com respostas da pesquisa e target
+        utm_df: DataFrame com dados de UTM
+        buyers_df: DataFrame com dados de compradores
         
     Returns:
-        DataFrame mesclado
+        DataFrame combinado
     """
-    print("\nMerging datasets...")
-    merged_data = surveys.copy()
+    print("Merging datasets...")
     
-    # Mesclar com dados de UTM
-    if not utms.empty and 'email_norm' in utms.columns:
-        merged_data = pd.merge(
-            surveys,
-            utms,
+    # Verificar se temos dados suficientes para mesclar
+    if surveys_df.empty or 'email_norm' not in surveys_df.columns:
+        print("WARNING: Survey data is empty or missing email_norm column")
+        print("Creating simple dataset with available data...")
+        
+        # Se temos dados de UTM com email, usar esses
+        if not utm_df.empty and 'email' in utm_df.columns:
+            print("Using UTM data as base")
+            result_df = utm_df.copy()
+            # Adicionar coluna target (todos 0 por padrão)
+            result_df['target'] = 0
+            
+            # Tentar normalizar emails do UTM se não estiver já normalizado
+            if 'email_norm' not in result_df.columns and 'email' in result_df.columns:
+                from ..preprocessing.email_processing import normalize_email
+                result_df['email_norm'] = result_df['email'].apply(normalize_email)
+                
+            # Marcar compradores se possível
+            if not buyers_df.empty and 'email_norm' in buyers_df.columns:
+                buyer_emails = set(buyers_df['email_norm'].dropna())
+                if 'email_norm' in result_df.columns:
+                    result_df['target'] = result_df['email_norm'].apply(
+                        lambda email: 1 if email in buyer_emails else 0
+                    )
+        
+        # Se temos apenas dados de compradores, usar esses
+        elif not buyers_df.empty:
+            print("Using buyer data as base")
+            result_df = buyers_df.copy()
+            result_df['target'] = 1  # Todos os registros são compradores
+        
+        # Se não temos nada, criar DataFrame vazio
+        else:
+            print("No data available - creating empty dataset")
+            result_df = pd.DataFrame(columns=['email', 'email_norm', 'target'])
+        
+        print(f"Final merged dataset: {result_df.shape[0]} rows, {result_df.shape[1]} columns")
+        return result_df
+    
+    # Mesclar pesquisas com UTM usando email_norm
+    if not utm_df.empty and 'email' in utm_df.columns:
+        # Normalizar emails do UTM se ainda não estiverem
+        if 'email_norm' not in utm_df.columns:
+            from ..preprocessing.email_processing import normalize_email
+            utm_df['email_norm'] = utm_df['email'].apply(normalize_email)
+        
+        merged_df = pd.merge(
+            surveys_df,
+            utm_df,
             on='email_norm',
             how='left',
             suffixes=('', '_utm')
         )
-        print(f"Merged survey data with UTM data")
+        print(f"Merged surveys with UTM data: {merged_df.shape[0]} rows, {merged_df.shape[1]} columns")
+    else:
+        merged_df = surveys_df.copy()
+        print("No UTM data available or missing email column")
     
-    # Adicionar informação de lançamento se ainda não foi adicionada
-    if buyers is not None and 'lançamento' not in merged_data.columns and 'lançamento' in buyers.columns:
-        # Criar um dicionário mapeando email_norm para lançamento
-        email_to_launch = dict(zip(buyers['email_norm'], buyers['lançamento']))
+    # Mesclar com dados de compradores, se disponíveis
+    if not buyers_df.empty and 'email_norm' in buyers_df.columns:
+        # Selecionar colunas úteis de compradores para não duplicar colunas desnecessárias
+        buyer_cols = ['email_norm']
+        for col in buyers_df.columns:
+            if col not in merged_df.columns and col != 'email_norm':
+                buyer_cols.append(col)
         
-        # Adicionar coluna de lançamento ao DataFrame mesclado
-        merged_data['lançamento'] = merged_data['email_norm'].map(email_to_launch)
-        print("Added launch information from buyer data")
+        buyers_subset = buyers_df[buyer_cols].copy()
+        
+        # Realizar a mesclagem
+        final_df = pd.merge(
+            merged_df,
+            buyers_subset,
+            on='email_norm',
+            how='left',
+            suffixes=('', '_buyer')
+        )
+        print(f"Merged with buyer data: {final_df.shape[0]} rows, {final_df.shape[1]} columns")
+    else:
+        final_df = merged_df.copy()
+        print("No buyer data available or missing email_norm column")
     
-    print(f"Final merged dataset: {merged_data.shape[0]} rows, {merged_data.shape[1]} columns")
-    return merged_data
+    print(f"Final merged dataset: {final_df.shape[0]} rows, {final_df.shape[1]} columns")
+    return final_df
 
-def split_data(merged_data, output_dir="datasets/split", test_size=0.3, random_state=42):
-    """Divide os dados em conjuntos de treino, validação e teste.
+def split_data(df, output_dir, test_size=0.3, val_size=0.5, stratify=True, random_state=42):
+    """
+    Divide os dados em conjuntos de treino, validação e teste.
     
     Args:
-        merged_data: DataFrame a ser dividido
-        output_dir: Diretório para salvar os datasets
-        test_size: Proporção dos dados para teste e validação
-        random_state: Semente para reprodutibilidade
+        df: DataFrame a ser dividido
+        output_dir: Diretório para salvar os conjuntos
+        test_size: Proporção do conjunto de teste
+        val_size: Proporção do conjunto de validação dentro do conjunto de teste
+        stratify: Se deve estratificar por classe
+        random_state: Semente aleatória para reprodutibilidade
         
     Returns:
-        Tuple de DataFrames (train, validation, test)
+        Tuple com (train_df, val_df, test_df)
     """
-    print("\nSplitting data to avoid data leakage...")
+    print("Splitting data to avoid data leakage...")
     
-    # Garantir que temos a coluna target
-    if 'target' not in merged_data.columns:
-        print("WARNING: Target column not found. Creating with value 0.")
-        merged_data['target'] = 0
+    # Verificar se temos dados suficientes para dividir
+    if df.shape[0] == 0:
+        print("WARNING: Empty dataset - cannot split. Creating empty dataframes.")
+        empty_df = pd.DataFrame(columns=df.columns)
+        return empty_df, empty_df, empty_df
     
-    # Verificar se há valores nulos na coluna target
-    if merged_data['target'].isnull().any():
-        print(f"WARNING: Found {merged_data['target'].isnull().sum()} null values in target column. Replacing with 0.")
-        merged_data['target'].fillna(0, inplace=True)
-    
-    # Fazer o split estratificado dos dados (70% treino, 15% validação, 15% teste)
-    train_df, temp_df = train_test_split(
-        merged_data, 
-        test_size=test_size, 
-        random_state=random_state,
-        stratify=merged_data['target']
-    )
-    
-    val_df, test_df = train_test_split(
-        temp_df, 
-        test_size=0.5, 
-        random_state=random_state,
-        stratify=temp_df['target']
-    )
-    
-    # Verificar as proporções
-    print(f"\nSplit: train={len(train_df)} ({len(train_df)/len(merged_data):.1%}), " + 
-          f"validation={len(val_df)} ({len(val_df)/len(merged_data):.1%}), " + 
-          f"test={len(test_df)} ({len(test_df)/len(merged_data):.1%})")
-    
-    print("\nTarget proportions:")
-    print(f"Original: {merged_data['target'].mean():.4f}")
-    print(f"Train: {train_df['target'].mean():.4f}")
-    print(f"Validation: {val_df['target'].mean():.4f}")
-    print(f"Test: {test_df['target'].mean():.4f}")
-    
-    # Criar diretório para os datasets separados
+    # Criar os diretórios se não existirem
     os.makedirs(output_dir, exist_ok=True)
     
-    # Salvar os datasets separados
-    train_df.to_csv(f"{output_dir}/train.csv", index=False)
-    val_df.to_csv(f"{output_dir}/validation.csv", index=False)
-    test_df.to_csv(f"{output_dir}/test.csv", index=False)
+    # Verificar se temos target para estratificar
+    if stratify and 'target' in df.columns and df['target'].nunique() > 1:
+        print("Using stratified split based on target variable")
+        strat_col = df['target']
+    else:
+        print("Using random split (no stratification)")
+        strat_col = None
     
-    print(f"Datasets saved in '{output_dir}' directory")
+    # Primeira divisão: treino vs. (validação + teste)
+    train_df, temp_df = train_test_split(
+        df,
+        test_size=test_size,
+        random_state=random_state,
+        stratify=strat_col
+    )
+    
+    # Segunda divisão: validação vs. teste
+    if stratify and 'target' in temp_df.columns and temp_df['target'].nunique() > 1:
+        strat_col_temp = temp_df['target']
+    else:
+        strat_col_temp = None
+    
+    val_df, test_df = train_test_split(
+        temp_df,
+        test_size=val_size,
+        random_state=random_state,
+        stratify=strat_col_temp
+    )
+    
+    # Salvar os conjuntos
+    print(f"Train set: {train_df.shape[0]} rows, {train_df.shape[1]} columns")
+    train_df.to_csv(os.path.join(output_dir, "train.csv"), index=False)
+    
+    print(f"Validation set: {val_df.shape[0]} rows, {val_df.shape[1]} columns")
+    val_df.to_csv(os.path.join(output_dir, "validation.csv"), index=False)
+    
+    print(f"Test set: {test_df.shape[0]} rows, {test_df.shape[1]} columns")
+    test_df.to_csv(os.path.join(output_dir, "test.csv"), index=False)
     
     return train_df, val_df, test_df

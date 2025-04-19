@@ -1,154 +1,28 @@
 """
-Módulo para manipulação de arquivos no armazenamento local.
-Este módulo fornece funções equivalentes às funções GCS, mas para sistemas de arquivos locais.
+Módulo de compatibilidade para emular funções do Google Cloud Storage com armazenamento local.
+Este módulo permite que o código escrito para GCS funcione com arquivos locais.
 """
 
 import os
 import pandas as pd
-import json
-import pickle
 import re
-import io
-from typing import List, Dict, Any, Optional, Union
-
-
-def list_files_by_extension(directory: str, extension: str) -> List[str]:
-    """
-    Lista todos os arquivos com uma determinada extensão em um diretório.
-    
-    Args:
-        directory: Caminho do diretório a ser pesquisado
-        extension: Extensão de arquivo a ser filtrada (ex: '.csv', '.json')
-        
-    Returns:
-        Lista de caminhos completos dos arquivos encontrados
-    """
-    files = []
-    for root, _, filenames in os.walk(directory):
-        for filename in filenames:
-            if filename.endswith(extension):
-                files.append(os.path.join(root, filename))
-    return files
-
-
-def categorize_local_files(data_dir: str) -> Dict[str, List[str]]:
-    """
-    Categoriza os arquivos locais por tipo de extensão.
-    
-    Args:
-        data_dir: Diretório raiz contendo os dados
-        
-    Returns:
-        Dicionário com extensões como chaves e listas de arquivos como valores
-    """
-    file_categories = {}
-    for root, _, filenames in os.walk(data_dir):
-        for filename in filenames:
-            extension = os.path.splitext(filename)[1].lower()
-            if extension:
-                if extension not in file_categories:
-                    file_categories[extension] = []
-                file_categories[extension].append(os.path.join(root, filename))
-    return file_categories
-
-
-def load_local_file(file_path: str) -> Any:
-    """
-    Carrega um arquivo local baseado em sua extensão.
-    
-    Args:
-        file_path: Caminho completo do arquivo a ser carregado
-        
-    Returns:
-        Conteúdo do arquivo carregado no formato apropriado
-    
-    Raises:
-        ValueError: Se a extensão do arquivo não for suportada
-    """
-    _, extension = os.path.splitext(file_path)
-    extension = extension.lower()
-    
-    if extension == '.csv':
-        return pd.read_csv(file_path)
-    elif extension == '.json':
-        with open(file_path, 'r', encoding='utf-8') as file:
-            return json.load(file)
-    elif extension == '.pickle' or extension == '.pkl':
-        with open(file_path, 'rb') as file:
-            return pickle.load(file)
-    elif extension == '.txt':
-        with open(file_path, 'r', encoding='utf-8') as file:
-            return file.read()
-    else:
-        raise ValueError(f"Formato de arquivo não suportado: {extension}")
-
-
-def save_local_file(data: Any, file_path: str) -> None:
-    """
-    Salva dados em um arquivo local baseado em sua extensão.
-    
-    Args:
-        data: Dados a serem salvos
-        file_path: Caminho completo onde o arquivo será salvo
-        
-    Raises:
-        ValueError: Se a extensão do arquivo não for suportada
-    """
-    _, extension = os.path.splitext(file_path)
-    extension = extension.lower()
-    
-    # Cria diretórios se não existirem
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    
-    if extension == '.csv':
-        if isinstance(data, pd.DataFrame):
-            data.to_csv(file_path, index=False)
-        else:
-            raise ValueError("Dados devem ser um DataFrame para salvar como CSV")
-    elif extension == '.json':
-        with open(file_path, 'w', encoding='utf-8') as file:
-            json.dump(data, file, ensure_ascii=False, indent=4)
-    elif extension == '.pickle' or extension == '.pkl':
-        with open(file_path, 'wb') as file:
-            pickle.dump(data, file)
-    elif extension == '.txt':
-        with open(file_path, 'w', encoding='utf-8') as file:
-            file.write(str(data))
-    else:
-        raise ValueError(f"Formato de arquivo não suportado: {extension}")
-
-
-def get_filename_without_extension(file_path: str) -> str:
-    """
-    Extrai o nome do arquivo sem a extensão.
-    
-    Args:
-        file_path: Caminho completo do arquivo
-        
-    Returns:
-        Nome do arquivo sem a extensão
-    """
-    base_name = os.path.basename(file_path)
-    return os.path.splitext(base_name)[0]
-
-
-# ----- Funções de compatibilidade com GCS -----
+from src.utils.local_storage import list_files_by_extension as list_local_files
 
 class LocalBucket:
-    """Simula um bucket do GCS usando o sistema de arquivos local."""
+    """Classe que emula um bucket do GCS usando armazenamento local."""
     
     def __init__(self, base_path):
         """
-        Inicializa o bucket local.
+        Inicializa um bucket local.
         
         Args:
-            base_path: Caminho base do sistema de arquivos
+            base_path: Caminho base para simular um bucket
         """
         self.base_path = base_path
         
     def blob(self, path):
         """
-        Retorna um objeto LocalBlob para o caminho fornecido.
+        Retorna um objeto que emula um blob do GCS.
         
         Args:
             path: Caminho relativo ao bucket
@@ -160,7 +34,7 @@ class LocalBucket:
     
     def list_blobs(self, prefix=""):
         """
-        Lista arquivos em um diretório.
+        Lista todos os arquivos em um diretório.
         
         Args:
             prefix: Prefixo para filtrar arquivos
@@ -179,15 +53,14 @@ class LocalBucket:
                 for file in files:
                     # Caminho completo do arquivo
                     full_path = os.path.join(root, file)
-                    # Caminho relativo ao base_path
+                    # Caminho relativo ao base_path (simulando nome no bucket)
                     rel_path = os.path.relpath(full_path, self.base_path)
                     blobs.append(LocalBlob(full_path, rel_path))
         
         return blobs
 
-
 class LocalBlob:
-    """Simula um blob do GCS."""
+    """Classe que emula um blob do GCS."""
     
     def __init__(self, full_path, name=None):
         """
@@ -202,51 +75,47 @@ class LocalBlob:
         
     def download_as_bytes(self):
         """
-        Retorna o conteúdo do arquivo como bytes.
+        Baixa o conteúdo do arquivo como bytes.
         
         Returns:
-            Conteúdo do arquivo como bytes
+            Bytes do arquivo
         """
         with open(self.full_path, 'rb') as f:
             return f.read()
 
-
 def connect_to_gcs(bucket_name):
     """
-    Conecta a um "bucket" local.
+    Emula a conexão ao GCS retornando um bucket local.
     
     Args:
-        bucket_name: Nome do bucket (ignorado, apenas para compatibilidade)
+        bucket_name: Nome do bucket (usado como diretório base)
         
     Returns:
-        Objeto LocalBucket
+        Um objeto LocalBucket
     """
-    # CORREÇÃO: Usar o caminho correto para os dados
-    base_path = "/Users/ramonmoreira/Desktop/smart_ads/data/raw_data"
+    # Usar "../data/raw_data" como diretório base
+    base_path = "../data/raw_data"
     print(f"Conectando ao armazenamento local em: {os.path.abspath(base_path)}")
     return LocalBucket(base_path)
-
 
 def list_files_by_extension(bucket, prefix="", extensions=(".xlsx", ".xls", ".csv")):
     """
     Lista arquivos com extensões específicas.
     
     Args:
-        bucket: Objeto bucket
+        bucket: Objeto bucket local
         prefix: Prefixo para filtrar a busca
-        extensions: Tupla de extensões a serem filtradas
+        extensions: Tuple de extensões a serem filtradas
         
     Returns:
         Lista de caminhos dos arquivos
     """
-    blobs = list(bucket.list_blobs(prefix=prefix))
+    blobs = bucket.list_blobs(prefix=prefix)
     file_paths = [blob.name for blob in blobs if any(blob.name.endswith(ext) for ext in extensions)]
     return file_paths
 
-
 def extract_launch_id(filename):
-    """
-    Extrai o ID de lançamento de um nome de arquivo.
+    """Extrai o ID de lançamento de um nome de arquivo.
     
     Args:
         filename: Nome do arquivo para extrair o ID
@@ -270,10 +139,8 @@ def extract_launch_id(filename):
     
     return None
 
-
 def categorize_files(file_paths):
-    """
-    Categoriza arquivos por tipo e lançamento.
+    """Categoriza arquivos por tipo e lançamento.
     
     Args:
         file_paths: Lista de caminhos de arquivos para categorizar
@@ -303,13 +170,11 @@ def categorize_files(file_paths):
     
     return survey_files, buyer_files, utm_files, all_files_by_launch
 
-
 def load_csv_or_excel(bucket, file_path):
-    """
-    Carrega um arquivo CSV ou Excel.
+    """Carrega um arquivo CSV ou Excel.
     
     Args:
-        bucket: Objeto bucket
+        bucket: Objeto bucket local
         file_path: Caminho do arquivo no bucket
         
     Returns:
@@ -320,20 +185,18 @@ def load_csv_or_excel(bucket, file_path):
         content = blob.download_as_bytes()
         
         if file_path.endswith('.csv'):
-            return pd.read_csv(io.BytesIO(content))
+            return pd.read_csv(pd.io.common.BytesIO(content))
         else:  # Excel
-            return pd.read_excel(io.BytesIO(content), engine='openpyxl')
+            return pd.read_excel(pd.io.common.BytesIO(content), engine='openpyxl')
     except Exception as e:
         print(f"  - Error loading {file_path}: {str(e)}")
         return None
 
-
 def load_csv_with_auto_delimiter(bucket, file_path):
-    """
-    Carrega um arquivo CSV com detecção automática de delimitador.
+    """Carrega um arquivo CSV com detecção automática de delimitador.
     
     Args:
-        bucket: Objeto bucket
+        bucket: Objeto bucket local
         file_path: Caminho do arquivo no bucket
         
     Returns:
@@ -358,7 +221,7 @@ def load_csv_with_auto_delimiter(bucket, file_path):
                 
             # Processar o arquivo com o delimitador correto
             df = pd.read_csv(
-                io.BytesIO(content),
+                pd.io.common.BytesIO(content),
                 sep=delimiter,
                 encoding='utf-8',
                 on_bad_lines='skip',
@@ -372,7 +235,7 @@ def load_csv_with_auto_delimiter(bucket, file_path):
                 # Tentar o delimitador oposto
                 alt_delimiter = ';' if delimiter == ',' else ','
                 df = pd.read_csv(
-                    io.BytesIO(content),
+                    pd.io.common.BytesIO(content),
                     sep=alt_delimiter,
                     encoding='utf-8',
                     on_bad_lines='skip',
@@ -395,7 +258,7 @@ def load_csv_with_auto_delimiter(bucket, file_path):
             delimiter = ';' if semicolon_count > comma_count else ','
             
             df = pd.read_csv(
-                io.BytesIO(content),
+                pd.io.common.BytesIO(content),
                 sep=delimiter,
                 encoding='latin-1',
                 on_bad_lines='skip',
