@@ -13,6 +13,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+from datetime import datetime
 from sklearn.metrics import (precision_recall_fscore_support, roc_auc_score, 
                               average_precision_score, confusion_matrix, 
                               precision_recall_curve, PrecisionRecallDisplay)
@@ -31,35 +32,74 @@ def setup_mlflow_tracking(tracking_dir="/home/jupyter/smart_ads/notebooks/mlruns
     Returns:
         Experiment ID of the created experiment
     """
+    # Create necessary directories
+    os.makedirs(tracking_dir, exist_ok=True)
     trash_dir = os.path.join(tracking_dir, ".trash")
+    os.makedirs(trash_dir, exist_ok=True)  # Create .trash directory explicitly
     
     # Clean directories if requested
     if clean_previous and os.path.exists(tracking_dir):
         print(f"Removendo diretório MLflow existente: {tracking_dir}")
-        shutil.rmtree(tracking_dir, ignore_errors=True)
-    
-    # Create necessary directories
-    os.makedirs(tracking_dir, exist_ok=True)
-    os.makedirs(trash_dir, exist_ok=True)  # Create .trash directory explicitly
+        # Remove only directories that are not .trash
+        for item in os.listdir(tracking_dir):
+            item_path = os.path.join(tracking_dir, item)
+            if os.path.isdir(item_path) and item != ".trash":
+                shutil.rmtree(item_path, ignore_errors=True)
     
     # Configure MLflow
     mlflow.set_tracking_uri(f"file://{tracking_dir}")
     print(f"MLflow configurado para usar: {mlflow.get_tracking_uri()}")
     
-    # Check if experiment exists and remove it
+    # Check for existing experiment and handle it properly
     client = mlflow.tracking.MlflowClient()
+    
     try:
-        existing_exp = client.get_experiment_by_name(experiment_name)
-        if existing_exp:
-            print(f"Removendo experimento existente: {experiment_name}")
-            client.delete_experiment(existing_exp.experiment_id)
+        # First, check if the experiment exists
+        experiment = client.get_experiment_by_name(experiment_name)
+        
+        if experiment:
+            print(f"Experimento '{experiment_name}' já existe (ID: {experiment.experiment_id})")
+            
+            # Check if it's in deleted state
+            if experiment.lifecycle_stage == "deleted":
+                print(f"Experimento está em estado 'deleted'")
+                
+                # Try to clean the .trash directory to completely remove the experiment
+                trash_exp_path = os.path.join(trash_dir, experiment.experiment_id)
+                if os.path.exists(trash_exp_path):
+                    print(f"Removendo experimento da pasta .trash: {trash_exp_path}")
+                    shutil.rmtree(trash_exp_path, ignore_errors=True)
+                
+                # Create a new experiment with a modified name to avoid conflicts
+                new_name = f"{experiment_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                print(f"Criando novo experimento com nome modificado: {new_name}")
+                experiment_id = mlflow.create_experiment(new_name)
+                print(f"Criado novo experimento: {new_name} (ID: {experiment_id})")
+            else:
+                # If active, we can use it or delete it depending on clean_previous
+                if clean_previous:
+                    print(f"Deletando experimento ativo: {experiment_name}")
+                    client.delete_experiment(experiment.experiment_id)
+                    
+                    # Create a new one with the same name
+                    print(f"Criando novo experimento: {experiment_name}")
+                    experiment_id = mlflow.create_experiment(experiment_name)
+                else:
+                    print(f"Usando experimento existente: {experiment_name}")
+                    experiment_id = experiment.experiment_id
+        else:
+            # If experiment doesn't exist, create a new one
+            print(f"Criando novo experimento: {experiment_name}")
+            experiment_id = mlflow.create_experiment(experiment_name)
+    
     except Exception as e:
-        print(f"Erro ao verificar experimento existente: {e}")
+        print(f"Erro ao lidar com experimento: {e}")
+        # Fallback: create with timestamp to ensure uniqueness
+        new_name = f"{experiment_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        print(f"Criando experimento com nome alternativo: {new_name}")
+        experiment_id = mlflow.create_experiment(new_name)
     
-    # Create a new experiment
-    experiment_id = mlflow.create_experiment(experiment_name)
-    print(f"Criado novo experimento: {experiment_name} (ID: {experiment_id})")
-    
+    print(f"Experimento ativo: {experiment_name} (ID: {experiment_id})")
     return experiment_id
 
 def get_data_hash(df):
