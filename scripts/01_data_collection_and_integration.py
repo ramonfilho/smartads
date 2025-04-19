@@ -1,5 +1,11 @@
-import pandas as pd
 import os
+import sys
+import pandas as pd
+
+# Adicionar o diretório raiz do projeto ao sys.path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, project_root)
+
 from src.utils.cloud_storage import connect_to_gcs, list_files_by_extension, categorize_files
 from src.preprocessing.email_processing import normalize_emails_in_dataframe
 from src.preprocessing.data_loader import load_survey_files, load_buyer_files, load_utm_files
@@ -87,7 +93,9 @@ def main():
             print(f"  - {launch_str}: {count} registros")
     
     # 12. Split dos dados para evitar vazamento
-    train_df, val_df, test_df = split_data(merged_data, "../data/split")
+    base_dir = os.path.expanduser("~")
+    output_dir = os.path.join(base_dir, "desktop/smart_ads/data/split")
+    train_df, val_df, test_df = split_data(merged_data, output_dir)
     
     print("\nData collection and integration completed!")
     
