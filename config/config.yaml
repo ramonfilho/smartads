@@ -1,0 +1,2 @@
+data_directories:
+  raw_data: "data/raw_data"  # Confirme que está apontando para o diretório correto
