@@ -77,6 +77,59 @@ def get_prediction_errors(model, X, y, threshold=0.5):
     
     return results_df, y_pred_proba, y_pred
 
+def get_latest_model_id(experiment_name, model_type="random_forest"):
+    """
+    Obtém o ID do modelo mais recente para um determinado tipo no MLflow.
+    
+    Args:
+        experiment_name: Nome do experimento no MLflow
+        model_type: Tipo de modelo (random_forest, lightgbm, xgboost)
+        
+    Returns:
+        run_id do modelo mais recente, ou None se não encontrado
+    """
+    import mlflow
+    from mlflow.entities import ViewType
+    import datetime
+    
+    # Configurar URI do tracking
+    mlflow_dir = os.path.join(os.path.expanduser("~"), "desktop/smart_ads/models/mlflow")
+    mlflow.set_tracking_uri(f"file://{mlflow_dir}")
+    
+    # Obter ID do experimento
+    experiment = mlflow.get_experiment_by_name(experiment_name)
+    if experiment is None:
+        print(f"Experimento '{experiment_name}' não encontrado.")
+        return None
+    
+    experiment_id = experiment.experiment_id
+    
+    # Buscar runs do experimento
+    runs = mlflow.search_runs(
+        experiment_ids=[experiment_id],
+        filter_string=f"tags.model_type = '{model_type}'",
+        run_view_type=ViewType.ACTIVE_ONLY,
+        order_by=["start_time DESC"]  # Ordenar pelo mais recente
+    )
+    
+    # Verificar se encontrou algum modelo
+    if len(runs) == 0:
+        print(f"Nenhum modelo do tipo '{model_type}' encontrado no experimento '{experiment_name}'.")
+        return None
+    
+    # Pegar o ID do modelo mais recente
+    latest_run_id = runs.iloc[0]['run_id']
+    start_time = runs.iloc[0]['start_time']
+    
+    # Converter timestamp para data/hora legível
+    dt = datetime.datetime.fromtimestamp(start_time/1000.0)
+    formatted_time = dt.strftime('%Y-%m-%d %H:%M:%S')
+    
+    print(f"Modelo mais recente ({model_type}) encontrado: {latest_run_id}")
+    print(f"Data de criação: {formatted_time}")
+    
+    return latest_run_id
+
 def analyze_errors_by_feature(df, feature_results, continuous_features=None, categorical_features=None):
     """
     Analyze errors by feature to identify patterns.

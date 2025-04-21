@@ -29,8 +29,18 @@ from src.preprocessing.data_cleaning import (
 )
 from src.preprocessing.feature_engineering import feature_engineering
 from src.preprocessing.text_processing import text_feature_engineering
+from src.preprocessing.advanced_feature_engineering import (
+    refine_tfidf_weights,
+    create_text_embeddings_simple,
+    perform_topic_modeling,
+    create_salary_features,
+    create_country_interaction_features,
+    create_age_interaction_features,
+    create_temporal_interaction_features,
+    advanced_feature_engineering
+)
 
-def apply_preprocessing_pipeline(df, params=None, fit=False):
+def apply_preprocessing_pipeline(df, params=None, fit=False, preserve_text=True):
     """
     Aplica a pipeline completa de pré-processamento.
     
@@ -38,6 +48,7 @@ def apply_preprocessing_pipeline(df, params=None, fit=False):
         df: DataFrame a ser processado
         params: Parâmetros para transformações (None para começar do zero)
         fit: Se True, ajusta as transformações, se False, apenas aplica
+        preserve_text: Se True, preserva as colunas de texto originais
         
     Returns:
         DataFrame processado e parâmetros atualizados
@@ -76,6 +87,22 @@ def apply_preprocessing_pipeline(df, params=None, fit=False):
     print("6. Convertendo tipos de dados...")
     df, _ = convert_data_types(df, fit=fit)
     
+    # Identificar colunas de texto antes do processamento
+    text_cols = [
+        col for col in df.columns 
+        if df[col].dtype == 'object' and any(term in col for term in [
+            'mensaje', 'inglés', 'vida', 'oportunidades', 'esperas', 'aprender', 
+            'Semana', 'Inmersión', 'Déjame', 'fluidez'
+        ])
+    ]
+    print(f"Colunas de texto identificadas ({len(text_cols)}): {text_cols[:3]}...")
+    
+    # Criar cópia das colunas de texto originais (com sufixo _original)
+    if text_cols and preserve_text:
+        print("Preservando colunas de texto originais...")
+        for col in text_cols:
+            df[f"{col}_original"] = df[col].copy()
+    
     # 7. Feature engineering não-textual
     print("7. Aplicando feature engineering não-textual...")
     feature_params = params.get('feature_engineering', {})
@@ -86,14 +113,20 @@ def apply_preprocessing_pipeline(df, params=None, fit=False):
     text_params = params.get('text_processing', {})
     df, text_params = text_feature_engineering(df, fit=fit, params=text_params)
     
-    # 9. Compilar parâmetros atualizados
+    # 9. Feature engineering avançada (nova etapa)
+    print("9. Aplicando feature engineering avançada...")
+    advanced_params = params.get('advanced_features', {})
+    df, advanced_params = advanced_feature_engineering(df, fit=fit, params=advanced_params)
+    
+    # 10. Compilar parâmetros atualizados
     updated_params = {
         'quality_columns': quality_params,
         'missing_values': missing_params,
         'outliers': outlier_params,
         'normalization': norm_params,
         'feature_engineering': feature_params,
-        'text_processing': text_params
+        'text_processing': text_params,
+        'advanced_features': advanced_params
     }
     
     print(f"Pipeline concluída! Dimensões finais: {df.shape}")
@@ -136,7 +169,7 @@ def ensure_column_consistency(train_df, test_df):
     print(f"Alinhamento concluído: {len(missing_cols)} colunas adicionadas, {len(extra_cols)} removidas")
     return test_df
 
-def process_datasets(input_dir, output_dir, params_dir=None):
+def process_datasets(input_dir, output_dir, params_dir=None, preserve_text=True):
     """
     Função principal que processa todos os conjuntos na ordem correta.
     
@@ -144,6 +177,7 @@ def process_datasets(input_dir, output_dir, params_dir=None):
         input_dir: Diretório contendo os arquivos de entrada
         output_dir: Diretório para salvar os arquivos processados
         params_dir: Diretório para salvar os parâmetros (opcional)
+        preserve_text: Se True, preserva as colunas de texto originais
     
     Returns:
         Dicionário com os DataFrames processados e parâmetros
@@ -177,7 +211,7 @@ def process_datasets(input_dir, output_dir, params_dir=None):
     
     # 3. Processar o conjunto de treinamento com fit=True para aprender parâmetros
     print("\n--- Processando conjunto de treinamento ---")
-    train_processed, params = apply_preprocessing_pipeline(train_df, fit=True)
+    train_processed, params = apply_preprocessing_pipeline(train_df, fit=True, preserve_text=preserve_text)
     
     # 4. Salvar parâmetros aprendidos
     if params_dir:
@@ -192,7 +226,7 @@ def process_datasets(input_dir, output_dir, params_dir=None):
     
     # 6. Processar o conjunto de validação com fit=False para aplicar parâmetros aprendidos
     print("\n--- Processando conjunto de validação ---")
-    cv_processed, _ = apply_preprocessing_pipeline(cv_df, params=params, fit=False)
+    cv_processed, _ = apply_preprocessing_pipeline(cv_df, params=params, fit=False, preserve_text=preserve_text)
     
     # 7. Garantir consistência de colunas com o treino
     cv_processed = ensure_column_consistency(train_processed, cv_processed)
@@ -203,7 +237,7 @@ def process_datasets(input_dir, output_dir, params_dir=None):
     
     # 9. Processar o conjunto de teste com fit=False para aplicar parâmetros aprendidos
     print("\n--- Processando conjunto de teste ---")
-    test_processed, _ = apply_preprocessing_pipeline(test_df, params=params, fit=False)
+    test_processed, _ = apply_preprocessing_pipeline(test_df, params=params, fit=False, preserve_text=preserve_text)
     
     # 10. Garantir consistência de colunas com o treino
     test_processed = ensure_column_consistency(train_processed, test_processed)
@@ -230,6 +264,8 @@ if __name__ == "__main__":
                         help="Diretório para salvar os arquivos processados")
     parser.add_argument("--params-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/src/preprocessing/preprocessing_params"), 
                         help="Diretório para salvar os parâmetros aprendidos")
+    parser.add_argument("--preserve-text", action="store_true", default=True,
+                        help="Preservar as colunas de texto originais (default: True)")
     
     args = parser.parse_args()
     
@@ -237,7 +273,8 @@ if __name__ == "__main__":
     results = process_datasets(
         input_dir=args.input_dir,
         output_dir=args.output_dir,
-        params_dir=args.params_dir
+        params_dir=args.params_dir,
+        preserve_text=args.preserve_text
     )
     
     if results is None:

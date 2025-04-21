@@ -286,31 +286,57 @@ def perform_topic_modeling(df, text_cols, n_topics=3, fit=True, params=None):
     
     # Filtrar colunas de texto existentes
     text_cols = [col for col in text_cols if col in df.columns]
+    print(f"Iniciando processamento LDA para {len(text_cols)} colunas de texto")
     
-    for col in text_cols:
+    for i, col in enumerate(text_cols):
+        print(f"Processando LDA para coluna {i+1}/{len(text_cols)}: {col}")
+        
         # Verificar se temos colunas TF-IDF para esta coluna de texto
         tfidf_cols = [c for c in df_result.columns if c.startswith(f'{col}_tfidf_') or 
                        c.startswith(f'{col}_refined_tfidf_')]
         
         if not tfidf_cols:
+            print(f"  Ignorando: Nenhuma coluna TF-IDF encontrada para {col}")
             continue
             
+        print(f"  Encontradas {len(tfidf_cols)} colunas TF-IDF")
+        
         # Extrair matriz TF-IDF
         tfidf_matrix = df_result[tfidf_cols].values
         
         if fit:
             # Ajustar LDA
+            print(f"  Ajustando modelo LDA com {n_topics} tópicos...")
             lda = LatentDirichletAllocation(
                 n_components=n_topics,
                 max_iter=10,
                 learning_method='online',
                 random_state=42,
                 batch_size=128,
-                n_jobs=-1
+                n_jobs=-1,
+                verbose=1  # Adiciona verbosidade
             )
             
             try:
-                topic_distribution = lda.fit_transform(tfidf_matrix)
+                print(f"  Aplicando LDA em matriz de {tfidf_matrix.shape[0]} linhas x {tfidf_matrix.shape[1]} colunas...")
+                
+                # Mostrar progresso durante o ajuste
+                from tqdm import tqdm
+                import time
+                
+                topic_distribution = None
+                with tqdm(total=10) as pbar:  # Assumindo max_iter=10
+                    lda.max_iter = 1  # Ajustar uma iteração por vez para mostrar progresso
+                    for i in range(10):
+                        if i == 0:
+                            topic_distribution = lda.fit_transform(tfidf_matrix)
+                        else:
+                            lda.n_iter_ = i
+                            topic_distribution = lda.transform(tfidf_matrix)
+                        pbar.update(1)
+                        time.sleep(0.1)  # Apenas para visualizar a barra
+                
+                print(f"  LDA concluído! Perplexidade: {lda.perplexity(tfidf_matrix):.2f}")
                 
                 # Armazenar modelo LDA e colunas usadas
                 params['lda'][col] = {
@@ -320,9 +346,18 @@ def perform_topic_modeling(df, text_cols, n_topics=3, fit=True, params=None):
                     'components': lda.components_.tolist() if hasattr(lda, 'components_') else None
                 }
                 
+                # Visualizar top termos por tópico (para diagnóstico)
+                feature_names = [c.split('_tfidf_')[-1] for c in tfidf_cols]
+                print("  Top termos por tópico:")
+                for topic_idx, topic in enumerate(lda.components_):
+                    top_terms = [feature_names[i] for i in topic.argsort()[:-6:-1]]
+                    print(f"    Tópico {topic_idx+1}: {', '.join(top_terms)}")
+                
                 # Adicionar distribuição de tópicos ao dataframe
                 for i in range(n_topics):
                     df_result[f'{col}_topic_{i+1}'] = topic_distribution[:, i]
+                
+                print(f"  Adicionadas {n_topics} colunas de tópicos ao DataFrame")
                     
             except Exception as e:
                 print(f"Erro ao ajustar LDA para '{col}': {e}")
@@ -664,7 +699,7 @@ def create_temporal_interaction_features(df, fit=True, params=None):
 
 def advanced_feature_engineering(df, fit=True, params=None):
     """
-    Executa todo o pipeline de engenharia de features avançada.
+    Executa engenharia de features avançada, mantendo apenas interações numéricas.
     
     Args:
         df: DataFrame pandas
@@ -672,7 +707,7 @@ def advanced_feature_engineering(df, fit=True, params=None):
         params: Dicionário com parâmetros existentes
         
     Returns:
-        DataFrame com todas as features avançadas adicionadas
+        DataFrame com features avançadas adicionadas
         Dicionário com parâmetros atualizados
     """
     # Inicializar parâmetros
@@ -682,83 +717,26 @@ def advanced_feature_engineering(df, fit=True, params=None):
     # Cópia para não modificar o original
     df_result = df.copy()
     
-    print("Aplicando engenharia de features avançada...")
+    print("Aplicando engenharia de features avançada (apenas interações numéricas)...")
     
-    # 1. Identificar colunas de texto de forma mais robusta
-    # Primeiro, verificar se existem as colunas esperadas
-    expected_text_cols = [
-        'Cuando_hables_inglés_con_fluidez___qué_cambiará_en_tu_vida___Qué_oportunidades_se_abrirán_para_ti',
-        'Déjame_un_mensaje',
-        '¿Qué_esperas_aprender_en_la_Semana_de_Cero_a_Inglés_Fluido?',
-        '¿Qué_esperas_aprender_en_la_Inmersión_Desbloquea_Tu_Inglés_En_72_horas?'
-    ]
-    
-    # Verificar se as colunas existem diretamente
-    text_cols = [col for col in expected_text_cols if col in df_result.columns]
-    
-    # Se não encontrar, tentar buscar por padrões parciais
-    if not text_cols:
-        print("Colunas de texto não encontradas diretamente. Tentando busca por padrões...")
-        
-        patterns = [
-            'cambiar', 'vida', 'oportunidades', 'mensaje', 'Déjame', 'esperas', 
-            'aprender', 'Semana', 'Cero', 'Inglés', 'Fluido', 'Inmersión'
-        ]
-        
-        # Verificar se cada coluna contém algum dos padrões
-        for col in df_result.columns:
-            if any(pattern in col for pattern in patterns):
-                # Verificar se é uma coluna de texto olhando tipo e tamanho médio
-                if df_result[col].dtype == object and df_result[col].str.len().mean() > 10:
-                    text_cols.append(col)
-    
-    # Se ainda não encontrou, verificar colunas com TF-IDF existentes
-    if not text_cols:
-        print("Verificando se já existem colunas TF-IDF...")
-        
-        # Procurar colunas TF-IDF que poderiam indicar colunas de texto originais
-        tfidf_cols = [col for col in df_result.columns if '_tfidf_' in col]
-        
-        if tfidf_cols:
-            # Extrair nomes base das colunas de texto
-            for tfidf_col in tfidf_cols:
-                base_col = tfidf_col.split('_tfidf_')[0]
-                if base_col not in text_cols and base_col in df_result.columns:
-                    text_cols.append(base_col)
-    
-    # Imprimir colunas de texto encontradas
-    if text_cols:
-        print(f"Colunas de texto encontradas: {len(text_cols)}")
-        for col in text_cols:
-            print(f"  - {col}")
-        
-        print("1. Refinando pesos TF-IDF para termos importantes...")
-        df_result, params = refine_tfidf_weights(df_result, text_cols, None, fit, params)
-        
-        print("2. Criando embeddings de texto simplificados...")
-        df_result, params = create_text_embeddings_simple(df_result, text_cols, fit, params)
-        
-        print("3. Realizando modelagem de tópicos com LDA...")
-        df_result, params = perform_topic_modeling(df_result, text_cols, n_topics=3, fit=fit, params=params)
-    else:
-        print("AVISO: Nenhuma coluna de texto encontrada para processamento avançado.")
-        print("Verificando colunas disponíveis (primeiras 10):")
-        for col in list(df_result.columns)[:10]:
-            print(f"  - {col}")
-    
-    # 4-7. Features numéricas e interações (já implementadas)
-    print("4. Criando features de relação salarial...")
+    # 4. Criando features de relação salarial
+    print("1. Criando features de relação salarial...")
     df_result, params = create_salary_features(df_result, fit, params)
     
-    print("5. Criando interações com país...")
+    # 5. Criando interações com país
+    print("2. Criando interações com país...")
     df_result, params = create_country_interaction_features(df_result, fit, params)
     
-    print("6. Criando interações com idade...")
+    # 6. Criando interações com idade
+    print("3. Criando interações com idade...")
     df_result, params = create_age_interaction_features(df_result, fit, params)
     
-    print("7. Criando interações temporais...")
+    # 7. Criando interações temporais
+    print("4. Criando interações temporais...")
     df_result, params = create_temporal_interaction_features(df_result, fit, params)
     
-    print(f"Engenharia de features avançada concluída. Adicionadas {df_result.shape[1] - df.shape[1]} novas features.")
+    # Contar número de features adicionadas
+    num_added_features = df_result.shape[1] - df.shape[1]
+    print(f"Engenharia de features avançada concluída. Adicionadas {num_added_features} novas features.")
     
     return df_result, params

@@ -1,7 +1,7 @@
+#!/usr/bin/env python
 """
-Script para análise de erros do modelo Random Forest, adaptado para garantir
-compatibilidade com as transformações aplicadas nos scripts de pré-processamento
-e seleção de features.
+Script para análise de erros do modelo RandomForest utilizando
+especificamente o último modelo treinado pelo script 04_baseline_model_training.py.
 """
 
 import os
@@ -11,7 +11,6 @@ import mlflow
 import pandas as pd
 import numpy as np
 import joblib
-import re
 from datetime import datetime
 from sklearn.metrics import precision_score, recall_score, f1_score
 
@@ -19,396 +18,404 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(project_root)
 
-# Importar a função exata de sanitização que foi usada no treinamento
-from src.evaluation.baseline_model import sanitize_column_names
-
-# Importar apenas os módulos necessários
+# Importar funções necessárias para análise de erros
 from src.evaluation.error_analysis import (
     analyze_high_value_false_negatives,
     cluster_errors,
-    analyze_feature_distributions_by_error_type,
-    error_analysis_from_validation_data
+    analyze_feature_distributions_by_error_type
 )
 
-def get_model_feature_names(model):
+# Importar a função de sanitização de nomes de colunas que foi usada no treinamento
+from src.evaluation.baseline_model import sanitize_column_names
+
+def get_latest_random_forest_run(mlflow_dir):
     """
-    Obtém os nomes das features utilizadas pelo modelo.
+    Obtém o run_id do modelo RandomForest mais recente.
     
     Args:
-        model: Modelo treinado
+        mlflow_dir: Diretório do MLflow tracking
         
     Returns:
-        Lista de nomes de features
+        Tuple com (run_id, threshold, model_uri) ou (None, None, None) se não encontrado
     """
-    if hasattr(model, 'feature_names_in_'):
-        return model.feature_names_in_
-    elif hasattr(model, 'feature_names_'):
-        return model.feature_names_
-    elif hasattr(model, 'feature_name_'):
-        return model.feature_name_
-    elif hasattr(model, 'get_booster'):
-        booster = model.get_booster()
-        return booster.feature_names
+    # Configurar MLflow
+    if os.path.exists(mlflow_dir):
+        mlflow.set_tracking_uri(f"file://{mlflow_dir}")
+        print(f"MLflow tracking URI: {mlflow.get_tracking_uri()}")
     else:
-        return None
+        print(f"AVISO: Diretório MLflow não encontrado: {mlflow_dir}")
+        return None, None, None
+    
+    # Inicializar cliente MLflow
+    client = mlflow.tracking.MlflowClient()
+    
+    # Procurar todos os experimentos
+    experiments = client.search_experiments()
+    
+    for experiment in experiments:
+        print(f"Verificando experimento: {experiment.name} (ID: {experiment.experiment_id})")
+        
+        # Buscar runs específicos do RandomForest ordenados pelo mais recente
+        runs = client.search_runs(
+            experiment_ids=[experiment.experiment_id],
+            filter_string="tags.model_type = 'random_forest'",
+            order_by=["attribute.start_time DESC"]
+        )
+        
+        if not runs:
+            # Se não achou pela tag, procurar pelo nome do artefato
+            runs = client.search_runs(
+                experiment_ids=[experiment.experiment_id],
+                order_by=["attribute.start_time DESC"]
+            )
+        
+        for run in runs:
+            run_id = run.info.run_id
+            print(f"  Encontrado run: {run_id}")
+            
+            # Verificar artefatos
+            artifacts = client.list_artifacts(run_id)
+            rf_artifact = None
+            
+            for artifact in artifacts:
+                if artifact.is_dir and artifact.path == 'random_forest':
+                    rf_artifact = artifact
+                    break
+            
+            if rf_artifact:
+                # Extrair o threshold das métricas
+                threshold = run.data.metrics.get('threshold', 0.17)  # Fallback para 0.17 se não encontrar
+                model_uri = f"runs:/{run_id}/random_forest"
+                
+                print(f"  Usando modelo RandomForest de {run.info.start_time}")
+                print(f"  Run ID: {run_id}")
+                print(f"  Model URI: {model_uri}")
+                print(f"  Threshold: {threshold}")
+                
+                # Mostrar métricas registradas no MLflow
+                precision = run.data.metrics.get('precision', None)
+                recall = run.data.metrics.get('recall', None)
+                f1 = run.data.metrics.get('f1', None)
+                
+                if precision and recall and f1:
+                    print(f"  Métricas do MLflow: Precision={precision:.4f}, Recall={recall:.4f}, F1={f1:.4f}")
+                
+                return run_id, threshold, model_uri
+    
+    print("Nenhum modelo RandomForest encontrado em MLflow.")
+    return None, None, None
 
-def custom_error_analysis(val_df, model, target_col, threshold, output_dir):
+def load_model_from_mlflow(model_uri):
     """
-    Versão customizada da análise de erros que garante compatibilidade com o modelo.
+    Carrega um modelo a partir do MLflow usando seu URI.
     
     Args:
-        val_df: DataFrame com dados de validação
+        model_uri: URI do modelo no formato 'runs:/<run_id>/<artifact_path>'
+        
+    Returns:
+        Modelo carregado ou None se falhar
+    """
+    try:
+        print(f"Carregando modelo de: {model_uri}")
+        model = mlflow.sklearn.load_model(model_uri)
+        print("Modelo carregado com sucesso!")
+        return model
+    except Exception as e:
+        print(f"Erro ao carregar modelo: {str(e)}")
+        return None
+
+def load_datasets(train_path=None, val_path=None):
+    """
+    Carrega os datasets de treino e validação.
+    
+    Args:
+        train_path: Caminho para o dataset de treino
+        val_path: Caminho para o dataset de validação
+        
+    Returns:
+        Tuple (train_df, val_df)
+    """
+    # Definir caminhos padrão se não fornecidos
+    if not train_path:
+        train_path = os.path.join(project_root, "data", "feature_selection", "train.csv")
+        if not os.path.exists(train_path):
+            train_path = os.path.join(os.path.expanduser("~"), "desktop", "smart_ads", "data", "feature_selection", "train.csv")
+    
+    if not val_path:
+        val_path = os.path.join(project_root, "data", "feature_selection", "validation.csv")
+        if not os.path.exists(val_path):
+            val_path = os.path.join(os.path.expanduser("~"), "desktop", "smart_ads", "data", "feature_selection", "validation.csv")
+    
+    # Carregar os dados
+    print(f"Carregando dados de treino: {train_path}")
+    train_df = pd.read_csv(train_path) if os.path.exists(train_path) else None
+    
+    print(f"Carregando dados de validação: {val_path}")
+    val_df = pd.read_csv(val_path) if os.path.exists(val_path) else None
+    
+    if train_df is None:
+        train_path = input("Arquivo de treino não encontrado. Por favor, forneça o caminho completo: ")
+        train_df = pd.read_csv(train_path)
+    
+    if val_df is None:
+        val_path = input("Arquivo de validação não encontrado. Por favor, forneça o caminho completo: ")
+        val_df = pd.read_csv(val_path)
+    
+    print(f"Dados carregados: treino {train_df.shape}, validação {val_df.shape}")
+    return train_df, val_df
+
+def prepare_data_for_model(model, val_df, target_col="target"):
+    """
+    Prepara os dados para serem compatíveis com o modelo.
+    
+    Args:
         model: Modelo treinado
+        val_df: DataFrame de validação
         target_col: Nome da coluna target
-        threshold: Limiar de classificação
+        
+    Returns:
+        X_val, y_val preparados para o modelo
+    """
+    # Extrair features e target
+    X_val = val_df.drop(columns=[target_col]) if target_col in val_df.columns else val_df.copy()
+    y_val = val_df[target_col] if target_col in val_df.columns else None
+    
+    # Aplicar a mesma sanitização de nomes de colunas usada no treinamento
+    col_mapping = sanitize_column_names(X_val)
+    
+    # Converter inteiros para float
+    for col in X_val.columns:
+        if pd.api.types.is_integer_dtype(X_val[col].dtype):
+            X_val.loc[:, col] = X_val[col].astype(float)
+    
+    # Verificar features do modelo
+    if hasattr(model, 'feature_names_in_'):
+        expected_features = set(model.feature_names_in_)
+        actual_features = set(X_val.columns)
+        
+        missing_features = expected_features - actual_features
+        extra_features = actual_features - expected_features
+        
+        if missing_features:
+            print(f"AVISO: Faltam {len(missing_features)} features que o modelo espera")
+            print(f"  Exemplos: {list(missing_features)[:5]}")
+            
+            # Criar DataFrame vazio com as colunas corretas para minimizar a fragmentação
+            missing_cols = list(missing_features)
+            missing_dict = {col: [0] * len(X_val) for col in missing_cols}
+            missing_df = pd.DataFrame(missing_dict)
+            
+            # Concatenar em vez de adicionar uma por uma
+            X_val = pd.concat([X_val, missing_df], axis=1)
+        
+        if extra_features:
+            print(f"AVISO: Removendo {len(extra_features)} features extras")
+            print(f"  Exemplos: {list(extra_features)[:5]}")
+            X_val = X_val.drop(columns=list(extra_features))
+        
+        # Garantir a ordem correta das colunas
+        X_val = X_val[model.feature_names_in_]
+    
+    return X_val, y_val
+
+def run_error_analysis(model, val_df, target_col="target", threshold=0.17, output_dir=None):
+    """
+    Executa análise de erros no modelo e dados.
+    
+    Args:
+        model: Modelo treinado
+        val_df: DataFrame de validação
+        target_col: Nome da coluna target
+        threshold: Threshold para classificação
         output_dir: Diretório para salvar resultados
         
     Returns:
         Dicionário com resultados da análise
     """
-    # Separar features e target
-    feature_cols = [col for col in val_df.columns if col != target_col]
+    # Criar diretório para resultados
+    if output_dir is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = os.path.join(project_root, "reports", f"error_analysis_rf_{timestamp}")
     
-    # Obter nomes de features do modelo
-    model_feature_names = get_model_feature_names(model)
-    if model_feature_names is None:
-        print("AVISO: Não foi possível obter nomes de features do modelo")
-        model_feature_names = feature_cols
-    
-    # Verificar a correspondência entre as features do dataset e do modelo
-    print(f"Verificando compatibilidade de features:")
-    print(f"- Features no modelo: {len(model_feature_names)}")
-    print(f"- Features no dataset: {len(feature_cols)}")
-    
-    # Criar cópia do dataframe antes de modificá-lo
-    df_copy = val_df.copy()
-    
-    # Se os nomes das features não correspondem, aplicar a mesma sanitização
-    # que foi usada durante o treinamento do modelo
-    if set(feature_cols) != set(model_feature_names):
-        print("ATENÇÃO: Diferença entre features do dataset e do modelo.")
-        print("Aplicando a mesma sanitização de colunas usada durante o treinamento...")
-        
-        # Aplicar sanitização usando a mesma função do treinamento
-        sanitize_column_names(df_copy)
-        
-        # Verificar se todos os nomes de features do modelo estão presentes
-        sanitized_cols = [col for col in df_copy.columns if col != target_col]
-        common_cols = set(sanitized_cols).intersection(set(model_feature_names))
-        
-        print(f"- Features comuns após sanitização: {len(common_cols)}")
-        
-        # Se ainda faltam features, adicionar colunas ausentes com valores zero
-        missing_cols = set(model_feature_names) - set(sanitized_cols)
-        if missing_cols:
-            print(f"ATENÇÃO: Adicionando {len(missing_cols)} colunas ausentes com valor zero")
-            for col in missing_cols:
-                df_copy[col] = 0
-    
-    # Garantir que os dados estejam no formato correto (convertendo int para float)
-    X_val = df_copy[[col for col in model_feature_names if col in df_copy.columns]].copy()
-    for col in X_val.columns:
-        if pd.api.types.is_integer_dtype(X_val[col].dtype):
-            X_val.loc[:, col] = X_val[col].astype(float)
-    
-    y_val = df_copy[target_col]
-    
-    # Gerar previsões
-    print("Gerando previsões para análise...")
-    y_pred_prob = model.predict_proba(X_val)[:, 1]
-    y_pred = (y_pred_prob >= threshold).astype(int)
-    
-    # Análise de falsos negativos de alto valor
-    fn_data = analyze_high_value_false_negatives(
-        val_df=df_copy,
-        y_val=y_val,
-        y_pred_val=y_pred,
-        y_pred_prob_val=y_pred_prob,
-        target_col=target_col,
-        results_dir=output_dir
-    )
-    
-    # Análise de distribuições por tipo de erro
-    error_distributions = analyze_feature_distributions_by_error_type(
-        val_df=df_copy,
-        y_val=y_val,
-        y_pred_val=y_pred,
-        y_pred_prob_val=y_pred_prob,
-        target_col=target_col,
-        results_dir=output_dir
-    )
-    
-    # Preparar DataFrame para clustering
-    analysis_df = df_copy.copy()
-    analysis_df['error_type'] = 'correct'
-    fn_mask = (y_val == 1) & (y_pred == 0)
-    fp_mask = (y_val == 0) & (y_pred == 1)
-    analysis_df.loc[fn_mask, 'error_type'] = 'false_negative'
-    analysis_df.loc[fp_mask, 'error_type'] = 'false_positive'
-    analysis_df['probability'] = y_pred_prob
-    
-    # Realizar clustering
-    top_features = []
-    if hasattr(model, 'feature_importances_'):
-        importance = pd.DataFrame({
-            'feature': model_feature_names,
-            'importance': model.feature_importances_
-        }).sort_values('importance', ascending=False)
-        top_features = importance['feature'].head(30).tolist()
-    else:
-        numeric_cols = error_distributions.get('numeric_cols', [])
-        categorical_cols = error_distributions.get('categorical_cols', [])
-        top_features = numeric_cols[:20] + categorical_cols[:10]
-    
-    # Garantir que as features de clustering existam no DataFrame
-    available_features = [f for f in top_features if f in analysis_df.columns]
-    if len(available_features) == 0:
-        print("ALERTA: Nenhuma das top features está disponível para clustering")
-        print("Usando todas as colunas numéricas disponíveis")
-        available_features = [col for col in analysis_df.columns 
-                             if pd.api.types.is_numeric_dtype(analysis_df[col]) 
-                             and col not in ['error_type', 'probability']]
-    
-    clustered_df = cluster_errors(
-        analysis_df=analysis_df, 
-        features=available_features, 
-        n_clusters=5
-    )
-    
-    # Salvar dados com clusters
-    clustered_df.to_csv(os.path.join(output_dir, "leads_clusters.csv"), index=False)
-    
-    # Criar dataframe com resultados
-    metrics = {
-        'precision': precision_score(y_val, y_pred),
-        'recall': recall_score(y_val, y_pred),
-        'f1': f1_score(y_val, y_pred),
-        'fn': ((y_val == 1) & (y_pred == 0)).sum(),
-        'fp': ((y_val == 0) & (y_pred == 1)).sum(),
-        'tp': ((y_val == 1) & (y_pred == 1)).sum(),
-        'tn': ((y_val == 0) & (y_pred == 0)).sum()
-    }
-    
-    # Adicionar métricas adicionais
-    metrics['fpr'] = metrics['fp'] / (metrics['fp'] + metrics['tn']) if (metrics['fp'] + metrics['tn']) > 0 else 0
-    
-    results = {
-        'metrics': metrics,
-        'y_pred': y_pred,
-        'y_pred_prob': y_pred_prob,
-        'clustered_df': clustered_df,
-        'fn_data': fn_data,
-        'error_distributions': error_distributions
-    }
-    
-    # Gerar análise de resumo
-    with open(os.path.join(output_dir, "error_analysis_summary.md"), "w") as f:
-        f.write("# Análise de Erros do Modelo Random Forest\n\n")
-        
-        # Estatísticas gerais
-        f.write("## Estatísticas Gerais\n\n")
-        f.write(f"- Total de previsões analisadas: {len(y_val)}\n")
-        f.write(f"- Previsões corretas: {metrics['tp'] + metrics['tn']} ({(metrics['tp'] + metrics['tn'])/len(y_val)*100:.2f}%)\n")
-        f.write(f"- Falsos negativos: {metrics['fn']} ({metrics['fn']/len(y_val)*100:.2f}%)\n")
-        f.write(f"- Falsos positivos: {metrics['fp']} ({metrics['fp']/len(y_val)*100:.2f}%)\n\n")
-        
-        # Métricas
-        f.write("## Métricas de Desempenho\n\n")
-        f.write(f"- Precision: {metrics['precision']:.4f}\n")
-        f.write(f"- Recall: {metrics['recall']:.4f}\n")
-        f.write(f"- F1 Score: {metrics['f1']:.4f}\n")
-        f.write(f"- Taxa de Falsos Positivos: {metrics['fpr']:.4f}\n\n")
-        
-        # Matriz de confusão
-        f.write("### Matriz de Confusão\n\n")
-        f.write("| | Previsto: Não Converteu | Previsto: Converteu |\n")
-        f.write("|---|---|---|\n")
-        f.write(f"| **Real: Não Converteu** | {metrics['tn']} | {metrics['fp']} |\n")
-        f.write(f"| **Real: Converteu** | {metrics['fn']} | {metrics['tp']} |\n\n")
-        
-        # Falsos negativos
-        if 'fn_data' in locals() and len(fn_data) > 0:
-            f.write("## Análise de Falsos Negativos\n\n")
-            f.write(f"- Total de falsos negativos: {len(fn_data)}\n")
-            f.write("- Foram identificados padrões nos falsos negativos (veja os arquivos de análise detalhada)\n\n")
-        
-        # Conclusões 
-        f.write("## Recomendações para Feature Engineering\n\n")
-        f.write("1. **Tratamento de Texto**: \n")
-        f.write("   - Refinar pesos TF-IDF para dar mais importância aos termos identificados\n")
-        f.write("   - Criar embeddings para capturar melhor o contexto semântico\n")
-        f.write("   - Analisar tópicos latentes usando LDA ou NMF\n\n")
-        
-        f.write("2. **Features de Interação**: \n")
-        f.write("   - Diferença logarítmica entre salário desejado e atual\n")
-        f.write("   - Interações entre país e características demográficas\n")
-        f.write("   - Interações entre dia/horário e outras features\n\n")
-    
-    return results
-
-def load_model_and_data(random_forest_run_id, mlflow_dir, model_path, train_path, val_path):
-    """
-    Carrega o modelo e os dados de treino e validação.
-    
-    Args:
-        random_forest_run_id: ID do run do Random Forest no MLflow
-        mlflow_dir: Diretório do MLflow
-        model_path: Caminho para o arquivo do modelo
-        train_path: Caminho para o dataset de treino
-        val_path: Caminho para o dataset de validação
-        
-    Returns:
-        Tupla (modelo, dados de treino, dados de validação)
-    """
-    # 1. Carregar o modelo
-    model = None
-    
-    # Tentar carregar do MLflow primeiro
-    if os.path.exists(mlflow_dir):
-        print(f"Usando diretório MLflow: {mlflow_dir}")
-        mlflow.set_tracking_uri(f"file://{mlflow_dir}")
-        
-        try:
-            # Carregar o modelo Random Forest diretamente pelo run_id
-            model_uri = f"runs:/{random_forest_run_id}/random_forest"
-            print(f"Carregando modelo Random Forest: {model_uri}")
-            
-            # Usar sklearn para carregar o modelo Random Forest
-            model = mlflow.sklearn.load_model(model_uri)
-            print("Modelo Random Forest carregado com sucesso!")
-            
-        except Exception as e:
-            print(f"Erro ao carregar modelo Random Forest do MLflow: {str(e)}")
-            print("Tentaremos usar o modelo fornecido via arquivo.")
-    
-    # Se não conseguiu do MLflow, tentar carregar do arquivo
-    if model is None:
-        if model_path and os.path.exists(model_path):
-            print(f"Carregando modelo do arquivo: {model_path}")
-            try:
-                model = joblib.load(model_path)
-                print("Modelo carregado com sucesso usando joblib")
-            except Exception as joblib_error:
-                try:
-                    import pickle
-                    with open(model_path, 'rb') as f:
-                        model = pickle.load(f)
-                    print("Modelo carregado com sucesso usando pickle")
-                except Exception as pickle_error:
-                    raise ValueError(f"Não foi possível carregar o modelo. Erros: Joblib: {joblib_error}, Pickle: {pickle_error}")
-        else:
-            model_path = input("Random Forest não encontrado. Por favor, forneça o caminho completo para o arquivo do modelo (.joblib, .pkl): ")
-            try:
-                model = joblib.load(model_path)
-                print(f"Modelo carregado com sucesso de: {model_path}")
-            except Exception as e:
-                raise ValueError(f"Não foi possível carregar o modelo de {model_path}: {str(e)}")
-    
-    # 2. Carregar dados de treino e validação do diretório "../data/feature_selection"
-    if not train_path or not os.path.exists(train_path):
-        train_path = os.path.join(project_root, "data", "feature_selection", "train.csv")
-        
-        if not os.path.exists(train_path):
-            train_path = input("Por favor, forneça o caminho completo para o arquivo de treino (.csv): ")
-    
-    if not val_path or not os.path.exists(val_path):
-        val_path = os.path.join(project_root, "data", "feature_selection", "validation.csv")
-        
-        if not os.path.exists(val_path):
-            val_path = input("Por favor, forneça o caminho completo para o arquivo de validação (.csv): ")
-    
-    print(f"Carregando dados de treino: {train_path}")
-    train_df = pd.read_csv(train_path)
-    print(f"Carregando dados de validação: {val_path}")
-    val_df = pd.read_csv(val_path)
-    
-    return model, train_df, val_df
-
-def run_targeted_error_analysis(
-    model_path=None,
-    train_path=None, 
-    val_path=None, 
-    target_col="target",
-    experiment_name="smart_ads_baseline_20250419_183736", 
-    random_forest_run_id="2f474252aaf440dd8548514857ab1ab9",
-    threshold=0.13
-):
-    """
-    Executa análise de erros focada em falsos negativos de alto valor e clusters.
-    
-    Args:
-        model_path: Caminho para o modelo treinado (arquivo .joblib, .pkl, etc.)
-        train_path: Caminho para o dataset de treino
-        val_path: Caminho para o dataset de validação
-        target_col: Nome da coluna target
-        experiment_name: Nome do experimento no MLflow
-        random_forest_run_id: ID do run do Random Forest
-        threshold: Limiar de classificação a ser usado
-    """
-    # 1. Configurar diretório de saída
-    reports_dir = os.path.join(project_root, "reports")
-    os.makedirs(reports_dir, exist_ok=True)
-    
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = os.path.join(reports_dir, f"error_analysis_randomforest_{timestamp}")
     os.makedirs(output_dir, exist_ok=True)
-    
     print(f"Resultados serão salvos em: {output_dir}")
     
-    # 2. Carregar modelo e dados
-    mlflow_dir = os.path.join(project_root, "models", "mlflow")
-    model, train_df, val_df = load_model_and_data(
-        random_forest_run_id=random_forest_run_id,
-        mlflow_dir=mlflow_dir,
-        model_path=model_path,
-        train_path=train_path,
-        val_path=val_path
-    )
+    # Preparar dados
+    X_val, y_val = prepare_data_for_model(model, val_df, target_col)
     
-    # 3. Obter nomes das features usadas pelo modelo
-    model_features = get_model_feature_names(model)
-    if model_features is not None:
-        print(f"Modelo utiliza {len(model_features)} features")
-        print("Exemplos de features do modelo:")
-        for i, feat in enumerate(model_features[:5]):
-            print(f"  {i+1}. {feat}")
+    if y_val is None:
+        raise ValueError(f"Coluna target '{target_col}' não encontrada no DataFrame")
     
-    # 4. Executar análise customizada
-    print("\n=== Executando análise de erros do modelo Random Forest ===")
-    results = custom_error_analysis(
-        val_df=val_df,
+    # Gerar previsões
+    print(f"Gerando previsões com threshold={threshold}...")
+    try:
+        y_pred_prob = model.predict_proba(X_val)[:, 1]
+        y_pred = (y_pred_prob >= threshold).astype(int)
+        
+        # Métricas básicas
+        precision = precision_score(y_val, y_pred)
+        recall = recall_score(y_val, y_pred)
+        f1 = f1_score(y_val, y_pred)
+        
+        print(f"Métricas com threshold={threshold}:")
+        print(f"  Precision: {precision:.4f}")
+        print(f"  Recall: {recall:.4f}")
+        print(f"  F1: {f1:.4f}")
+        
+        # Análise de falsos negativos
+        print("\nRealizando análise de falsos negativos...")
+        fn_data = analyze_high_value_false_negatives(
+            val_df=val_df,
+            y_val=y_val,
+            y_pred_val=y_pred,
+            y_pred_prob_val=y_pred_prob,
+            target_col=target_col,
+            results_dir=output_dir
+        )
+        
+        # Análise de distribuições
+        print("\nAnalisando distribuições por tipo de erro...")
+        error_distributions = analyze_feature_distributions_by_error_type(
+            val_df=val_df,
+            y_val=y_val,
+            y_pred_val=y_pred,
+            y_pred_prob_val=y_pred_prob,
+            target_col=target_col,
+            results_dir=output_dir
+        )
+        
+        # Clustering de erros
+        print("\nRealizando clustering de erros...")
+        analysis_df = val_df.copy()
+        analysis_df['error_type'] = 'correct'
+        analysis_df.loc[(y_val == 1) & (y_pred == 0), 'error_type'] = 'false_negative'
+        analysis_df.loc[(y_val == 0) & (y_pred == 1), 'error_type'] = 'false_positive'
+        analysis_df['probability'] = y_pred_prob
+        
+        # Selecionar features para clustering
+        numeric_cols = [col for col in val_df.columns if 
+                      pd.api.types.is_numeric_dtype(val_df[col]) and 
+                      col != target_col]
+        
+        # Limitar número de features para clustering
+        if len(numeric_cols) > 30:
+            numeric_cols = numeric_cols[:30]
+        
+        clustered_df = cluster_errors(
+            analysis_df=analysis_df,
+            features=[f for f in numeric_cols if f in analysis_df.columns],
+            n_clusters=3
+        )
+        
+        # Salvar dados com clusters
+        clustered_df.to_csv(os.path.join(output_dir, "leads_clusters.csv"), index=False)
+        
+        print(f"\nAnálise de erros concluída. Resultados salvos em: {output_dir}")
+        return {
+            'metrics': {
+                'precision': precision,
+                'recall': recall,
+                'f1': f1
+            },
+            'fn_data': fn_data,
+            'error_distributions': error_distributions,
+            'output_dir': output_dir
+        }
+        
+    except Exception as e:
+        print(f"Erro durante a análise: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+def main():
+    parser = argparse.ArgumentParser(description='Executar análise de erros com o último modelo RandomForest treinado')
+    parser.add_argument('--mlflow_dir', default=None, 
+                      help='Diretório do MLflow tracking')
+    parser.add_argument('--train_path', default=None,
+                      help='Caminho para o dataset de treino')
+    parser.add_argument('--val_path', default=None,
+                      help='Caminho para o dataset de validação')
+    parser.add_argument('--target_col', default='target',
+                      help='Nome da coluna target')
+    parser.add_argument('--run_id', default=None,
+                      help='ID específico do run do RandomForest (opcional)')
+    parser.add_argument('--model_uri', default=None,
+                      help='URI específico do modelo RandomForest (opcional)')
+    parser.add_argument('--threshold', type=float, default=None,
+                      help='Threshold personalizado para classificação (opcional)')
+    
+    args = parser.parse_args()
+    
+    # Definir valor padrão para mlflow_dir se não fornecido
+    if args.mlflow_dir is None:
+        default_mlflow_dir = os.path.join(os.path.expanduser("~"), "desktop", "smart_ads", "models", "mlflow")
+        if os.path.exists(default_mlflow_dir):
+            args.mlflow_dir = default_mlflow_dir
+        else:
+            args.mlflow_dir = os.path.join(project_root, "models", "mlflow")
+    
+    print("=== Iniciando análise de erros com o último modelo RandomForest ===")
+    print(f"Diretório MLflow: {args.mlflow_dir}")
+    
+    # Carregar modelo do MLflow
+    model = None
+    threshold = args.threshold
+    
+    # Se um model_uri específico foi fornecido, usar ele
+    if args.model_uri:
+        model = load_model_from_mlflow(args.model_uri)
+    # Se um run_id específico foi fornecido, construir o model_uri
+    elif args.run_id:
+        model_uri = f"runs:/{args.run_id}/random_forest"
+        model = load_model_from_mlflow(model_uri)
+    # Caso contrário, procurar o mais recente
+    else:
+        run_id, threshold_from_mlflow, model_uri = get_latest_random_forest_run(args.mlflow_dir)
+        
+        if model_uri:
+            model = load_model_from_mlflow(model_uri)
+            # Usar o threshold do MLflow se não especificado manualmente
+            if threshold is None:
+                threshold = threshold_from_mlflow
+                print(f"Usando threshold do MLflow: {threshold}")
+    
+    # Se ainda não tem threshold, usar o valor padrão
+    if threshold is None:
+        threshold = 0.17
+        print(f"Usando threshold padrão: {threshold}")
+    
+    # Verificar se o modelo foi carregado
+    if model is None:
+        print("ERRO: Não foi possível carregar o modelo RandomForest.")
+        sys.exit(1)
+    
+    # Confirmar que é RandomForest
+    model_type = str(type(model))
+    if 'RandomForest' not in model_type:
+        print(f"AVISO: O modelo carregado não é RandomForest! É {model_type}")
+        proceed = input("Deseja continuar mesmo assim? (s/n): ")
+        if proceed.lower() != 's':
+            print("Análise cancelada.")
+            return
+    
+    # Carregar dados
+    train_df, val_df = load_datasets(args.train_path, args.val_path)
+    
+    # Executar análise
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = os.path.join(project_root, "reports", f"error_analysis_rf_{timestamp}")
+    
+    results = run_error_analysis(
         model=model,
-        target_col=target_col,
+        val_df=val_df,
+        target_col=args.target_col,
         threshold=threshold,
         output_dir=output_dir
     )
     
-    print("\n=== Análise de erros concluída! ===")
-    print(f"Todos os resultados foram salvos em: {output_dir}")
-    
-    return output_dir, results
+    print("\n=== Análise de erros concluída ===")
+    print(f"Todos os resultados foram salvos em: {results['output_dir']}")
 
 if __name__ == "__main__":
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Executar análise de erros com foco em falsos negativos e clusters')
-    parser.add_argument('--model_path', help='Caminho para o arquivo do modelo treinado (opcional)')
-    parser.add_argument('--train_path', help='Caminho para o dataset de treino (opcional)')
-    parser.add_argument('--val_path', help='Caminho para o dataset de validação (opcional)')
-    parser.add_argument('--target_col', default='target', help='Nome da coluna target')
-    parser.add_argument('--random_forest_run_id', default='2f474252aaf440dd8548514857ab1ab9', help='ID do run do Random Forest no MLflow')
-    parser.add_argument('--threshold', type=float, default=0.13, help='Limiar de classificação (0.13 para Random Forest)')
-    
-    args = parser.parse_args()
-    
-    print("=== Iniciando Análise de Erros do Modelo Random Forest ===")
-    
-    output_dir, results = run_targeted_error_analysis(
-        model_path=args.model_path,
-        train_path=args.train_path,
-        val_path=args.val_path,
-        target_col=args.target_col,
-        random_forest_run_id=args.random_forest_run_id,
-        threshold=args.threshold
-    )
-    
-    print(f"Análise finalizada. Relatórios disponíveis em: {output_dir}")
+    main()
