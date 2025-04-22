@@ -151,9 +151,20 @@ def run_feature_importance_analysis(train_df, target_col, output_dir, params_dir
     }
     
     if params_dir:
-        params_path = os.path.join(params_dir, "feature_selection_params.joblib")
+        # Modificação: Adicionar timestamp ao nome do arquivo
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        params_filename = f"feature_selection_params_{timestamp}.joblib"
+        params_path = os.path.join(params_dir, params_filename)
+        
+        # Salvar a versão atual com timestamp
         joblib.dump(selection_params, params_path)
         print(f"\nParâmetros de seleção de features salvos em {params_path}")
+        
+        # Opcionalmente, salvar também como "latest" para facilitar referência
+        latest_path = os.path.join(params_dir, "feature_selection_params_latest.joblib")
+        joblib.dump(selection_params, latest_path)
+        print(f"Parâmetros também salvos como versão mais recente em {latest_path}")
     
     print(f"\nTotal de {len(selected_features)} features selecionadas para o modelo.")
     return selected_features, selection_params
@@ -268,9 +279,9 @@ def process_datasets(input_dir, output_dir, params_dir=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipeline de análise de importância e seleção de features.")
-    parser.add_argument("--input-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/data/text_features"), 
+    parser.add_argument("--input-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/data/02_processed_text_v2"), 
                         help="Diretório contendo os arquivos de entrada (train.csv, validation.csv, test.csv)")
-    parser.add_argument("--output-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/data/feature_selection_text"), 
+    parser.add_argument("--output-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/data/03_feature_selection_textv2"), 
                         help="Diretório para salvar os arquivos processados")
     parser.add_argument("--params-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/src/evaluation/"), 
                         help="Diretório para salvar os parâmetros aprendidos")
