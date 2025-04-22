@@ -171,7 +171,7 @@ def run_feature_importance_analysis(train_df, target_col, output_dir, params_dir
 
 def apply_feature_selection(df, selected_features, target_col):
     """
-    Aplica a seleção de features a um DataFrame.
+    Aplica a seleção de features a um DataFrame, adicionando features faltantes quando necessário.
     
     Args:
         df: DataFrame a processar
@@ -179,24 +179,35 @@ def apply_feature_selection(df, selected_features, target_col):
         target_col: Nome da coluna target
         
     Returns:
-        DataFrame com apenas as features selecionadas e coluna target
+        DataFrame com as features selecionadas e coluna target
     """
     # Verificar quais features selecionadas existem no DataFrame
     available_features = [col for col in selected_features if col in df.columns]
     missing_features = set(selected_features) - set(available_features)
     
-    if missing_features:
-        print(f"Aviso: {len(missing_features)} features selecionadas não foram encontradas no DataFrame")
-        if len(missing_features) <= 10:
-            print(f"Features ausentes: {list(missing_features)}")
-        else:
-            print(f"Exemplos de features ausentes: {list(missing_features)[:10]}...")
-    
-    # Selecionar apenas as features disponíveis + target
+    # Criar o DataFrame com as features disponíveis + target
     columns_to_keep = available_features + [target_col]
     df_selected = df[columns_to_keep]
     
-    print(f"DataFrame reduzido: de {df.shape[1]} para {df_selected.shape[1]} colunas")
+    # Adicionar features faltantes preenchidas com zeros
+    if missing_features:
+        print(f"Adicionando {len(missing_features)} features faltantes ao DataFrame, preenchidas com zeros")
+        if len(missing_features) <= 10:
+            print(f"Features adicionadas: {list(missing_features)}")
+        else:
+            print(f"Exemplos de features adicionadas: {list(missing_features)[:10]}...")
+        
+        # Criar DataFrame com as features faltantes preenchidas com zeros
+        missing_df = pd.DataFrame(0, index=df.index, columns=list(missing_features))
+        
+        # Concatenar com o DataFrame existente
+        df_selected = pd.concat([df_selected, missing_df], axis=1)
+        
+        # Garantir que as colunas estejam na mesma ordem que as features selecionadas
+        all_columns = selected_features + [target_col]
+        df_selected = df_selected[all_columns]
+    
+    print(f"DataFrame processado: {df.shape[1]} colunas originais → {df_selected.shape[1]} colunas selecionadas")
     return df_selected
 
 def process_datasets(input_dir, output_dir, params_dir=None):
