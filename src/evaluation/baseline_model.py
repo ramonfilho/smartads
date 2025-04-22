@@ -441,3 +441,83 @@ model_{model_name} = mlflow.{model_type}.load_model("{all_results[f'{model_name}
 """)
     
     return all_results
+
+def get_latest_random_forest_run(mlflow_dir):
+    """
+    Obtém o run_id do modelo RandomForest mais recente.
+    
+    Args:
+        mlflow_dir: Diretório do MLflow tracking
+        
+    Returns:
+        Tuple com (run_id, threshold, model_uri) ou (None, None, None) se não encontrado
+    """
+    import os
+    import mlflow
+    
+    # Configurar MLflow
+    if os.path.exists(mlflow_dir):
+        mlflow.set_tracking_uri(f"file://{mlflow_dir}")
+        print(f"MLflow tracking URI: {mlflow.get_tracking_uri()}")
+    else:
+        print(f"AVISO: Diretório MLflow não encontrado: {mlflow_dir}")
+        return None, None, None
+    
+    # Inicializar cliente MLflow
+    client = mlflow.tracking.MlflowClient()
+    
+    # Procurar todos os experimentos
+    experiments = client.search_experiments()
+    
+    for experiment in experiments:
+        print(f"Verificando experimento: {experiment.name} (ID: {experiment.experiment_id})")
+        
+        # Buscar runs específicos do RandomForest ordenados pelo mais recente
+        runs = client.search_runs(
+            experiment_ids=[experiment.experiment_id],
+            filter_string="tags.model_type = 'random_forest'",
+            order_by=["attribute.start_time DESC"]
+        )
+        
+        if not runs:
+            # Se não achou pela tag, procurar pelo nome do artefato
+            runs = client.search_runs(
+                experiment_ids=[experiment.experiment_id],
+                order_by=["attribute.start_time DESC"]
+            )
+        
+        for run in runs:
+            run_id = run.info.run_id
+            print(f"  Encontrado run: {run_id}")
+            
+            # Verificar artefatos
+            artifacts = client.list_artifacts(run_id)
+            rf_artifact = None
+            
+            for artifact in artifacts:
+                if artifact.is_dir and artifact.path == 'random_forest':
+                    rf_artifact = artifact
+                    break
+            
+            if rf_artifact:
+                # Extrair o threshold das métricas
+                threshold = run.data.metrics.get('threshold', 0.17)  # Fallback para 0.17 se não encontrar
+                model_uri = f"runs:/{run_id}/random_forest"
+                
+                print(f"  Usando modelo RandomForest de {run.info.start_time}")
+                print(f"  Run ID: {run_id}")
+                print(f"  Model URI: {model_uri}")
+                print(f"  Threshold: {threshold}")
+                
+                # Mostrar métricas registradas no MLflow
+                precision = run.data.metrics.get('precision', None)
+                recall = run.data.metrics.get('recall', None)
+                f1 = run.data.metrics.get('f1', None)
+                
+                if precision and recall and f1:
+                    print(f"  Métricas do MLflow: Precision={precision:.4f}, Recall={recall:.4f}, F1={f1:.4f}")
+                
+                return run_id, threshold, model_uri
+    
+    print("Nenhum modelo RandomForest encontrado em MLflow.")
+    return None, None, None
