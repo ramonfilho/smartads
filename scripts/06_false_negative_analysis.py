@@ -66,10 +66,21 @@ def load_data(data_path, verbose=True):
     if verbose:
         print(f"Carregando dados de: {data_path}")
     
+    # Importar funções do módulo baseline_model
+    from src.evaluation.baseline_model import sanitize_column_names, convert_integer_columns_to_float
+    
     df = pd.read_csv(data_path)
     
     if verbose:
         print(f"Dataset carregado: {df.shape[0]} exemplos, {df.shape[1]} colunas")
+    
+    # Aplicar as mesmas transformações usadas durante o treinamento
+    print("Sanitizando nomes das colunas...")
+    sanitize_column_names(df)
+    
+    # Converter colunas inteiras para float
+    print("Convertendo colunas inteiras para float...")
+    convert_integer_columns_to_float(df)
     
     # Identificar a coluna target
     target_col = None
@@ -84,11 +95,6 @@ def load_data(data_path, verbose=True):
             print(f"Coluna target não encontrada, usando última coluna: {target_col}")
     elif verbose:
         print(f"Coluna target identificada: {target_col}")
-    
-    # Converter inteiros para float
-    for col in df.columns:
-        if pd.api.types.is_integer_dtype(df[col].dtype) and col != target_col:
-            df[col] = df[col].astype(float)
     
     # Separar features e target
     X = df.drop(columns=[target_col])
@@ -460,8 +466,22 @@ def find_elbow_point(curve):
     if len(curve) < 3:
         return None
     
+    # Converter para array numpy e garantir que é do tipo float
+    curve = np.array(curve, dtype=float)
+    
+    # Lidar com NaN e infinito
+    mask = np.isfinite(curve)
+    valid_indices = np.where(mask)[0]
+    
+    if len(valid_indices) < 3:
+        # Não há pontos suficientes para encontrar um cotovelo
+        return 0
+    
+    # Usar apenas valores válidos
+    valid_curve = curve[valid_indices]
+    
     # Normalizar a curva
-    normalized = (curve - np.min(curve)) / (np.max(curve) - np.min(curve))
+    normalized = (valid_curve - np.min(valid_curve)) / (np.max(valid_curve) - np.min(valid_curve))
     
     # Criar coordenadas
     coords = np.vstack([np.arange(len(normalized)), normalized]).T
@@ -491,8 +511,9 @@ def find_elbow_point(curve):
     # Distâncias à linha
     dist_to_line = np.sqrt(np.sum(vec_to_line**2, axis=1))
     
-    # Encontrar o índice da máxima distância
-    return np.argmax(dist_to_line)
+    # Encontrar o índice da máxima distância e mapear de volta para o índice original
+    max_idx = np.argmax(dist_to_line)
+    return valid_indices[max_idx]
 
 def analyze_feature_distributions(analysis_df, target_col, output_dir):
     """Analisa distribuições de features entre diferentes categorias de erro."""
@@ -590,15 +611,14 @@ def analyze_feature_distributions(analysis_df, target_col, output_dir):
         plt.ylabel('Densidade')
         plt.legend()
         
-        # Plot 2: Boxplot
+        # Plot 2: Boxplot - corrigido para evitar índices duplicados
         plt.subplot(1, 2, 2)
-        comparison_data = pd.DataFrame({
-            'Valor': pd.concat([fn_data[feature], tp_data[feature]]),
-            'Grupo': pd.concat([
-                pd.Series(['Falso Negativo'] * len(fn_data)),
-                pd.Series(['Verdadeiro Positivo'] * len(tp_data))
-            ])
-        })
+        
+        # Criar DataFrames separados e depois concatenar com reset_index
+        fn_plot_data = pd.DataFrame({'Valor': fn_data[feature], 'Grupo': 'Falso Negativo'})
+        tp_plot_data = pd.DataFrame({'Valor': tp_data[feature], 'Grupo': 'Verdadeiro Positivo'})
+        comparison_data = pd.concat([fn_plot_data, tp_plot_data]).reset_index(drop=True)
+        
         sns.boxplot(x='Grupo', y='Valor', data=comparison_data)
         plt.title(f'Boxplot de {feature}')
         
@@ -688,10 +708,12 @@ def perform_clustering_analysis(analysis_df, target_col, output_dir):
                    if col not in non_feature_cols and 
                    pd.api.types.is_numeric_dtype(fn_data[col])]
     
+    fn_data_filled = fn_data[numeric_cols].fillna(fn_data[numeric_cols].mean())
+
     # Aplicar escalamento
     scaler = StandardScaler()
     fn_scaled = pd.DataFrame(
-        scaler.fit_transform(fn_data[numeric_cols]),
+        scaler.fit_transform(fn_data_filled),
         columns=numeric_cols,
         index=fn_data.index
     )
