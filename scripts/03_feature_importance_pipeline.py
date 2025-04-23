@@ -290,9 +290,9 @@ def process_datasets(input_dir, output_dir, params_dir=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipeline de análise de importância e seleção de features.")
-    parser.add_argument("--input-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/data/02_processed_text_v2"), 
+    parser.add_argument("--input-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/data/02_processed_text_code6"), 
                         help="Diretório contendo os arquivos de entrada (train.csv, validation.csv, test.csv)")
-    parser.add_argument("--output-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/data/03_feature_selection_textv2"), 
+    parser.add_argument("--output-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/data/03_feature_selection_text_code6"), 
                         help="Diretório para salvar os arquivos processados")
     parser.add_argument("--params-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/src/evaluation/"), 
                         help="Diretório para salvar os parâmetros aprendidos")
