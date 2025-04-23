@@ -6,6 +6,7 @@ claude/
 clients/
 V0_to_V3/
 reports
+data copy/
 
 # Environments
 .env
