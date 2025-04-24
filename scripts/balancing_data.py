@@ -14,12 +14,20 @@ import logging
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime
-from sklearn.metrics import classification_report, confusion_matrix, precision_recall_curve, f1_score
+from sklearn.metrics import classification_report, confusion_matrix, precision_recall_curve, f1_score, fbeta_score
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.impute import SimpleImputer
 from imblearn.over_sampling import SMOTE, ADASYN, RandomOverSampler
 from imblearn.under_sampling import RandomUnderSampler, TomekLinks
 from imblearn.combine import SMOTETomek, SMOTEENN
 import mlflow
+
+# Adicionar diretório raiz ao path para importar módulos do projeto
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, project_root)
+
+# Importar a função de sanitização original
+from src.evaluation.baseline_model import sanitize_column_names, get_latest_random_forest_run
 
 # 1. Configuração de caminhos e estrutura do projeto
 PROJ_ROOT = os.path.expanduser("/Users/ramonmoreira/desktop/smart_ads")
@@ -82,75 +90,6 @@ def load_datasets(input_dir):
         raise
 
 # 3. Carregar modelo do MLflow
-def get_latest_random_forest_run(mlflow_dir):
-    """Obtém o run_id do modelo RandomForest mais recente."""
-    # Configurar MLflow
-    if os.path.exists(mlflow_dir):
-        mlflow.set_tracking_uri(f"file://{mlflow_dir}")
-        logger.info(f"MLflow tracking URI: {mlflow.get_tracking_uri()}")
-    else:
-        logger.warning(f"AVISO: Diretório MLflow não encontrado: {mlflow_dir}")
-        return None, None, None
-    
-    # Inicializar cliente MLflow
-    client = mlflow.tracking.MlflowClient()
-    
-    # Procurar todos os experimentos
-    experiments = client.search_experiments()
-    
-    for experiment in experiments:
-        logger.info(f"Verificando experimento: {experiment.name} (ID: {experiment.experiment_id})")
-        
-        # Buscar runs específicos do RandomForest ordenados pelo mais recente
-        runs = client.search_runs(
-            experiment_ids=[experiment.experiment_id],
-            filter_string="tags.model_type = 'random_forest'",
-            order_by=["attribute.start_time DESC"]
-        )
-        
-        if not runs:
-            # Se não achou pela tag, procurar pelo nome do artefato
-            runs = client.search_runs(
-                experiment_ids=[experiment.experiment_id],
-                order_by=["attribute.start_time DESC"]
-            )
-        
-        for run in runs:
-            run_id = run.info.run_id
-            logger.info(f"  Encontrado run: {run_id}")
-            
-            # Verificar artefatos
-            artifacts = client.list_artifacts(run_id)
-            rf_artifact = None
-            
-            for artifact in artifacts:
-                if artifact.is_dir and artifact.path == 'random_forest':
-                    rf_artifact = artifact
-                    break
-            
-            if rf_artifact:
-                # Extrair o threshold das métricas
-                threshold = run.data.metrics.get('threshold', 0.17)  # Fallback para 0.17 se não encontrar
-                model_uri = f"runs:/{run_id}/random_forest"
-                
-                logger.info(f"  Usando modelo RandomForest de {run.info.start_time}")
-                logger.info(f"  Run ID: {run_id}")
-                logger.info(f"  Model URI: {model_uri}")
-                logger.info(f"  Threshold: {threshold}")
-                
-                # Mostrar métricas registradas no MLflow
-                precision = run.data.metrics.get('precision', None)
-                recall = run.data.metrics.get('recall', None)
-                f1 = run.data.metrics.get('f1', None)
-                
-                if precision and recall and f1:
-                    logger.info(f"  Métricas do MLflow: Precision={precision:.4f}, Recall={recall:.4f}, F1={f1:.4f}")
-                
-                return run_id, threshold, model_uri
-    
-    logger.warning("Nenhum modelo RandomForest encontrado em MLflow.")
-    return None, None, None
-
 def load_model_from_mlflow(model_uri):
     """Carrega um modelo a partir do MLflow usando seu URI."""
     try:
@@ -162,7 +101,113 @@ def load_model_from_mlflow(model_uri):
         logger.error(f"Erro ao carregar modelo: {str(e)}")
         return None
 
-# 4. Implementação de técnicas de balanceamento
+# 4. Preparar dados para o modelo usando a mesma função de sanitização
+def prepare_data_for_model(model, df, target_col="target"):
+    """
+    Prepara os dados para serem compatíveis com o modelo usando a mesma
+    função de sanitização que foi usada no treinamento original.
+    
+    Args:
+        model: Modelo treinado
+        df: DataFrame a preparar
+        target_col: Nome da coluna target
+        
+    Returns:
+        X, y preparados para o modelo
+    """
+    logger.info("Preparando dados para compatibilidade com o modelo...")
+    
+    # Criar cópia para evitar modificar o original
+    df_copy = df.copy()
+    
+    # 1. Aplicar a mesma sanitização que foi usada durante o treinamento
+    logger.info("Aplicando sanitização aos nomes das colunas...")
+    column_mapping = sanitize_column_names(df_copy)
+    
+    # 2. Separar features e target
+    X = df_copy.drop(columns=[target_col]) if target_col in df_copy.columns else df_copy.copy()
+    y = df_copy[target_col] if target_col in df_copy.columns else None
+    
+    # 3. Verificar se o modelo tem atributo feature_names_in_
+    if hasattr(model, 'feature_names_in_'):
+        expected_features = set(model.feature_names_in_)
+        actual_features = set(X.columns)
+        
+        missing_features = expected_features - actual_features
+        extra_features = actual_features - expected_features
+        
+        if missing_features:
+            logger.info(f"Adicionando {len(missing_features)} features faltantes")
+            if len(missing_features) <= 5:
+                logger.info(f"  Features faltantes: {missing_features}")
+            else:
+                logger.info(f"  Exemplos de features faltantes: {list(missing_features)[:5]}...")
+            
+            # Criar DataFrame vazio com as colunas faltantes
+            missing_cols = list(missing_features)
+            missing_dict = {col: [0] * len(X) for col in missing_cols}
+            missing_df = pd.DataFrame(missing_dict)
+            
+            # Concatenar com o DataFrame original
+            X = pd.concat([X, missing_df], axis=1)
+        
+        if extra_features:
+            logger.info(f"Removendo {len(extra_features)} features extras que o modelo não espera")
+            if len(extra_features) <= 5:
+                logger.info(f"  Features extras: {extra_features}")
+            else:
+                logger.info(f"  Exemplos de features extras: {list(extra_features)[:5]}...")
+            
+            # Remover features extras
+            X = X.drop(columns=list(extra_features))
+        
+        # Garantir a ordem exata das colunas como esperado pelo modelo
+        X = X[model.feature_names_in_]
+        logger.info(f"Dados preparados com {len(model.feature_names_in_)} features na ordem correta")
+    
+    # 4. Converter inteiros para float como no script original
+    for col in X.columns:
+        if pd.api.types.is_integer_dtype(X[col].dtype):
+            X.loc[:, col] = X[col].astype(float)
+    
+    return X, y
+
+# 5. Pré-processamento para imputação de valores faltantes
+def impute_missing_values(X):
+    """
+    Imputa valores faltantes no DataFrame para compatibilidade com SMOTE.
+    
+    Args:
+        X: DataFrame com features
+        
+    Returns:
+        DataFrame com valores faltantes imputados
+    """
+    logger.info("Imputando valores faltantes para compatibilidade com SMOTE...")
+    
+    # Verificar se há valores faltantes
+    missing_count = X.isna().sum().sum()
+    if missing_count == 0:
+        logger.info("Não há valores faltantes para imputar.")
+        return X
+    
+    logger.info(f"Total de valores faltantes: {missing_count}")
+    
+    # Usar SimpleImputer para substituir valores NaN com a média
+    imputer = SimpleImputer(strategy='mean')
+    X_imputed = pd.DataFrame(imputer.fit_transform(X), columns=X.columns)
+    
+    # Verificar se ainda há valores faltantes após imputação
+    remaining_missing = X_imputed.isna().sum().sum()
+    if remaining_missing > 0:
+        logger.warning(f"Ainda restam {remaining_missing} valores faltantes após imputação!")
+        # Substituir qualquer NaN remanescente com 0
+        X_imputed.fillna(0, inplace=True)
+    
+    logger.info("Imputação de valores faltantes concluída.")
+    return X_imputed
+
+# 6. Implementação de técnicas de balanceamento
 def apply_balancing_technique(X_train, y_train, technique='smote', random_state=42):
     """Aplica uma técnica de balanceamento específica aos dados de treino"""
     logger.info(f"Aplicando técnica de balanceamento: {technique}")
@@ -186,9 +231,12 @@ def apply_balancing_technique(X_train, y_train, technique='smote', random_state=
         original_dist = np.bincount(y_train)
         logger.info(f"Distribuição original: {original_dist}")
         
+        # Verificar e imputar valores faltantes antes do balanceamento
+        X_train_imputed = impute_missing_values(X_train)
+        
         # Aplicar técnica de balanceamento
         start_time = time.time()
-        X_resampled, y_resampled = balancing_techniques[technique].fit_resample(X_train, y_train)
+        X_resampled, y_resampled = balancing_techniques[technique].fit_resample(X_train_imputed, y_train)
         elapsed_time = time.time() - start_time
         
         # Registrar nova distribuição
@@ -203,66 +251,111 @@ def apply_balancing_technique(X_train, y_train, technique='smote', random_state=
         logger.error(f"Erro ao aplicar técnica de balanceamento {technique}: {str(e)}")
         return X_train, y_train
 
-# 5. Implementação de ajuste de threshold
+# 7. Implementação de ajuste de threshold
 def find_optimal_threshold(y_true, y_prob, metric='f1', beta=1.0):
     """Encontra o threshold ótimo com base na métrica especificada"""
-    logger.info(f"Buscando threshold ótimo baseado em {metric}")
+    logger.info(f"Buscando threshold ótimo baseado em {metric} (beta={beta if metric=='f_beta' else 1.0})")
     
     precision, recall, thresholds = precision_recall_curve(y_true, y_prob)
     
-    # Adicionar threshold=1.0 (omitido pela função precision_recall_curve)
-    thresholds = np.append(thresholds, 1.0)
+    # Garantir que tenhamos arrays de tamanhos compatíveis para o plot
+    # precision e recall têm um elemento a mais que thresholds
+    plot_precision = precision[:-1]
+    plot_recall = recall[:-1]
+    
+    # Verificar e garantir que os tamanhos sejam compatíveis
+    if len(thresholds) != len(plot_precision):
+        logger.warning(f"Incompatibilidade de tamanhos: thresholds={len(thresholds)}, precision={len(plot_precision)}")
+        # Ajustar tamanhos se necessário
+        min_len = min(len(thresholds), len(plot_precision))
+        thresholds = thresholds[:min_len]
+        plot_precision = plot_precision[:min_len]
+        plot_recall = plot_recall[:min_len]
     
     if metric == 'f1':
         # Calcular F1 para cada threshold
-        f1_scores = (2 * precision * recall) / (precision + recall + 1e-8)
+        f1_scores = (2 * plot_precision * plot_recall) / (plot_precision + plot_recall + 1e-8)
         best_idx = np.argmax(f1_scores)
-        best_threshold = thresholds[best_idx]
+        best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
         best_score = f1_scores[best_idx]
         logger.info(f"Melhor threshold para F1: {best_threshold:.4f} (F1={best_score:.4f})")
     
     elif metric == 'f_beta':
         # Calcular F-beta para cada threshold
-        f_beta_scores = ((1 + beta**2) * precision * recall) / (beta**2 * precision + recall + 1e-8)
+        f_beta_scores = ((1 + beta**2) * plot_precision * plot_recall) / (beta**2 * plot_precision + plot_recall + 1e-8)
         best_idx = np.argmax(f_beta_scores)
-        best_threshold = thresholds[best_idx]
+        best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
         best_score = f_beta_scores[best_idx]
         logger.info(f"Melhor threshold para F-beta (beta={beta}): {best_threshold:.4f} (Score={best_score:.4f})")
     
+    elif metric == 'recall_precision_constraint':
+        # Encontrar o threshold que maximiza recall com precision >= 0.85
+        valid_idx = plot_precision >= 0.85
+        
+        if np.any(valid_idx):
+            # Filtrar apenas os thresholds que satisfazem a constraint
+            valid_recalls = plot_recall[valid_idx]
+            valid_thresholds = thresholds[valid_idx]
+            
+            # Encontrar o índice de maximum recall
+            best_idx = np.argmax(valid_recalls)
+            best_threshold = valid_thresholds[best_idx]
+            best_precision = plot_precision[valid_idx][best_idx]
+            best_recall = valid_recalls[best_idx]
+            
+            logger.info(f"Melhor threshold para recall com precision >= 0.85: {best_threshold:.4f}")
+            logger.info(f"Precision: {best_precision:.4f}, Recall: {best_recall:.4f}")
+        else:
+            # Se nenhum threshold atende a constraint
+            logger.warning("Nenhum threshold satisfaz precision >= 0.85")
+            # Usar o threshold com maior precisão
+            best_idx = np.argmax(plot_precision)
+            best_threshold = thresholds[best_idx]
+            logger.info(f"Usando threshold com maior precisão: {best_threshold:.4f}")
+            
+        best_score = 0  # Não relevante nesse caso
+    
     else:
         # Usar F1 como padrão
-        f1_scores = (2 * precision * recall) / (precision + recall + 1e-8)
+        f1_scores = (2 * plot_precision * plot_recall) / (plot_precision + plot_recall + 1e-8)
         best_idx = np.argmax(f1_scores)
-        best_threshold = thresholds[best_idx]
+        best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
         best_score = f1_scores[best_idx]
         logger.info(f"Melhor threshold: {best_threshold:.4f} (F1={best_score:.4f})")
     
     # Criar plot da curva precision-recall e threshold
-    plt.figure(figsize=(10, 6))
-    plt.plot(thresholds, precision[:-1], 'b--', label='Precisão')
-    plt.plot(thresholds, recall[:-1], 'g-', label='Recall')
-    
-    if metric == 'f1':
-        plt.plot(thresholds, f1_scores[:-1], 'r-.', label='F1 Score')
-    elif metric == 'f_beta':
-        plt.plot(thresholds, f_beta_scores[:-1], 'r-.', label=f'F-beta (beta={beta})')
-    
-    plt.axvline(x=best_threshold, color='k', linestyle=':',
-               label=f'Threshold ótimo: {best_threshold:.3f}')
-    plt.xlabel('Threshold')
-    plt.ylabel('Score')
-    plt.title(f'Efeito do Threshold na Performance - Métrica: {metric}')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    
-    # Salvar plot
-    threshold_plot_path = os.path.join(REPORT_DIR, f"threshold_optimization_{metric}.png")
-    plt.savefig(threshold_plot_path)
-    plt.close()
+    try:
+        plt.figure(figsize=(10, 6))
+        plt.plot(thresholds, plot_precision, 'b--', label='Precisão')
+        plt.plot(thresholds, plot_recall, 'g-', label='Recall')
+        
+        if metric == 'f1':
+            plt.plot(thresholds, f1_scores, 'r-.', label='F1 Score')
+        elif metric == 'f_beta':
+            plt.plot(thresholds, f_beta_scores, 'r-.', label=f'F-beta (beta={beta})')
+        
+        plt.axvline(x=best_threshold, color='k', linestyle=':',
+                   label=f'Threshold ótimo: {best_threshold:.3f}')
+        
+        # Adicionar linha para threshold de precision = 0.85
+        plt.axhline(y=0.85, color='m', linestyle='--', label='Precision = 0.85')
+        
+        plt.xlabel('Threshold')
+        plt.ylabel('Score')
+        plt.title(f'Efeito do Threshold na Performance - Métrica: {metric}')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Salvar plot
+        threshold_plot_path = os.path.join(REPORT_DIR, f"threshold_optimization_{metric}.png")
+        plt.savefig(threshold_plot_path)
+        plt.close()
+    except Exception as e:
+        logger.warning(f"Erro ao criar gráfico de threshold: {str(e)}")
     
     return best_threshold, best_score
 
-# 6. Implementação de class weights
+# 8. Implementação de class weights
 def calculate_class_weights(y, strategy='balanced'):
     """Calcula os pesos para cada classe com base na estratégia especificada"""
     logger.info(f"Calculando pesos de classe com estratégia: {strategy}")
@@ -285,6 +378,14 @@ def calculate_class_weights(y, strategy='balanced'):
         logger.info(f"Pesos 'custom': {weights}")
         return weights
     
+    elif strategy == 'extreme':
+        # Pesos extremos para priorizar muito a classe minoritária
+        neg_weight = 1.0
+        pos_weight = class_counts[0] / class_counts[1] * 5  # 5x o peso balanceado
+        weights = {0: neg_weight, 1: pos_weight}
+        logger.info(f"Pesos 'extreme': {weights}")
+        return weights
+    
     elif isinstance(strategy, dict):
         # Usar pesos fornecidos diretamente
         logger.info(f"Usando pesos personalizados: {strategy}")
@@ -295,7 +396,7 @@ def calculate_class_weights(y, strategy='balanced'):
         weights = n_samples / (n_classes * class_counts)
         return {i: w for i, w in enumerate(weights)}
 
-# 7. Avaliação de modelo
+# 9. Avaliação de modelo
 def evaluate_model(model, X, y, threshold=0.5, prefix=""):
     """Avalia o modelo com métricas detalhadas"""
     logger.info(f"Avaliando modelo {'('+prefix+')' if prefix else ''}")
@@ -309,14 +410,18 @@ def evaluate_model(model, X, y, threshold=0.5, prefix=""):
     cm = confusion_matrix(y, y_pred)
     
     # Extrair métricas principais
-    precision = report['1']['precision']
-    recall = report['1']['recall']
-    f1 = report['1']['f1-score']
+    precision = report['1']['precision'] if '1' in report else 0
+    recall = report['1']['recall'] if '1' in report else 0
+    f1 = report['1']['f1-score'] if '1' in report else 0
+    
+    # Calcular F2-score (dá mais peso ao recall)
+    f2 = fbeta_score(y, y_pred, beta=2.0)
     
     logger.info(f"Threshold usado: {threshold:.4f}")
     logger.info(f"Precision: {precision:.4f}")
     logger.info(f"Recall: {recall:.4f}")
     logger.info(f"F1 Score: {f1:.4f}")
+    logger.info(f"F2 Score: {f2:.4f}")
     logger.info(f"Matriz de confusão:\n{cm}")
     
     # Visualizar matriz de confusão
@@ -354,69 +459,65 @@ def evaluate_model(model, X, y, threshold=0.5, prefix=""):
         'precision': precision,
         'recall': recall,
         'f1': f1,
+        'f2': f2,
         'confusion_matrix': cm,
         'y_prob': y_prob,
         'y_pred': y_pred
     }
 
-# 8. Execução de experimentos
+# 10. Execução de experimentos
 def run_experiments(train_df, valid_df, model, target_col, experiments=None):
     """Executa uma série de experimentos e avalia os resultados"""
     logger.info("=== Iniciando experimentos de balanceamento ===")
     
-    # Separar features e target
-    X_train = train_df.drop(columns=[target_col])
-    y_train = train_df[target_col]
-    X_valid = valid_df.drop(columns=[target_col])
-    y_valid = valid_df[target_col]
+    # Primeiro preparar os dados para serem compatíveis com o modelo
+    X_train, y_train = prepare_data_for_model(model, train_df, target_col)
+    X_valid, y_valid = prepare_data_for_model(model, valid_df, target_col)
     
     # Definir experimentos padrão se nenhum for especificado
     if experiments is None:
         experiments = [
-            # Baseline (sem balanceamento, threshold padrão)
-            {'name': 'baseline', 'balancing': None, 'threshold': 0.5, 'class_weight': None},
+            # Baseline (sem balanceamento, usando threshold do MLflow)
+            {'name': 'baseline_mlflow', 'balancing': None, 'threshold': 0.12, 'class_weight': None},
             
-            # Apenas threshold otimizado (sem balanceamento)
-            {'name': 'optimal_threshold', 'balancing': None, 'threshold': 'optimal', 'class_weight': None},
+            # Threshold para maximizar recall com precision >= 0.85
+            {'name': 'recall_precision_constraint', 'balancing': None, 'threshold': 'recall_precision_constraint', 'class_weight': None},
             
-            # Apenas class weights
-            {'name': 'class_weights', 'balancing': None, 'threshold': 0.5, 'class_weight': 'balanced'},
-            {'name': 'custom_weights', 'balancing': None, 'threshold': 0.5, 'class_weight': 'custom'},
+            # Pesos extremos para classe minoritária
+            {'name': 'extreme_weights', 'balancing': None, 'threshold': 0.5, 'class_weight': 'extreme'},
+            {'name': 'extreme_weights_optimal', 'balancing': None, 'threshold': 'optimal', 'class_weight': 'extreme'},
             
-            # Class weights + threshold otimizado
-            {'name': 'weights_threshold', 'balancing': None, 'threshold': 'optimal', 'class_weight': 'balanced'},
+            # F-beta com diferentes betas
+            {'name': 'f2_score', 'balancing': None, 'threshold': 'f_beta', 'threshold_params': {'beta': 2.0}, 'class_weight': 'balanced'},
+            {'name': 'f3_score', 'balancing': None, 'threshold': 'f_beta', 'threshold_params': {'beta': 3.0}, 'class_weight': 'balanced'},
             
-            # Balanceamento com threshold padrão
-            {'name': 'smote', 'balancing': 'smote', 'threshold': 0.5, 'class_weight': None},
-            {'name': 'smote_tomek', 'balancing': 'smote_tomek', 'threshold': 0.5, 'class_weight': None},
-            {'name': 'smote_enn', 'balancing': 'smote_enn', 'threshold': 0.5, 'class_weight': None},
+            # Usar F2 com pesos extremos
+            {'name': 'f2_extreme_weights', 'balancing': None, 'threshold': 'f_beta', 'threshold_params': {'beta': 2.0}, 'class_weight': 'extreme'},
             
-            # Balanceamento + threshold otimizado
-            {'name': 'smote_optimal', 'balancing': 'smote', 'threshold': 'optimal', 'class_weight': None},
-            {'name': 'smote_tomek_optimal', 'balancing': 'smote_tomek', 'threshold': 'optimal', 'class_weight': None},
+            # Random Forest com mais estimadores
+            {'name': 'more_estimators', 'balancing': None, 'threshold': 'optimal', 'class_weight': 'balanced', 'n_estimators': 200},
             
-            # Combinações completas
-            {'name': 'smote_weights_optimal', 'balancing': 'smote', 'threshold': 'optimal', 'class_weight': 'balanced'},
+            # Combinação de técnicas
+            {'name': 'combined_approach', 'balancing': 'random_over', 'threshold': 'f_beta', 'threshold_params': {'beta': 2.0}, 'class_weight': 'balanced'}
         ]
     
     # Resultados para cada experimento
     results = {}
     
-    # Avaliar baseline primeiro (modelo original)
-    baseline_results = evaluate_model(model, X_valid, y_valid, threshold=0.5, prefix="baseline")
-    results['baseline'] = baseline_results
-    
-    # Encontrar threshold ótimo usando o modelo original
-    optimal_threshold, _ = find_optimal_threshold(y_valid, baseline_results['y_prob'])
+    # Avaliar baseline primeiro (modelo original com threshold do MLflow)
+    baseline_results = evaluate_model(model, X_valid, y_valid, threshold=0.12, prefix="baseline_mlflow")
+    results['baseline_mlflow'] = baseline_results
     
     # Executar cada experimento
     for exp in experiments:
         exp_name = exp['name']
-        balancing = exp['balancing']
-        threshold_strategy = exp['threshold']
-        class_weight_strategy = exp['class_weight']
+        balancing = exp.get('balancing')
+        threshold_strategy = exp.get('threshold')
+        threshold_params = exp.get('threshold_params', {})
+        class_weight_strategy = exp.get('class_weight')
+        n_estimators = exp.get('n_estimators', 100)
         
-        if exp_name == 'baseline':
+        if exp_name == 'baseline_mlflow':
             # Já avaliado, pular
             continue
         
@@ -424,6 +525,7 @@ def run_experiments(train_df, valid_df, model, target_col, experiments=None):
         logger.info(f"Balanceamento: {balancing}")
         logger.info(f"Threshold: {threshold_strategy}")
         logger.info(f"Class Weight: {class_weight_strategy}")
+        logger.info(f"N Estimators: {n_estimators}")
         
         # Aplicar balanceamento se especificado
         if balancing:
@@ -439,10 +541,11 @@ def run_experiments(train_df, valid_df, model, target_col, experiments=None):
         
         # Treinar novo modelo com os dados balanceados/pesos
         exp_model = RandomForestClassifier(
-            n_estimators=100,  # Usar mesmo número que o modelo original
+            n_estimators=n_estimators,
             random_state=42,
             class_weight=class_weights,
-            n_jobs=-1
+            n_jobs=-1,
+            max_depth=15  # Aumentar profundidade para capturar padrões mais complexos
         )
         
         logger.info(f"Treinando modelo para experimento {exp_name}...")
@@ -455,6 +558,19 @@ def run_experiments(train_df, valid_df, model, target_col, experiments=None):
             
             # Encontrar threshold ótimo
             threshold, _ = find_optimal_threshold(y_valid, y_valid_prob)
+        elif threshold_strategy == 'f_beta':
+            # Fazer previsões no conjunto de validação
+            y_valid_prob = exp_model.predict_proba(X_valid)[:, 1]
+            
+            # Encontrar threshold ótimo para F-beta
+            beta = threshold_params.get('beta', 2.0)
+            threshold, _ = find_optimal_threshold(y_valid, y_valid_prob, metric='f_beta', beta=beta)
+        elif threshold_strategy == 'recall_precision_constraint':
+            # Fazer previsões no conjunto de validação
+            y_valid_prob = exp_model.predict_proba(X_valid)[:, 1]
+            
+            # Encontrar threshold que maximiza recall com precision >= 0.85
+            threshold, _ = find_optimal_threshold(y_valid, y_valid_prob, metric='recall_precision_constraint')
         else:
             threshold = float(threshold_strategy)
         
@@ -467,7 +583,7 @@ def run_experiments(train_df, valid_df, model, target_col, experiments=None):
             logger.info(f"*** Experimento {exp_name} atende aos critérios de desempenho! ***")
             
             # Salvar modelo
-            model_path = os.path.join(MODEL_DIR, "enhanced_model.joblib")
+            model_path = os.path.join(MODEL_DIR, f"enhanced_model_{exp_name}.joblib")
             joblib.dump(exp_model, model_path)
             logger.info(f"Modelo salvo em {model_path}")
             
@@ -477,31 +593,40 @@ def run_experiments(train_df, valid_df, model, target_col, experiments=None):
                 'balancing_technique': balancing,
                 'threshold': threshold,
                 'class_weights': class_weights,
+                'n_estimators': n_estimators,
                 'precision': exp_results['precision'],
                 'recall': exp_results['recall'],
                 'f1': exp_results['f1'],
+                'f2': exp_results['f2'],
                 'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
             
             # Salvar metadados
-            model_info_path = os.path.join(MODEL_DIR, "enhanced_model_info.json")
+            model_info_path = os.path.join(MODEL_DIR, f"enhanced_model_{exp_name}_info.json")
             import json
             with open(model_info_path, 'w') as f:
-                json.dump(model_info, f, indent=4)
+                json.dump(model_info, f, indent=4, default=str)  # default=str para serializar objetos não padrão
             
             # Salvar dados balanceados para treino futuro
             if balancing:
-                balanced_df = pd.DataFrame(X_resampled, columns=X_train.columns)
+                # Reconstruir DataFrame com as features originais
+                balanced_df = pd.DataFrame(X_resampled, columns=model.feature_names_in_)
                 balanced_df[target_col] = y_resampled
                 balanced_output_path = os.path.join(OUTPUT_DIR, f"train_balanced_{exp_name}.csv")
                 balanced_df.to_csv(balanced_output_path, index=False)
                 logger.info(f"Dados de treino balanceados salvos em {balanced_output_path}")
                 
                 # Copiar dados de validação e teste
-                valid_df.to_csv(os.path.join(OUTPUT_DIR, "validation.csv"), index=False)
+                valid_df_prepared = pd.DataFrame(X_valid, columns=model.feature_names_in_)
+                valid_df_prepared[target_col] = y_valid
+                valid_df_prepared.to_csv(os.path.join(OUTPUT_DIR, "validation.csv"), index=False)
+                
                 if os.path.exists(os.path.join(INPUT_DIR, TEST_FILE)):
                     test_df = pd.read_csv(os.path.join(INPUT_DIR, TEST_FILE))
-                    test_df.to_csv(os.path.join(OUTPUT_DIR, "test.csv"), index=False)
+                    X_test, y_test = prepare_data_for_model(model, test_df, target_col)
+                    test_df_prepared = pd.DataFrame(X_test, columns=model.feature_names_in_)
+                    test_df_prepared[target_col] = y_test
+                    test_df_prepared.to_csv(os.path.join(OUTPUT_DIR, "test.csv"), index=False)
         else:
             logger.info(f"Experimento {exp_name} não atende aos critérios de desempenho")
     
@@ -510,7 +635,7 @@ def run_experiments(train_df, valid_df, model, target_col, experiments=None):
     
     return results
 
-# 9. Geração de relatório comparativo
+# 11. Geração de relatório comparativo
 def generate_comparison_report(results):
     """Gera um relatório comparativo dos experimentos"""
     logger.info("Gerando relatório comparativo dos experimentos")
@@ -523,54 +648,80 @@ def generate_comparison_report(results):
             'Threshold': exp_results['threshold'],
             'Precision': exp_results['precision'],
             'Recall': exp_results['recall'],
-            'F1 Score': exp_results['f1']
+            'F1 Score': exp_results['f1'],
+            'F2 Score': exp_results['f2']
         })
     
     # Converter para DataFrame e ordenar por F1
     summary_df = pd.DataFrame(summary)
-    summary_df = summary_df.sort_values('F1 Score', ascending=False)
+    
+    # Criar duas versões ordenadas - uma por F1 e outra por F2
+    summary_df_f1 = summary_df.sort_values('F1 Score', ascending=False)
+    summary_df_f2 = summary_df.sort_values('F2 Score', ascending=False)
     
     # Salvar tabela comparativa
     summary_path = os.path.join(REPORT_DIR, "experimentos_comparacao.csv")
-    summary_df.to_csv(summary_path, index=False)
+    summary_df_f1.to_csv(summary_path, index=False)
     
-    # Gerar visualização comparativa
+    # Gerar visualização comparativa para F1
     plt.figure(figsize=(12, 8))
+    x = np.arange(len(summary_df_f1))
+    width = 0.2
     
-    # Ordenar experimentos por F1 para visualização
-    sorted_indices = summary_df.index
-    exp_names = summary_df['Experimento']
-    
-    # Criar barras lado a lado para cada métrica
-    x = np.arange(len(exp_names))
-    width = 0.25
-    
-    plt.bar(x - width, summary_df['Precision'], width, label='Precision')
-    plt.bar(x, summary_df['Recall'], width, label='Recall')
-    plt.bar(x + width, summary_df['F1 Score'], width, label='F1 Score')
+    plt.bar(x - width*1.5, summary_df_f1['Precision'], width, label='Precision')
+    plt.bar(x - width/2, summary_df_f1['Recall'], width, label='Recall')
+    plt.bar(x + width/2, summary_df_f1['F1 Score'], width, label='F1 Score')
+    plt.bar(x + width*1.5, summary_df_f1['F2 Score'], width, label='F2 Score')
     
     plt.xlabel('Experimento')
     plt.ylabel('Score')
-    plt.title('Comparação de Experimentos')
-    plt.xticks(x, exp_names, rotation=45, ha='right')
+    plt.title('Comparação de Experimentos (ordenado por F1)')
+    plt.xticks(x, summary_df_f1['Experimento'], rotation=45, ha='right')
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     
     # Salvar visualização
-    plot_path = os.path.join(REPORT_DIR, "experimentos_comparacao.png")
+    plot_path = os.path.join(REPORT_DIR, "experimentos_comparacao_f1.png")
     plt.savefig(plot_path)
     plt.close()
     
-    logger.info(f"Relatório comparativo salvo em {summary_path}")
-    logger.info(f"Visualização comparativa salva em {plot_path}")
+    # Gerar visualização comparativa para F2
+    plt.figure(figsize=(12, 8))
+    x = np.arange(len(summary_df_f2))
     
-    # Exibir resultados ordenados
+    plt.bar(x - width*1.5, summary_df_f2['Precision'], width, label='Precision')
+    plt.bar(x - width/2, summary_df_f2['Recall'], width, label='Recall')
+    plt.bar(x + width/2, summary_df_f2['F1 Score'], width, label='F1 Score')
+    plt.bar(x + width*1.5, summary_df_f2['F2 Score'], width, label='F2 Score')
+    
+    plt.xlabel('Experimento')
+    plt.ylabel('Score')
+    plt.title('Comparação de Experimentos (ordenado por F2)')
+    plt.xticks(x, summary_df_f2['Experimento'], rotation=45, ha='right')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    # Salvar visualização
+    plot_path_f2 = os.path.join(REPORT_DIR, "experimentos_comparacao_f2.png")
+    plt.savefig(plot_path_f2)
+    plt.close()
+    
+    logger.info(f"Relatório comparativo salvo em {summary_path}")
+    logger.info(f"Visualizações comparativas salvas em {plot_path} e {plot_path_f2}")
+    
+    # Exibir resultados ordenados por F1
     logger.info("\n=== Resultados dos Experimentos (ordenados por F1) ===")
-    for i, row in summary_df.iterrows():
-        logger.info(f"{row['Experimento']}: Precision={row['Precision']:.4f}, Recall={row['Recall']:.4f}, F1={row['F1 Score']:.4f}")
+    for i, row in summary_df_f1.iterrows():
+        logger.info(f"{row['Experimento']}: Precision={row['Precision']:.4f}, Recall={row['Recall']:.4f}, F1={row['F1 Score']:.4f}, F2={row['F2 Score']:.4f}")
+    
+    # Exibir resultados ordenados por F2 (enfatiza recall)
+    logger.info("\n=== Resultados dos Experimentos (ordenados por F2) ===")
+    for i, row in summary_df_f2.iterrows():
+        logger.info(f"{row['Experimento']}: Precision={row['Precision']:.4f}, Recall={row['Recall']:.4f}, F1={row['F1 Score']:.4f}, F2={row['F2 Score']:.4f}")
 
-# 10. Função principal
+# 12. Função principal
 def main():
     """Função principal que orquestra todo o processo"""
     logger.info("=== Iniciando experimentos de balanceamento e cost-sensitive learning ===")
@@ -603,8 +754,23 @@ def main():
         
         if success:
             logger.info("=== Sucesso! Pelo menos um experimento atendeu aos critérios de desempenho ===")
+            
+            # Identificar o melhor experimento por F1 e F2
+            best_f1_exp = max(results.items(), key=lambda x: x[1]['f1'])
+            best_f2_exp = max(results.items(), key=lambda x: x[1]['f2'])
+            
+            logger.info(f"Melhor experimento por F1: {best_f1_exp[0]}")
+            logger.info(f"Precision: {best_f1_exp[1]['precision']:.4f}, Recall: {best_f1_exp[1]['recall']:.4f}, F1: {best_f1_exp[1]['f1']:.4f}")
+            
+            logger.info(f"Melhor experimento por F2: {best_f2_exp[0]}")
+            logger.info(f"Precision: {best_f2_exp[1]['precision']:.4f}, Recall: {best_f2_exp[1]['recall']:.4f}, F2: {best_f2_exp[1]['f2']:.4f}")
         else:
             logger.info("=== Nenhum experimento atendeu aos critérios de desempenho ===")
+            
+            # Identificar o experimento que chegou mais perto
+            closest_exp = max(results.items(), key=lambda x: (x[1]['precision'] >= 0.85) * x[1]['recall'])
+            logger.info(f"Experimento mais próximo: {closest_exp[0]}")
+            logger.info(f"Precision: {closest_exp[1]['precision']:.4f}, Recall: {closest_exp[1]['recall']:.4f}, F1: {closest_exp[1]['f1']:.4f}")
         
         # Log final
         logger.info("Experimentos concluídos. Consulte o relatório comparativo para detalhes.")

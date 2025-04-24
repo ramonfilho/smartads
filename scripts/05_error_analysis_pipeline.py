@@ -137,14 +137,14 @@ def load_datasets(train_path=None, val_path=None):
     """
     # Definir caminhos padrão se não fornecidos
     if not train_path:
-        train_path = os.path.join(project_root, "data", "feature_selection", "train.csv")
+        train_path = os.path.join(project_root, "data", "03_feature_selection_text_code6", "train.csv")
         if not os.path.exists(train_path):
-            train_path = os.path.join(os.path.expanduser("~"), "desktop", "smart_ads", "data", "feature_selection", "train.csv")
+            train_path = os.path.join(os.path.expanduser("~"), "desktop", "smart_ads", "data", "03_feature_selection_text_code6", "train.csv")
     
     if not val_path:
-        val_path = os.path.join(project_root, "data", "feature_selection", "validation.csv")
+        val_path = os.path.join(project_root, "data", "03_feature_selection_text_code6", "validation.csv")
         if not os.path.exists(val_path):
-            val_path = os.path.join(os.path.expanduser("~"), "desktop", "smart_ads", "data", "feature_selection", "validation.csv")
+            val_path = os.path.join(os.path.expanduser("~"), "desktop", "smart_ads", "data", "03_feature_selection_text_code6", "validation.csv")
     
     # Carregar os dados
     print(f"Carregando dados de treino: {train_path}")
