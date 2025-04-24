@@ -16,8 +16,8 @@ from src.evaluation.mlflow_utils import setup_mlflow_tracking, get_data_hash
 
 # 1. Configuração de caminhos
 base_dir = os.path.expanduser("~")
-train_path = os.path.join(base_dir, "desktop/smart_ads/data/03_feature_selection_textv2/train.csv")
-val_path = os.path.join(base_dir, "desktop/smart_ads/data/03_feature_selection_textv2/validation.csv")
+train_path = os.path.join(base_dir, "desktop/smart_ads/data/03_4_feature_selection_rf/train.csv")
+val_path = os.path.join(base_dir, "desktop/smart_ads/data/03_4_feature_selection_rf/validation.csv")
 mlflow_dir = os.path.join(base_dir, "desktop/smart_ads/models/mlflow")
 artifact_dir = os.path.join(base_dir, "desktop/smart_ads/models/artifacts")
 

@@ -39,7 +39,7 @@ except LookupError:
 # Define paths
 INPUT_DIR_BASIC = "/Users/ramonmoreira/desktop/smart_ads/data/02_processed"
 INPUT_DIR_TEXT = "/Users/ramonmoreira/desktop/smart_ads/data/02_processed_text"
-OUTPUT_DIR = "/Users/ramonmoreira/desktop/smart_ads/data/02_processed_text_v2"
+OUTPUT_DIR = "/Users/ramonmoreira/desktop/smart_ads/data/02_processed_text_code6"
 
 # Create output directory if it doesn't exist
 os.makedirs(OUTPUT_DIR, exist_ok=True)

@@ -276,10 +276,10 @@ def select_features_rf(X, y, feature_names, importance_results, stability_result
         # Se não houver declínio claro, usar abordagem de percentil
         max_diff_idx = np.argmax(diff)
         if diff[max_diff_idx] < 0.001:  # Se a maior diferença é pequena
-            # Usar percentil para selecionar as top 15% features
-            percentile_threshold = np.percentile(importances, 85)
-            threshold = max(percentile_threshold, 0.001)
-            print(f"  Usando threshold baseado em percentil: {threshold:.6f} (top 15% features)")
+            # Usar percentil para selecionar as top 25% features (para aumentar para ~200 features)
+            percentile_threshold = np.percentile(importances, 75)  # Reduzido para aumentar número de features
+            threshold = max(percentile_threshold, 0.0008)  # Threshold menor para incluir mais features
+            print(f"  Usando threshold baseado em percentil: {threshold:.6f} (top 25% features)")
         else:
             # Encontrar o maior declínio na importância
             elbow_idx = max_diff_idx + 1
@@ -289,14 +289,14 @@ def select_features_rf(X, y, feature_names, importance_results, stability_result
             print(f"  Usando threshold baseado no método do cotovelo: {threshold:.6f}")
         
         # Garantir pelo menos um número mínimo de features
-        min_features = min(100, len(feature_names) // 8)
+        min_features = min(200, len(feature_names) // 5)  # Aumentado para 200
         if sum(importances >= threshold) < min_features:
             # Ajustar threshold para incluir pelo menos min_features
             threshold = sorted_imp[min_features-1]
             print(f"  Ajustando threshold para incluir pelo menos {min_features} features: {threshold:.6f}")
         
         # Garantir um número máximo de features para evitar overfitting
-        max_features = 250
+        max_features = 300  # Aumentado para 300
         if sum(importances >= threshold) > max_features:
             # Ajustar threshold para limitar a max_features
             threshold = sorted_imp[max_features-1]
@@ -311,7 +311,7 @@ def select_features_rf(X, y, feature_names, importance_results, stability_result
         # Adicionar features estáveis que estão próximas do threshold
         stable_features = stability_results[stability_results['is_stable'] == True]['feature'].tolist()
         almost_selected = importance_results[
-            (importance_results['importance'] >= threshold * 0.8) & 
+            (importance_results['importance'] >= threshold * 0.7) &  # Reduzido para incluir mais features
             (importance_results['importance'] < threshold)
         ]
         
@@ -714,7 +714,7 @@ def process_datasets(input_dir, output_dir, params_dir=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipeline de análise de importância e seleção de features usando Random Forest.")
-    parser.add_argument("--input-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/data/02_3_processed_text_code6"), 
+    parser.add_argument("--input-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/data/02_4_processed_text_fn_code7"), 
                         help="Diretório contendo os arquivos de entrada (train.csv, validation.csv, test.csv)")
     parser.add_argument("--output-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/data/03_4_feature_selection_rf"), 
                         help="Diretório para salvar os arquivos processados")
