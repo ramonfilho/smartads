@@ -15,6 +15,42 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import f1_score, precision_score, recall_score, average_precision_score
 
+def preprocess_features_for_model(X, model_type):
+    """
+    Pré-processa features para compatibilidade com diferentes tipos de modelos.
+    
+    Args:
+        X: DataFrame com features
+        model_type: Tipo de modelo ('lightgbm', 'xgboost', 'random_forest')
+        
+    Returns:
+        DataFrame processado
+    """
+    import pandas as pd
+    from sklearn.preprocessing import LabelEncoder
+    
+    # Cria uma cópia para não modificar o original
+    X_processed = X.copy()
+    
+    # Para modelos baseados em árvores, precisamos converter categóricas
+    if model_type in ['lightgbm', 'xgboost']:
+        # Identificar colunas categóricas (object, string, category)
+        cat_columns = X_processed.select_dtypes(include=['object', 'category']).columns
+        
+        # Label encoding para cada coluna categórica
+        for col in cat_columns:
+            # Lidar com valores ausentes
+            X_processed[col] = X_processed[col].fillna('unknown')
+            
+            # Aplicar label encoding
+            le = LabelEncoder()
+            X_processed[col] = le.fit_transform(X_processed[col])
+    
+    # Converter todos os valores ausentes para 0
+    X_processed = X_processed.fillna(0)
+    
+    return X_processed
+
 class SpecialistModel:
     """
     Classe base para modelos especialistas.
@@ -53,7 +89,8 @@ class SpecialistModel:
                 'boosting_type': 'gbdt',
                 'verbose': -1,
                 'random_state': 42,
-                'n_jobs': -1
+                'n_jobs': -1,
+                'predict_disable_shape_check': True  # Adicionar este parâmetro
             }
             
             # Parâmetros específicos por tipo de feature
@@ -186,10 +223,16 @@ class SpecialistModel:
         Returns:
             self
         """
+        # Guardar os nomes das colunas de treinamento
+        self.train_columns = X.columns.tolist()
+        
+        # Pré-processar os dados
+        X_processed = preprocess_features_for_model(X, self.model_type)
+        
         self.model = self._create_model()
-        self.model.fit(X, y)
+        self.model.fit(X_processed, y)
         return self
-    
+
     def predict_proba(self, X):
         """
         Gera probabilidades de previsão.
@@ -203,7 +246,22 @@ class SpecialistModel:
         if self.model is None:
             raise ValueError("Modelo não foi treinado. Chame fit() primeiro.")
         
-        return self.model.predict_proba(X)
+        # Garantir que as colunas sejam as mesmas do treinamento
+        if hasattr(self, 'train_columns'):
+            # Verificar quais colunas estão faltando
+            missing_cols = set(self.train_columns) - set(X.columns)
+            
+            # Adicionar colunas ausentes com zeros
+            for col in missing_cols:
+                X[col] = 0
+            
+            # Usar apenas as colunas do treinamento, na mesma ordem
+            X = X[self.train_columns]
+        
+        # Pré-processar os dados
+        X_processed = preprocess_features_for_model(X, self.model_type)
+        
+        return self.model.predict_proba(X_processed)
     
     def predict(self, X, threshold=0.5):
         """
@@ -468,7 +526,10 @@ class StackingEnsemble(BaseEstimator, ClassifierMixin):
                     name=model.name
                 )
                 
-                model_clone.fit(X[feature_type].iloc[train_idx], y.iloc[train_idx])
+                # Aplicar pré-processamento aqui
+                X_train_fold = X[feature_type].iloc[train_idx]
+                
+                model_clone.fit(X_train_fold, y.iloc[train_idx])
                 
                 # Gerar previsões para o conjunto de validação
                 if self.use_proba:
@@ -708,8 +769,17 @@ def prepare_specialist_data(df, feature_groups, target_col="target"):
     # Criar dicionário de features
     X = {}
     
+    # Conjunto de colunas disponíveis
+    available_columns = set(df.columns)
+    
     for group_name, features in feature_groups.items():
         if features:  # Verificar se a lista não está vazia
-            X[group_name] = df[features].copy()
+            # Filtrar apenas as features que existem no DataFrame
+            valid_features = [f for f in features if f in available_columns]
+            
+            if valid_features:  # Verificar se ainda há features válidas
+                X[group_name] = df[valid_features].copy()
+            else:
+                print(f"AVISO: Nenhuma feature válida para o grupo '{group_name}'")
     
     return X, y

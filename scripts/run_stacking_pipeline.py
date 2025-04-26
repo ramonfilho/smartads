@@ -145,8 +145,7 @@ def main():
         print(f"\nCategorizando features usando método: {args.categorize_method}...")
         feature_groups = get_feature_categories(
             train_df, 
-            target_col=args.target_col, 
-            method=args.categorize_method
+            target_col=args.target_col
         )
         
         # Validar e ajustar grupos de features

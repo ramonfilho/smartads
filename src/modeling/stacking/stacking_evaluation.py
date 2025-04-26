@@ -718,9 +718,9 @@ def evaluate_and_log_stacking_ensemble(ensemble, X, y, run_id=None, output_dir=N
     else:
         specialist_results = None
     
-    # Registrar no MLflow
+     # Registrar no MLflow
     if run_id is not None:
-        with mlflow.start_run(run_id=run_id):
+        with mlflow.start_run(run_id=run_id, nested=True):  # Adicionar nested=True aqui
             # Registrar métricas
             mlflow.log_metric("precision", precision)
             mlflow.log_metric("recall", recall)
