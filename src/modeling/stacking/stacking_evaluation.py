@@ -293,8 +293,18 @@ def compare_models(models_dict, X, y, output_dir):
     for model_name, model in models_dict.items():
         print(f"Avaliando modelo: {model_name}")
         
-        # Obter probabilidades
-        y_pred_proba = model.predict_proba(X)[:, 1]
+        # Obter probabilidades - verificar tipo de modelo
+        if hasattr(model, 'feature_type'):
+            # É um modelo especialista
+            feature_type = model.feature_type
+            if isinstance(X, dict) and feature_type in X:
+                y_pred_proba = model.predict_proba(X[feature_type])[:, 1]
+            else:
+                print(f"AVISO: Tipo de feature '{feature_type}' não encontrado para o modelo {model_name}")
+                continue
+        else:
+            # É o modelo ensemble ou outro tipo
+            y_pred_proba = model.predict_proba(X)[:, 1]
         
         # Encontrar threshold ótimo
         threshold, best_f1 = find_optimal_threshold(y, y_pred_proba)
@@ -389,7 +399,7 @@ def analyze_disagreements(models_dict, X, y, output_dir):
     
     Args:
         models_dict: Dicionário com modelos a serem comparados
-        X: Features para predição
+        X: Dicionário com features para cada tipo ou DataFrame com todas as features
         y: Target real
         output_dir: Diretório para salvar resultados
         
@@ -402,17 +412,41 @@ def analyze_disagreements(models_dict, X, y, output_dir):
     # Obter previsões para cada modelo
     model_predictions = {}
     for model_name, model in models_dict.items():
-        y_pred_proba = model.predict_proba(X)[:, 1]
+        # Verificar se é um modelo especialista ou ensemble
+        if hasattr(model, 'feature_type'):  # É um modelo especialista
+            feature_type = model.feature_type
+            # Se X é um dicionário, pegar as features específicas para este especialista
+            if isinstance(X, dict) and feature_type in X:
+                X_model = X[feature_type]
+            else:
+                # Caso o modelo seja um especialista mas X não é um dicionário ou não tem a chave,
+                # assumimos que X já está filtrado para o tipo correto
+                X_model = X
+        else:  # É o ensemble ou outro tipo de modelo
+            # Ensemble já sabe como lidar com o dicionário de features
+            X_model = X
         
-        # Usar threshold ótimo
-        threshold, _ = find_optimal_threshold(y, y_pred_proba)
-        y_pred = (y_pred_proba >= threshold).astype(int)
-        
-        model_predictions[model_name] = {
-            'pred': y_pred,
-            'proba': y_pred_proba,
-            'threshold': threshold
-        }
+        # Gerar previsões
+        try:
+            y_pred_proba = model.predict_proba(X_model)[:, 1]
+            
+            # Usar threshold ótimo
+            threshold, _ = find_optimal_threshold(y, y_pred_proba)
+            y_pred = (y_pred_proba >= threshold).astype(int)
+            
+            model_predictions[model_name] = {
+                'pred': y_pred,
+                'proba': y_pred_proba,
+                'threshold': threshold
+            }
+        except Exception as e:
+            print(f"Erro ao obter previsões para {model_name}: {e}")
+            continue
+    
+    # Se não conseguimos obter previsões para pelo menos 2 modelos, não podemos analisar desacordos
+    if len(model_predictions) < 2:
+        print("Não foi possível obter previsões suficientes para analisar desacordos")
+        return pd.DataFrame(), {}
     
     # Criar DataFrame com todas as previsões
     predictions_df = pd.DataFrame({
@@ -424,7 +458,7 @@ def analyze_disagreements(models_dict, X, y, output_dir):
         predictions_df[f'{model_name}_proba'] = preds['proba']
     
     # Identificar exemplos onde modelos discordam
-    model_names = list(models_dict.keys())
+    model_names = list(model_predictions.keys())
     disagreements = {}
     
     for i in range(len(model_names)):
