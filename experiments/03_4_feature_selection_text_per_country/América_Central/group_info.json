@@ -1,0 +1,10 @@
+{
+  "type": "group",
+  "train_samples": 622,
+  "validation_samples": 136,
+  "test_samples": 137,
+  "countries": [
+    "Costa Rica",
+    "Panam\u00e1"
+  ]
+}

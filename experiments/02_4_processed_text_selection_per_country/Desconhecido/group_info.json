@@ -1,0 +1,9 @@
+{
+  "type": "group",
+  "train_samples": 6037,
+  "validation_samples": 1287,
+  "test_samples": 1343,
+  "countries": [
+    "desconhecido"
+  ]
+}
