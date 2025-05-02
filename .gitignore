@@ -7,6 +7,8 @@ clients/
 V0_to_V3/
 reports
 data copy/
+mlflow/
+mlruns/
 
 # Environments
 .env
