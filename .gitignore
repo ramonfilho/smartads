@@ -9,6 +9,7 @@ reports
 data copy/
 mlflow/
 mlruns/
+*.db
 
 # Environments
 .env
