@@ -25,7 +25,7 @@ from src.evaluation.mlflow_utils import setup_mlflow_tracking, find_optimal_thre
 # Constantes de configuração centralizadas
 CONFIG = {
     'base_dir': os.path.abspath(os.path.dirname(os.path.dirname(__file__))),
-    'data_dir': os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "data/03_3_feature_selection_text_code6"),
+    'data_dir': os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "data/02_3_processed_text_code6"),
     'mlflow_dir': os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "mlflow"),
     'artifact_dir': os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "models/artifacts"),
     'experiment_tuning': "smart_ads_cluster_tuning",

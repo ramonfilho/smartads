@@ -305,10 +305,10 @@ def main():
         args.mlflow_dir = os.path.join(project_root, "models", "mlflow")
     
     if args.data_path is None:
-        args.data_path = os.path.join(project_root, "data", "03_feature_selection_textv2", "train.csv")
+        args.data_path = os.path.join(project_root, "data", "03_3_feature_selection_text_code6", "train.csv")
     
     if args.validation_path is None:
-        args.validation_path = os.path.join(project_root, "data", "03_feature_selection_textv2", "validation.csv")
+        args.validation_path = os.path.join(project_root, "data", "03_3_feature_selection_text_code6", "validation.csv")
     
     if args.baseline_model_path is None:
         # Buscar modelo mais recente no MLflow
