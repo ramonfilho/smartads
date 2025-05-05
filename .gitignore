@@ -1,6 +1,3 @@
-# Crie um .gitignore para projetos de ML
-cat > .gitignore << EOL
-
 # Pastas desnecessárias
 claude/
 clients/
@@ -17,9 +14,13 @@ venv/
 ENV/
 
 # Python cache
-__pycache__/
+**pycache**/
 *.py[cod]
 *$py.class
+
+# Arquivos CSV em experiments (adicionado)
+experiments/**/*.csv
+*.csv
 
 # Distribution / packaging
 dist/
@@ -40,4 +41,3 @@ models/
 
 # Configurações locais
 .vscode/
-EOL
