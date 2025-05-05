@@ -6,6 +6,7 @@ for binary classification, including RandomForest, LightGBM, and XGBoost.
 """
 
 import pandas as pd
+import shutil
 import numpy as np
 import os
 import time
@@ -198,6 +199,10 @@ def train_and_evaluate_model(model, name, X_train, y_train, X_val, y_val,
     Returns:
         Dictionary of results
     """
+    import os
+    import time
+    import shutil
+    
     from src.evaluation.mlflow_utils import (
         plot_confusion_matrix, plot_prob_histogram, plot_precision_recall_curve,
         plot_learning_curve, plot_threshold_analysis, plot_feature_importance,
@@ -210,154 +215,175 @@ def train_and_evaluate_model(model, name, X_train, y_train, X_val, y_val,
     with mlflow.start_run(experiment_id=experiment_id, run_name=f"{name}_baseline") as run:
         run_id = run.info.run_id
         
-        # Register simplified tags
-        mlflow.set_tags({
-            "model_type": name,
-            "experiment_type": "baseline",
-            "class_balance": "weighted",
-            "train_data_hash": train_data_hash,
-            "val_data_hash": val_data_hash,
-            "feature_count": len(feature_cols),
-            "dataset_size": len(X_train),
-            "positive_ratio": float(y_train.mean()),
-            "converted_int_cols": ','.join(integer_columns)
-        })
+        # Criar um diretório temporário específico para este run
+        temp_artifact_dir = os.path.join(artifact_dir, run_id)
+        os.makedirs(temp_artifact_dir, exist_ok=True)
         
-        # Log model parameters
-        mlflow.log_params(model.get_params())
-        
-        # Train model with time measurement
-        start_time = time.time()
-        model.fit(X_train, y_train)
-        train_time = time.time() - start_time
-        mlflow.log_metric("training_time_seconds", train_time)
-        
-        # Make predictions
-        y_pred_proba = model.predict_proba(X_val)[:, 1]
-        
-        # Find optimal threshold
-        threshold_results = find_optimal_threshold(y_val, y_pred_proba)
-        best_threshold = threshold_results['best_threshold']
-        best_f1 = threshold_results['best_f1']
-        best_precision = threshold_results['best_precision']
-        best_recall = threshold_results['best_recall']
-        
-        # Make final predictions with best threshold
-        y_pred = (y_pred_proba >= best_threshold).astype(int)
-        
-        # Calculate metrics
-        from sklearn.metrics import roc_auc_score, average_precision_score
-        auc_score = roc_auc_score(y_val, y_pred_proba)
-        pr_auc = average_precision_score(y_val, y_pred_proba)
-        
-        # Count positive predictions
-        positive_count = y_pred.sum()
-        positive_pct = positive_count / len(y_pred) * 100
-        
-        # Log metrics
-        mlflow.log_metric("precision", best_precision)
-        mlflow.log_metric("recall", best_recall)
-        mlflow.log_metric("f1", best_f1)
-        mlflow.log_metric("threshold", best_threshold)
-        mlflow.log_metric("auc", auc_score)
-        mlflow.log_metric("pr_auc", pr_auc)
-        mlflow.log_metric("positive_predictions", positive_count)
-        mlflow.log_metric("positive_pct", positive_pct)
-        
-        # Create and log visualizations
-        
-        # Threshold analysis plot
-        threshold_fig_path = f"{artifact_dir}/threshold_plot_{name}.png"
-        plot_threshold_analysis(
-            threshold_results['thresholds'], 
-            threshold_results['f1_scores'], 
-            threshold_results['precisions'], 
-            threshold_results['recalls'],
-            best_threshold, name, threshold_fig_path
-        )
-        mlflow.log_artifact(threshold_fig_path)
-        
-        # Confusion matrix
-        cm_fig_path = f"{artifact_dir}/confusion_matrix_{name}.png"
-        plot_confusion_matrix(
-            y_val, y_pred, 
-            f'Matriz de Confusão - {name} (threshold={best_threshold:.2f})', 
-            cm_fig_path
-        )
-        mlflow.log_artifact(cm_fig_path)
-        
-        # Probability histogram
-        hist_fig_path = f"{artifact_dir}/prob_histogram_{name}.png"
-        plot_prob_histogram(
-            y_val, y_pred_proba, best_threshold, 
-            f'Distribuição de Probabilidades - {name}', 
-            hist_fig_path
-        )
-        mlflow.log_artifact(hist_fig_path)
-        
-        # Precision-recall curve
-        pr_curve_path = f"{artifact_dir}/pr_curve_{name}.png"
-        plot_precision_recall_curve(
-            y_val, y_pred_proba, 
-            f'Curva Precision-Recall - {name}', 
-            pr_curve_path
-        )
-        mlflow.log_artifact(pr_curve_path)
-        
-        # Generate learning curve if requested
-        if generate_learning_curves:
-            learning_curve_path = f"{artifact_dir}/learning_curve_{name}.png"
-            plot_learning_curve(
-                model, X_train, y_train, 
-                model_name=name.capitalize(), 
-                filename=learning_curve_path
+        try:
+            # Register tags
+            mlflow.set_tag("model_type", name)
+            mlflow.set_tag("experiment_type", "baseline")
+            mlflow.set_tag("class_balance", "weighted")
+            mlflow.set_tag("train_data_hash", train_data_hash)
+            mlflow.set_tag("val_data_hash", val_data_hash)
+            mlflow.set_tag("feature_count", len(feature_cols))
+            mlflow.set_tag("dataset_size", len(X_train))
+            mlflow.set_tag("positive_ratio", float(y_train.mean()))
+            mlflow.set_tag("converted_int_cols", ','.join(integer_columns))
+            
+            # Log model parameters
+            for key, value in model.get_params().items():
+                mlflow.log_param(key, value)
+            
+            # Train model with time measurement
+            start_time = time.time()
+            model.fit(X_train, y_train)
+            train_time = time.time() - start_time
+            mlflow.log_metric("training_time_seconds", train_time)
+            
+            # Make predictions
+            y_pred_proba = model.predict_proba(X_val)[:, 1]
+            
+            # Find optimal threshold
+            threshold_results = find_optimal_threshold(y_val, y_pred_proba)
+            best_threshold = threshold_results['best_threshold']
+            best_f1 = threshold_results['best_f1']
+            best_precision = threshold_results['best_precision']
+            best_recall = threshold_results['best_recall']
+            
+            # Make final predictions with best threshold
+            y_pred = (y_pred_proba >= best_threshold).astype(int)
+            
+            # Calculate metrics
+            from sklearn.metrics import roc_auc_score, average_precision_score
+            auc_score = roc_auc_score(y_val, y_pred_proba)
+            pr_auc = average_precision_score(y_val, y_pred_proba)
+            
+            # Count positive predictions
+            positive_count = y_pred.sum()
+            positive_pct = positive_count / len(y_pred) * 100
+            
+            # Log metrics
+            mlflow.log_metric("precision", best_precision)
+            mlflow.log_metric("recall", best_recall)
+            mlflow.log_metric("f1", best_f1)
+            mlflow.log_metric("threshold", best_threshold)
+            mlflow.log_metric("auc", auc_score)
+            mlflow.log_metric("pr_auc", pr_auc)
+            mlflow.log_metric("positive_predictions", positive_count)
+            mlflow.log_metric("positive_pct", positive_pct)
+            
+            # Create and log visualizations
+            
+            # Threshold analysis plot
+            threshold_fig_path = os.path.join(temp_artifact_dir, f"threshold_plot_{name}.png")
+            plot_threshold_analysis(
+                threshold_results['thresholds'], 
+                threshold_results['f1_scores'], 
+                threshold_results['precisions'], 
+                threshold_results['recalls'],
+                best_threshold, name, threshold_fig_path
             )
-            mlflow.log_artifact(learning_curve_path)
-        
-        # Log feature importance if available
-        if hasattr(model, 'feature_importances_'):
-            importance_fig_path = f"{artifact_dir}/feature_importance_plot_{name}.png"
-            importance_df = plot_feature_importance(
-                feature_cols, model.feature_importances_,
-                name, importance_fig_path, top_n=20
+            mlflow.log_artifact(threshold_fig_path)
+            
+            # Confusion matrix
+            cm_fig_path = os.path.join(temp_artifact_dir, f"confusion_matrix_{name}.png")
+            plot_confusion_matrix(
+                y_val, y_pred, 
+                f'Matriz de Confusão - {name} (threshold={best_threshold:.2f})', 
+                cm_fig_path
             )
-            mlflow.log_artifact(importance_fig_path)
-            mlflow.log_artifact(importance_fig_path.replace('.png', '.csv'))
-        
-        # Log model with input example
-        input_example = X_train.iloc[:5].copy().astype(float)
-        
-        if name == 'random_forest':
-            mlflow.sklearn.log_model(model, name, input_example=input_example)
-        elif name == 'lightgbm':
-            mlflow.lightgbm.log_model(model, name, input_example=input_example)
-        elif name == 'xgboost':
-            mlflow.xgboost.log_model(model, name, input_example=input_example, model_format="json")
-        
-        model_uri = f"runs:/{run_id}/{name}"
-        
-        print(f"  Modelo {name} salvo em: {run.info.artifact_uri}/{name}")
-        print(f"  URI do modelo para carregamento: {model_uri}")
-        
-        # Prepare results
-        results = {
-            "precision": float(best_precision),
-            "recall": float(best_recall),
-            "f1": float(best_f1),
-            "threshold": float(best_threshold),
-            "auc": float(auc_score),
-            "pr_auc": float(pr_auc),
-            "positive_count": int(positive_count),
-            "positive_pct": float(positive_pct),
-            "model_uri": model_uri,
-            "train_time": train_time
-        }
-        
-        print(f"  {name} - F1: {best_f1:.4f}, PR-AUC: {pr_auc:.4f}, Threshold: {best_threshold:.4f}")
-        print(f"  {name} - Precision: {best_precision:.4f}, Recall: {best_recall:.4f}")
-        print(f"  {name} - Predições positivas: {positive_count} ({positive_pct:.2f}%)")
-        
-        return results
+            mlflow.log_artifact(cm_fig_path)
+            
+            # Probability histogram
+            hist_fig_path = os.path.join(temp_artifact_dir, f"prob_histogram_{name}.png")
+            plot_prob_histogram(
+                y_val, y_pred_proba, best_threshold, 
+                f'Distribuição de Probabilidades - {name}', 
+                hist_fig_path
+            )
+            mlflow.log_artifact(hist_fig_path)
+            
+            # Precision-recall curve
+            pr_curve_path = os.path.join(temp_artifact_dir, f"pr_curve_{name}.png")
+            plot_precision_recall_curve(
+                y_val, y_pred_proba, 
+                f'Curva Precision-Recall - {name}', 
+                pr_curve_path
+            )
+            mlflow.log_artifact(pr_curve_path)
+            
+            # Generate learning curve if requested
+            if generate_learning_curves:
+                learning_curve_path = os.path.join(temp_artifact_dir, f"learning_curve_{name}.png")
+                plot_learning_curve(
+                    model, X_train, y_train, 
+                    model_name=name.capitalize(), 
+                    filename=learning_curve_path
+                )
+                mlflow.log_artifact(learning_curve_path)
+            
+            # Log feature importance if available
+            if hasattr(model, 'feature_importances_'):
+                importance_fig_path = os.path.join(temp_artifact_dir, f"feature_importance_plot_{name}.png")
+                importance_csv_path = os.path.join(temp_artifact_dir, f"feature_importance_{name}.csv")
+                importance_df = plot_feature_importance(
+                    feature_cols, model.feature_importances_,
+                    name, importance_fig_path, top_n=20
+                )
+                importance_df.to_csv(importance_csv_path, index=False)
+                mlflow.log_artifact(importance_fig_path)
+                mlflow.log_artifact(importance_csv_path)
+            
+            # Log model
+            input_example = X_train.iloc[:5].copy()
+            
+            if name == 'random_forest':
+                mlflow.sklearn.log_model(model, name, input_example=input_example)
+            elif name == 'lightgbm':
+                mlflow.lightgbm.log_model(model, name, input_example=input_example)
+            elif name == 'xgboost':
+                mlflow.xgboost.log_model(model, name, input_example=input_example)
+            
+            model_uri = f"runs:/{run.info.run_id}/{name}"
+            
+            print(f"  Modelo {name} salvo em: {run.info.artifact_uri}/{name}")
+            print(f"  URI do modelo para carregamento: {model_uri}")
+            
+            # Prepare results
+            results = {
+                "precision": float(best_precision),
+                "recall": float(best_recall),
+                "f1": float(best_f1),
+                "threshold": float(best_threshold),
+                "auc": float(auc_score),
+                "pr_auc": float(pr_auc),
+                "positive_count": int(positive_count),
+                "positive_pct": float(positive_pct),
+                "model_uri": model_uri,
+                "train_time": train_time
+            }
+            
+            print(f"  {name} - F1: {best_f1:.4f}, PR-AUC: {pr_auc:.4f}, Threshold: {best_threshold:.4f}")
+            print(f"  {name} - Precision: {best_precision:.4f}, Recall: {best_recall:.4f}")
+            print(f"  {name} - Predições positivas: {positive_count} ({positive_pct:.2f}%)")
+            
+            return results
+            
+        except Exception as e:
+            print(f"Erro durante treinamento de {name}: {e}")
+            # Se houver erro, imprimir stack trace e re-levantar a exceção
+            import traceback
+            traceback.print_exc()
+            raise e
+            
+        finally:
+            # Limpar artefatos temporários após o upload para o MLflow
+            try:
+                if os.path.exists(temp_artifact_dir):
+                    shutil.rmtree(temp_artifact_dir)
+            except Exception as cleanup_error:
+                print(f"Aviso: Erro ao limpar diretório temporário: {cleanup_error}")
 
 def run_baseline_model_training(
     train_path,
@@ -368,18 +394,11 @@ def run_baseline_model_training(
 ):
     """
     Run the full baseline model training pipeline.
-    
-    Args:
-        train_path: Path to the training dataset
-        val_path: Path to the validation dataset
-        experiment_id: MLflow experiment ID
-        artifact_dir: Directory for temporary artifacts
-        generate_learning_curves: Whether to generate learning curves
-        
-    Returns:
-        Dictionary with results for all models
     """
-    from src.evaluation.mlflow_utils import get_data_hash, setup_artifact_directory
+    from src.evaluation.mlflow_utils import get_data_hash
+    
+    # NÃO configurar novamente o tracking URI aqui
+    # NÃO chamar setup_mlflow_tracking aqui
     
     # Prepare data
     data = prepare_data_for_training(train_path, val_path)
@@ -394,8 +413,8 @@ def run_baseline_model_training(
     train_hash = get_data_hash(data['train_df'])
     val_hash = get_data_hash(data['val_df'])
     
-    # Create artifact directory
-    setup_artifact_directory(artifact_dir)
+    # Create artifact directory if it doesn't exist
+    os.makedirs(artifact_dir, exist_ok=True)
     
     # Get baseline models
     models = get_baseline_models()
@@ -415,30 +434,24 @@ def run_baseline_model_training(
         )
         
         # Store results
-        for key, value in results.items():
-            all_results[f"{name}_{key}"] = value
+        if results:  # Verificar se results não é None
+            for key, value in results.items():
+                all_results[f"{name}_{key}"] = value
     
     # Print final results summary
     print("\nResultados dos modelos com threshold otimizado:")
     for model_name in models.keys():
-        print(f"\n{model_name.upper()}:")
-        print(f"  F1: {all_results[f'{model_name}_f1']:.4f}")
-        print(f"  Precisão: {all_results[f'{model_name}_precision']:.4f}")
-        print(f"  Recall: {all_results[f'{model_name}_recall']:.4f}")
-        print(f"  Threshold: {all_results[f'{model_name}_threshold']:.4f}")
-        print(f"  AUC: {all_results[f'{model_name}_auc']:.4f}")
-        print(f"  PR-AUC: {all_results[f'{model_name}_pr_auc']:.4f}")
-        print(f"  Model URI: {all_results[f'{model_name}_model_uri']}")
+        if f"{model_name}_f1" in all_results:
+            print(f"\n{model_name.upper()}:")
+            print(f"  F1: {all_results[f'{model_name}_f1']:.4f}")
+            print(f"  Precisão: {all_results[f'{model_name}_precision']:.4f}")
+            print(f"  Recall: {all_results[f'{model_name}_recall']:.4f}")
+            print(f"  Threshold: {all_results[f'{model_name}_threshold']:.4f}")
+            print(f"  AUC: {all_results[f'{model_name}_auc']:.4f}")
+            print(f"  PR-AUC: {all_results[f'{model_name}_pr_auc']:.4f}")
+            print(f"  Model URI: {all_results[f'{model_name}_model_uri']}")
     
     print("\nModelos treinados e registrados no MLflow com rastreabilidade.")
-    print("\nPara carregar um modelo específico em código futuro, use:")
-    for model_name in models.keys():
-        model_type = "sklearn" if model_name == "random_forest" else model_name
-        print(f"""
-# Carregar modelo {model_name}:
-import mlflow.{model_type}
-model_{model_name} = mlflow.{model_type}.load_model("{all_results[f'{model_name}_model_uri']}")
-""")
     
     return all_results
 

@@ -21,44 +21,263 @@ from datetime import datetime
 from sklearn.metrics import precision_recall_curve, f1_score, precision_score, recall_score
 from sklearn.calibration import CalibratedClassifierCV
 import mlflow
+import glob
 import warnings
 warnings.filterwarnings('ignore')
 
-# Adicionar diretório raiz ao path
-project_root = os.path.abspath(os.path.dirname(__file__))
-sys.path.append(project_root)
-print(f"Diretório raiz adicionado ao path: {project_root}")
+# ======================================
+# CONFIGURAÇÃO DE CAMINHOS
+# ======================================
+# Diretórios principais
+PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
+DATA_DIR = os.path.join(PROJECT_ROOT, "data", "03_3_feature_selection_text_code6")
+MLFLOW_DIR = os.path.join(PROJECT_ROOT, "mlflow")
+MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
+ARTIFACTS_DIR = os.path.join(MODELS_DIR, "artifacts")
+PLOTS_DIR = os.path.join(PROJECT_ROOT, "plots")
 
-# 1. Funções de Utilidade
-def setup_mlflow(mlflow_dir, experiment_name="smart_ads_calibrated"):
+# Arquivos de dados
+TRAIN_DATA_PATH = os.path.join(DATA_DIR, "train.csv")
+VALIDATION_DATA_PATH = os.path.join(DATA_DIR, "validation.csv")
+
+# Output
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+OUTPUT_DIR = os.path.join(MODELS_DIR, f"calibrated_{timestamp}")
+
+# Adicionar diretório raiz ao path
+sys.path.append(PROJECT_ROOT)
+print(f"Diretório raiz adicionado ao path: {PROJECT_ROOT}")
+print(f"Diretório de dados: {DATA_DIR}")
+print(f"Diretório MLflow: {MLFLOW_DIR}")
+print(f"Diretório de artefatos: {ARTIFACTS_DIR}")
+
+# ======================================
+# FUNÇÕES DE UTILIDADE
+# ======================================
+
+def setup_mlflow(mlflow_dir=MLFLOW_DIR, experiment_name="smart_ads_calibrated"):
     """Configura o MLflow para tracking de experimentos."""
-    # Importar função de setup do MLflow do módulo existente
-    try:
-        from src.evaluation.mlflow_utils import setup_mlflow_tracking
-        experiment_id = setup_mlflow_tracking(
-            tracking_dir=mlflow_dir,
-            experiment_name=experiment_name,
-            clean_previous=False
-        )
-    except ImportError:
-        print("Módulo mlflow_utils não encontrado, usando setup simplificado.")
-        mlflow.set_tracking_uri(f"file://{mlflow_dir}")
-        # Verificar se o experimento já existe
-        experiment = mlflow.get_experiment_by_name(experiment_name)
-        if experiment:
-            print(f"Experimento '{experiment_name}' já existe (ID: {experiment.experiment_id})")
-            experiment_id = experiment.experiment_id
-        else:
-            experiment_id = mlflow.create_experiment(experiment_name)
-            print(f"Experimento '{experiment_name}' criado (ID: {experiment_id})")
+    print(f"Configurando MLflow em: {mlflow_dir}")
+    
+    # Configurar MLflow
+    mlflow.set_tracking_uri(f"file://{mlflow_dir}")
+    
+    # Verificar se o experimento já existe
+    experiment = mlflow.get_experiment_by_name(experiment_name)
+    if experiment:
+        print(f"Experimento '{experiment_name}' já existe (ID: {experiment.experiment_id})")
+        experiment_id = experiment.experiment_id
+    else:
+        experiment_id = mlflow.create_experiment(experiment_name)
+        print(f"Experimento '{experiment_name}' criado (ID: {experiment_id})")
     
     return experiment_id
+
+def find_best_random_forest_model(mlflow_dir=MLFLOW_DIR):
+    """Encontra o modelo Random Forest com melhor desempenho no MLflow."""
+    print(f"Procurando o melhor modelo Random Forest em: {mlflow_dir}")
+    
+    try:
+        # Configurar MLflow
+        mlflow.set_tracking_uri(f"file://{mlflow_dir}")
+        
+        # Opção alternativa: se não conseguirmos encontrar um modelo no MLflow,
+        # vamos procurar diretamente nos arquivos do diretório mlflow
+        model_files = glob.glob(os.path.join(mlflow_dir, "**", "*random_forest*.joblib"), recursive=True)
+        if model_files:
+            print(f"Encontrados {len(model_files)} modelos Random Forest nos arquivos:")
+            for file in model_files:
+                print(f"  - {file}")
+            
+            # Ordenar por data de modificação (mais recente primeiro)
+            model_files.sort(key=os.path.getmtime, reverse=True)
+            best_model_path = model_files[0]
+            print(f"Selecionado modelo Random Forest mais recente: {best_model_path}")
+            return best_model_path, 0.5  # Usamos um threshold padrão
+        
+        # Procurar dentro da estrutura do MLflow
+        try:
+            experiments = mlflow.search_experiments()
+            print(f"Encontrados {len(experiments)} experimentos")
+        except Exception as e:
+            print(f"Erro ao listar experimentos: {str(e)}")
+            print("Tentando abordagem alternativa...")
+            # Listar diretórios de experimentos manualmente
+            exp_dirs = [d for d in os.listdir(mlflow_dir) 
+                      if os.path.isdir(os.path.join(mlflow_dir, d)) and d.isdigit()]
+            print(f"Encontrados {len(exp_dirs)} diretórios de experimentos")
+            
+            # Procurar runs manualmente nos diretórios do MLflow
+            for exp_dir in exp_dirs:
+                exp_path = os.path.join(mlflow_dir, exp_dir)
+                run_dirs = [d for d in os.listdir(exp_path) 
+                          if os.path.isdir(os.path.join(exp_path, d))]
+                
+                for run_dir in run_dirs:
+                    run_path = os.path.join(exp_path, run_dir)
+                    
+                    # Verificar por modelos nos artifacts
+                    artifacts_path = os.path.join(run_path, "artifacts")
+                    if os.path.exists(artifacts_path):
+                        # Procurar modelo diretamente ou em subdiretórios
+                        model_paths = glob.glob(os.path.join(artifacts_path, "**", "*.joblib"), recursive=True)
+                        model_paths += glob.glob(os.path.join(artifacts_path, "**", "random_forest", "model.pkl"), recursive=True)
+                        
+                        if model_paths:
+                            best_model_path = model_paths[0]
+                            print(f"Encontrado modelo em: {best_model_path}")
+                            
+                            # Tentar encontrar threshold em metrics
+                            metrics_path = os.path.join(run_path, "metrics")
+                            threshold = 0.5  # valor padrão
+                            
+                            if os.path.exists(metrics_path):
+                                threshold_files = glob.glob(os.path.join(metrics_path, "*threshold*"))
+                                if threshold_files:
+                                    try:
+                                        with open(threshold_files[0], 'r') as f:
+                                            threshold = float(f.read().strip())
+                                    except:
+                                        pass
+                            
+                            return best_model_path, threshold
+            
+            print("Nenhum modelo encontrado nas buscas manuais do MLflow.")
+            
+        # Continuar com busca via API do MLflow se disponível
+        best_f1 = -1
+        best_model_uri = None
+        best_threshold = 0.5
+        
+        # Iterar sobre experimentos existentes
+        for exp in experiments:
+            try:
+                print(f"Verificando experimento: {exp.name} (ID: {exp.experiment_id})")
+                
+                # Buscar runs do experimento
+                try:
+                    runs = mlflow.search_runs(experiment_ids=[exp.experiment_id])
+                except Exception as e:
+                    print(f"  Erro ao buscar runs do experimento {exp.name}: {str(e)}")
+                    continue
+                
+                # Filtrar runs com modelos Random Forest ou qualquer modelo
+                rf_runs = runs[runs['tags.mlflow.runName'].str.contains('random_forest|rf', case=False, na=False)]
+                
+                if rf_runs.empty:
+                    print(f"  Nenhum modelo RandomForest explícito encontrado no experimento {exp.name}")
+                    # Considerar qualquer modelo como fallback
+                    rf_runs = runs
+                
+                # Iterar sobre as runs de Random Forest
+                for _, run in rf_runs.iterrows():
+                    try:
+                        run_id = run.run_id
+                        print(f"  Analisando run: {run_id}")
+                        
+                        # Verificar se tem métrica F1
+                        if 'metrics.f1' in run and not np.isnan(run['metrics.f1']):
+                            f1 = run['metrics.f1']
+                            
+                            # Verificar se é melhor que o atual
+                            if f1 > best_f1:
+                                best_f1 = f1
+                                
+                                # Verificar se existe threshold
+                                if 'metrics.threshold' in run and not np.isnan(run['metrics.threshold']):
+                                    best_threshold = run['metrics.threshold']
+                                
+                                # Construir URI do modelo
+                                best_model_uri = f"runs:/{run_id}/model"
+                                print(f"  Novo melhor modelo: {best_model_uri} (F1: {best_f1:.4f}, Threshold: {best_threshold:.4f})")
+                    except Exception as e:
+                        print(f"  Erro ao processar run: {str(e)}")
+                        continue
+            except Exception as e:
+                print(f"  Erro ao processar experimento: {str(e)}")
+                continue
+        
+        if best_model_uri:
+            print(f"Melhor modelo Random Forest encontrado: {best_model_uri} (F1: {best_f1:.4f})")
+            return best_model_uri, best_threshold
+        
+        # Se chegou até aqui, não encontrou nada via API do MLflow
+        print("Nenhum modelo válido encontrado via API do MLflow.")
+        
+        # Última tentativa: busca ampla em todo o diretório MLflow
+        print("Realizando busca ampla por modelos em todo o diretório MLflow...")
+        all_models = glob.glob(os.path.join(mlflow_dir, "**", "*.joblib"), recursive=True)
+        all_models += glob.glob(os.path.join(mlflow_dir, "**", "*.pkl"), recursive=True)
+        
+        if all_models:
+            print(f"Encontrados {len(all_models)} possíveis modelos:")
+            for model in all_models[:5]:  # Mostrar apenas os 5 primeiros
+                print(f"  - {model}")
+            
+            # Dar preferência a modelos que parecem ser Random Forest
+            rf_models = [m for m in all_models if 'random' in m.lower() or 'rf' in m.lower()]
+            if rf_models:
+                best_model = rf_models[0]
+            else:
+                # Caso contrário, pegar o modelo mais recente
+                all_models.sort(key=os.path.getmtime, reverse=True)
+                best_model = all_models[0]
+            
+            print(f"Selecionando modelo: {best_model}")
+            return best_model, 0.5
+        
+        # Se ainda não encontrou nada, não há modelo disponível
+        print("Nenhum modelo encontrado em nenhuma busca.")
+        return None, 0.5
+    
+    except Exception as e:
+        print(f"Erro ao buscar melhor modelo Random Forest: {str(e)}")
+        # A busca falhou completamente
+        return None, 0.5
+
+def find_best_cluster_model(artifacts_dir=ARTIFACTS_DIR, model_type="kmeans"):
+    """Encontra o melhor modelo de cluster (K-means ou GMM) nos artefatos."""
+    print(f"Procurando o melhor modelo {model_type} em: {artifacts_dir}")
+    
+    try:
+        # Padrão de busca para cada tipo de modelo
+        if model_type.lower() == 'kmeans':
+            pattern = os.path.join(artifacts_dir, "**", "*kmeans*.joblib")
+        elif model_type.lower() == 'gmm':
+            pattern = os.path.join(artifacts_dir, "**", "*gmm*.joblib")
+        else:
+            print(f"Tipo de modelo não suportado: {model_type}")
+            return None
+        
+        # Buscar todos os arquivos que correspondem ao padrão
+        model_files = glob.glob(pattern, recursive=True)
+        
+        if not model_files:
+            print(f"Nenhum modelo {model_type} encontrado.")
+            return None
+        
+        print(f"Modelos {model_type} encontrados:")
+        for file in model_files:
+            print(f"  - {file}")
+        
+        # Ordenar por data de modificação (mais recente primeiro)
+        model_files.sort(key=os.path.getmtime, reverse=True)
+        
+        # Retornar o arquivo mais recente
+        best_model_path = model_files[0]
+        print(f"Selecionado modelo {model_type} mais recente: {best_model_path}")
+        
+        return best_model_path
+    
+    except Exception as e:
+        print(f"Erro ao buscar modelo {model_type}: {str(e)}")
+        return None
 
 def load_model(model_path):
     """Carrega um modelo treinado a partir do caminho especificado."""
     try:
         print(f"Carregando modelo de: {model_path}")
-        if model_path.startswith("runs:"):
+        if isinstance(model_path, str) and model_path.startswith("runs:"):
             # Carregar modelo do MLflow
             import mlflow.sklearn
             model = mlflow.sklearn.load_model(model_path)
@@ -73,38 +292,17 @@ def load_model(model_path):
 
 def load_data(data_path, verbose=True):
     """Carrega dados de treinamento/validação."""
-    # Tentar usar a função existente do projeto
+    # Verificar se o arquivo existe no caminho fornecido
+    if not os.path.exists(data_path):
+        print(f"ERRO: Arquivo não encontrado: {data_path}")
+        raise FileNotFoundError(f"Arquivo não encontrado: {data_path}")
+    
     try:
-        from src.evaluation.baseline_model import prepare_data_for_training
-        
-        # Verificar se o arquivo existe no caminho fornecido
-        if not os.path.exists(data_path):
-            # Tentar caminhos alternativos
-            alt_path = os.path.join(project_root, "data", "03_feature_selection_textv2", 
-                                       os.path.basename(data_path))
-            if os.path.exists(alt_path):
-                print(f"Usando caminho alternativo: {alt_path}")
-                data_path = alt_path
-            else:
-                raise FileNotFoundError(f"Arquivo não encontrado: {data_path}")
-        
-        # Usar a função existente
-        data_dict = prepare_data_for_training(data_path)
-        
-        df = data_dict['train_df']
-        X = data_dict['X_train']
-        y = data_dict['y_train']
-        target_col = data_dict['target_col']
-        
-    except (ImportError, KeyError) as e:
-        print(f"Erro ao usar função existente: {e}")
-        print("Usando função de carregamento simplificada.")
-        
         # Função simplificada para carregar dados
         df = pd.read_csv(data_path)
         
         # Identificar coluna target
-        target_candidates = ['target', 'label', 'class', 'y']
+        target_candidates = ['target', 'label', 'class', 'y', 'converted']
         target_col = next((col for col in target_candidates if col in df.columns), None)
         
         if target_col is None:
@@ -114,13 +312,20 @@ def load_data(data_path, verbose=True):
         X = df.drop(columns=[target_col])
         y = df[target_col]
     
-    if verbose:
-        print(f"Dados carregados - {X.shape[0]} exemplos, {X.shape[1]} features")
-        print(f"Taxa de conversão: {y.mean():.4f}")
+        if verbose:
+            print(f"Dados carregados - {X.shape[0]} exemplos, {X.shape[1]} features")
+            print(f"Taxa de conversão: {y.mean():.4f}")
+        
+        return df, X, y, target_col
     
-    return df, X, y, target_col
+    except Exception as e:
+        print(f"Erro ao carregar dados: {str(e)}")
+        raise
 
-# 2. Calibração de Probabilidades
+# ======================================
+# CALIBRAÇÃO DE PROBABILIDADES
+# ======================================
+
 def train_calibrated_model(X, y, base_model, cv=3):
     """Treina um modelo calibrado para corrigir probabilidades."""
     print("\n=== Treinando modelo com calibração de probabilidades ===")
@@ -138,7 +343,10 @@ def train_calibrated_model(X, y, base_model, cv=3):
     print("Modelo calibrado treinado com sucesso")
     return calibrated_model
 
-# 3. Otimização de Threshold
+# ======================================
+# OTIMIZAÇÃO DE THRESHOLD
+# ======================================
+
 def optimize_threshold(model, X, y):
     """Encontra o threshold ótimo para balancear precisão e recall."""
     print("\n=== Otimizando threshold para balancear precisão e recall ===")
@@ -203,14 +411,17 @@ def optimize_threshold(model, X, y):
     plt.grid(alpha=0.3)
     
     # Salvar figura
-    os.makedirs('plots', exist_ok=True)
-    plt_path = os.path.join('plots', f'pr_curve_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png')
+    os.makedirs(PLOTS_DIR, exist_ok=True)
+    plt_path = os.path.join(PLOTS_DIR, f'pr_curve_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png')
     plt.savefig(plt_path)
     print(f"Curva PR salva em: {plt_path}")
     
     return best_threshold, best_f1, best_precision, best_recall
 
-# 4. Avaliação do Modelo
+# ======================================
+# AVALIAÇÃO DO MODELO
+# ======================================
+
 def evaluate_model(model, X, y, threshold=0.5, model_name="Model"):
     """Avalia o modelo usando o threshold especificado."""
     print(f"\n=== Avaliando {model_name} (threshold={threshold:.4f}) ===")
@@ -253,8 +464,11 @@ def evaluate_model(model, X, y, threshold=0.5, model_name="Model"):
         'false_negatives': fn
     }
 
-# 5. Salvar Modelos
-def save_models(models_dict, thresholds_dict, output_dir):
+# ======================================
+# SALVAR MODELOS
+# ======================================
+
+def save_models(models_dict, thresholds_dict, output_dir=OUTPUT_DIR):
     """Salva os modelos treinados e seus thresholds."""
     print(f"\n=== Salvando modelos em {output_dir} ===")
     
@@ -284,50 +498,39 @@ def save_models(models_dict, thresholds_dict, output_dir):
     
     return output_dir
 
-# 6. Função Principal
+# ======================================
+# FUNÇÃO PRINCIPAL
+# ======================================
+
 def main():
     parser = argparse.ArgumentParser(description='Implementa calibração e ajuste de threshold')
-    parser.add_argument('--mlflow_dir', default=None, 
+    parser.add_argument('--mlflow_dir', default=MLFLOW_DIR, 
                       help='Diretório do MLflow tracking')
-    parser.add_argument('--data_path', default=None,
-                      help='Caminho para o dataset de treinamento')
-    parser.add_argument('--validation_path', default=None,
-                      help='Caminho para o dataset de validação')
-    parser.add_argument('--baseline_model_path', default=None,
-                      help='Caminho para o modelo baseline')
-    parser.add_argument('--output_dir', default=None,
+    parser.add_argument('--data_dir', default=DATA_DIR,
+                      help='Diretório com os arquivos de dados')
+    parser.add_argument('--artifacts_dir', default=ARTIFACTS_DIR,
+                      help='Diretório para buscar modelos de cluster')
+    parser.add_argument('--output_dir', default=OUTPUT_DIR,
                       help='Diretório para salvar os modelos')
     
     args = parser.parse_args()
     
-    # Definir valores padrão se não fornecidos
-    if args.mlflow_dir is None:
-        args.mlflow_dir = os.path.join(project_root, "models", "mlflow")
+    # Definir caminhos de arquivos baseados nos diretórios fornecidos
+    train_path = os.path.join(args.data_dir, "train.csv")
+    validation_path = os.path.join(args.data_dir, "validation.csv")
     
-    if args.data_path is None:
-        args.data_path = os.path.join(project_root, "data", "03_3_feature_selection_text_code6", "train.csv")
-    
-    if args.validation_path is None:
-        args.validation_path = os.path.join(project_root, "data", "03_3_feature_selection_text_code6", "validation.csv")
-    
-    if args.baseline_model_path is None:
-        # Buscar modelo mais recente no MLflow
-        try:
-            from src.evaluation.baseline_model import get_latest_random_forest_run
-            run_id, threshold, model_uri = get_latest_random_forest_run(args.mlflow_dir)
-            if model_uri:
-                args.baseline_model_path = model_uri
-                print(f"Usando modelo mais recente do MLflow: {model_uri}")
-            else:
-                args.baseline_model_path = os.path.join(project_root, "models", "baseline", "random_forest.joblib")
-                print(f"Usando modelo padrão: {args.baseline_model_path}")
-        except ImportError:
-            args.baseline_model_path = os.path.join(project_root, "models", "baseline", "random_forest.joblib")
-            print(f"Usando modelo padrão: {args.baseline_model_path}")
-    
-    if args.output_dir is None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        args.output_dir = os.path.join(project_root, "models", f"calibrated_{timestamp}")
+    # Verificar se os caminhos existem
+    for path, desc in [
+        (train_path, "treinamento"), 
+        (validation_path, "validação"), 
+        (args.mlflow_dir, "MLflow"), 
+        (args.artifacts_dir, "artefatos")
+    ]:
+        if not os.path.exists(path):
+            print(f"AVISO: Caminho de {desc} não encontrado: {path}")
+            if desc in ["treinamento", "validação"]:
+                print(f"ERRO: O arquivo de {desc} é necessário para continuar.")
+                return
     
     # Configurar MLflow
     experiment_id = setup_mlflow(args.mlflow_dir, "smart_ads_calibrated")
@@ -339,111 +542,289 @@ def main():
         
         # Registrar parâmetros
         mlflow.log_params({
-            'data_path': args.data_path,
-            'validation_path': args.validation_path,
-            'baseline_model_path': args.baseline_model_path
+            'train_data': train_path,
+            'validation_data': validation_path,
+            'mlflow_dir': args.mlflow_dir,
+            'artifacts_dir': args.artifacts_dir,
+            'output_dir': args.output_dir
         })
         
         # 1. Carregar dados
         print("\n=== Etapa 1: Carregando dados ===")
-        df_train, X_train, y_train, target_col = load_data(args.data_path)
-        df_val, X_val, y_val, _ = load_data(args.validation_path)
+        df_train, X_train, y_train, target_col = load_data(train_path)
+        df_val, X_val, y_val, _ = load_data(validation_path)
         
-        # 2. Carregar modelo baseline
-        print("\n=== Etapa 2: Carregando modelo baseline ===")
-        baseline_model = load_model(args.baseline_model_path)
+        # 2. Buscar e carregar os melhores modelos
+        print("\n=== Etapa 2: Buscando e carregando os melhores modelos ===")
         
-        if baseline_model is None:
-            print("ERRO: Não foi possível carregar o modelo baseline.")
+        # 2.1 Random Forest
+        rf_model_uri, rf_threshold = find_best_random_forest_model(args.mlflow_dir)
+        if rf_model_uri:
+            rf_model = load_model(rf_model_uri)
+        else:
+            print("ERRO: Não foi possível encontrar um modelo Random Forest válido.")
             return
         
-        # 3. Avaliar modelo baseline
-        baseline_threshold = 0.12  # Threshold padrão do modelo baseline
+        # 2.2 K-means
+        kmeans_model_path = find_best_cluster_model(args.artifacts_dir, "kmeans")
+        if kmeans_model_path:
+            kmeans_model = load_model(kmeans_model_path)
+        else:
+            print("AVISO: Não foi possível encontrar um modelo K-means válido.")
+            kmeans_model = None
         
-        # Avaliar no conjunto de validação
-        baseline_results = evaluate_model(
-            baseline_model, X_val, y_val, 
-            threshold=baseline_threshold,
-            model_name="Baseline"
+        # 2.3 GMM
+        gmm_model_path = find_best_cluster_model(args.artifacts_dir, "gmm")
+        if gmm_model_path:
+            gmm_model = load_model(gmm_model_path)
+        else:
+            print("AVISO: Não foi possível encontrar um modelo GMM válido.")
+            gmm_model = None
+        
+        # 3. Avaliar modelos originais
+        print("\n=== Etapa 3: Avaliando modelos originais ===")
+        models_results = {}
+        
+        # 3.1 Avaliar Random Forest
+        rf_results = evaluate_model(
+            rf_model, X_val, y_val, 
+            threshold=rf_threshold,
+            model_name="Random Forest Original"
         )
+        models_results["rf_original"] = rf_results
         
-        # Registrar métricas baseline no MLflow
+        # Registrar métricas no MLflow
         mlflow.log_metrics({
-            'baseline_precision': baseline_results['precision'],
-            'baseline_recall': baseline_results['recall'],
-            'baseline_f1': baseline_results['f1']
+            'rf_original_precision': rf_results['precision'],
+            'rf_original_recall': rf_results['recall'],
+            'rf_original_f1': rf_results['f1']
         })
         
-        # 4. Treinar modelo calibrado (Fase 1)
-        print("\n=== Etapa 4: Treinando modelo calibrado (Fase 1) ===")
-        calibrated_model = train_calibrated_model(X_train, y_train, baseline_model)
+        # 4. Treinar modelos calibrados
+        print("\n=== Etapa 4: Treinando modelos calibrados ===")
+        calibrated_models = {}
         
-        # 5. Avaliar modelo calibrado com threshold padrão
-        calibrated_results_default = evaluate_model(
-            calibrated_model, X_val, y_val,
-            threshold=baseline_threshold,
-            model_name="Calibrado (threshold padrão)"
+        # 4.1 Calibrar Random Forest
+        calibrated_rf = train_calibrated_model(X_train, y_train, rf_model)
+        calibrated_models["rf_calibrated"] = calibrated_rf
+        
+        # 4.2 Calibrar K-means se disponível
+        if kmeans_model:
+            try:
+                calibrated_kmeans = train_calibrated_model(X_train, y_train, kmeans_model)
+                calibrated_models["kmeans_calibrated"] = calibrated_kmeans
+            except Exception as e:
+                print(f"Erro ao calibrar K-means: {str(e)}")
+        
+        # 4.3 Calibrar GMM se disponível
+        if gmm_model:
+            try:
+                calibrated_gmm = train_calibrated_model(X_train, y_train, gmm_model)
+                calibrated_models["gmm_calibrated"] = calibrated_gmm
+            except Exception as e:
+                print(f"Erro ao calibrar GMM: {str(e)}")
+        
+        # 5. Avaliar modelos calibrados com threshold padrão
+        print("\n=== Etapa 5: Avaliando modelos calibrados com threshold padrão ===")
+        
+        # 5.1 Avaliar Random Forest calibrado
+        rf_cal_results = evaluate_model(
+            calibrated_rf, X_val, y_val,
+            threshold=rf_threshold,
+            model_name="Random Forest Calibrado (threshold original)"
         )
+        models_results["rf_calibrated_default"] = rf_cal_results
         
-        # Registrar métricas do modelo calibrado no MLflow
+        # Registrar métricas no MLflow
         mlflow.log_metrics({
-            'calibrated_default_precision': calibrated_results_default['precision'],
-            'calibrated_default_recall': calibrated_results_default['recall'],
-            'calibrated_default_f1': calibrated_results_default['f1']
+            'rf_calibrated_default_precision': rf_cal_results['precision'],
+            'rf_calibrated_default_recall': rf_cal_results['recall'],
+            'rf_calibrated_default_f1': rf_cal_results['f1']
         })
         
-        # 6. Otimizar threshold para o modelo calibrado (Fase 2)
-        print("\n=== Etapa 6: Otimizando threshold para modelo calibrado (Fase 2) ===")
-        best_threshold, best_f1, best_precision, best_recall = optimize_threshold(
-            calibrated_model, X_val, y_val
+        # 5.2 Avaliar K-means calibrado se disponível
+        if "kmeans_calibrated" in calibrated_models:
+            kmeans_cal_results = evaluate_model(
+                calibrated_models["kmeans_calibrated"], X_val, y_val,
+                threshold=0.5,  # Threshold padrão para K-means
+                model_name="K-means Calibrado (threshold padrão)"
+            )
+            models_results["kmeans_calibrated_default"] = kmeans_cal_results
+            
+            # Registrar métricas no MLflow
+            mlflow.log_metrics({
+                'kmeans_calibrated_default_precision': kmeans_cal_results['precision'],
+                'kmeans_calibrated_default_recall': kmeans_cal_results['recall'],
+                'kmeans_calibrated_default_f1': kmeans_cal_results['f1']
+            })
+        
+        # 5.3 Avaliar GMM calibrado se disponível
+        if "gmm_calibrated" in calibrated_models:
+            gmm_cal_results = evaluate_model(
+                calibrated_models["gmm_calibrated"], X_val, y_val,
+                threshold=0.5,  # Threshold padrão para GMM
+                model_name="GMM Calibrado (threshold padrão)"
+            )
+            models_results["gmm_calibrated_default"] = gmm_cal_results
+            
+            # Registrar métricas no MLflow
+            mlflow.log_metrics({
+                'gmm_calibrated_default_precision': gmm_cal_results['precision'],
+                'gmm_calibrated_default_recall': gmm_cal_results['recall'],
+                'gmm_calibrated_default_f1': gmm_cal_results['f1']
+            })
+        
+        # 6. Otimizar thresholds para os modelos calibrados
+        print("\n=== Etapa 6: Otimizando thresholds para modelos calibrados ===")
+        optimized_thresholds = {}
+        
+        # 6.1 Otimizar threshold para Random Forest calibrado
+        rf_best_threshold, rf_best_f1, rf_best_precision, rf_best_recall = optimize_threshold(
+            calibrated_rf, X_val, y_val
         )
+        optimized_thresholds["rf"] = rf_best_threshold
         
         # Registrar threshold otimizado no MLflow
         mlflow.log_metrics({
-            'optimized_threshold': best_threshold,
-            'optimized_precision': best_precision,
-            'optimized_recall': best_recall,
-            'optimized_f1': best_f1
+            'rf_optimized_threshold': rf_best_threshold,
+            'rf_optimized_precision': rf_best_precision,
+            'rf_optimized_recall': rf_best_recall,
+            'rf_optimized_f1': rf_best_f1
         })
         
-        # 7. Avaliar modelo calibrado com threshold otimizado
-        calibrated_results_optimized = evaluate_model(
-            calibrated_model, X_val, y_val,
-            threshold=best_threshold,
-            model_name="Calibrado (threshold otimizado)"
+        # 6.2 Otimizar threshold para K-means calibrado se disponível
+        if "kmeans_calibrated" in calibrated_models:
+            kmeans_best_threshold, kmeans_best_f1, kmeans_best_precision, kmeans_best_recall = optimize_threshold(
+                calibrated_models["kmeans_calibrated"], X_val, y_val
+            )
+            optimized_thresholds["kmeans"] = kmeans_best_threshold
+            
+            # Registrar threshold otimizado no MLflow
+            mlflow.log_metrics({
+                'kmeans_optimized_threshold': kmeans_best_threshold,
+                'kmeans_optimized_precision': kmeans_best_precision,
+                'kmeans_optimized_recall': kmeans_best_recall,
+                'kmeans_optimized_f1': kmeans_best_f1
+            })
+        
+        # 6.3 Otimizar threshold para GMM calibrado se disponível
+        if "gmm_calibrated" in calibrated_models:
+            gmm_best_threshold, gmm_best_f1, gmm_best_precision, gmm_best_recall = optimize_threshold(
+                calibrated_models["gmm_calibrated"], X_val, y_val
+            )
+            optimized_thresholds["gmm"] = gmm_best_threshold
+            
+            # Registrar threshold otimizado no MLflow
+            mlflow.log_metrics({
+                'gmm_optimized_threshold': gmm_best_threshold,
+                'gmm_optimized_precision': gmm_best_precision,
+                'gmm_optimized_recall': gmm_best_recall,
+                'gmm_optimized_f1': gmm_best_f1
+            })
+        
+        # 7. Avaliar modelos calibrados com thresholds otimizados
+        print("\n=== Etapa 7: Avaliando modelos calibrados com thresholds otimizados ===")
+        
+        # 7.1 Avaliar Random Forest calibrado com threshold otimizado
+        rf_cal_opt_results = evaluate_model(
+            calibrated_rf, X_val, y_val,
+            threshold=rf_best_threshold,
+            model_name="Random Forest Calibrado (threshold otimizado)"
         )
+        models_results["rf_calibrated_optimized"] = rf_cal_opt_results
         
         # Registrar métricas otimizadas no MLflow
         mlflow.log_metrics({
-            'calibrated_optimized_precision': calibrated_results_optimized['precision'],
-            'calibrated_optimized_recall': calibrated_results_optimized['recall'],
-            'calibrated_optimized_f1': calibrated_results_optimized['f1']
+            'rf_calibrated_optimized_precision': rf_cal_opt_results['precision'],
+            'rf_calibrated_optimized_recall': rf_cal_opt_results['recall'],
+            'rf_calibrated_optimized_f1': rf_cal_opt_results['f1']
         })
+        
+        # 7.2 Avaliar K-means calibrado com threshold otimizado se disponível
+        if "kmeans_calibrated" in calibrated_models and "kmeans" in optimized_thresholds:
+            kmeans_cal_opt_results = evaluate_model(
+                calibrated_models["kmeans_calibrated"], X_val, y_val,
+                threshold=optimized_thresholds["kmeans"],
+                model_name="K-means Calibrado (threshold otimizado)"
+            )
+            models_results["kmeans_calibrated_optimized"] = kmeans_cal_opt_results
+            
+            # Registrar métricas otimizadas no MLflow
+            mlflow.log_metrics({
+                'kmeans_calibrated_optimized_precision': kmeans_cal_opt_results['precision'],
+                'kmeans_calibrated_optimized_recall': kmeans_cal_opt_results['recall'],
+                'kmeans_calibrated_optimized_f1': kmeans_cal_opt_results['f1']
+            })
+        
+        # 7.3 Avaliar GMM calibrado com threshold otimizado se disponível
+        if "gmm_calibrated" in calibrated_models and "gmm" in optimized_thresholds:
+            gmm_cal_opt_results = evaluate_model(
+                calibrated_models["gmm_calibrated"], X_val, y_val,
+                threshold=optimized_thresholds["gmm"],
+                model_name="GMM Calibrado (threshold otimizado)"
+            )
+            models_results["gmm_calibrated_optimized"] = gmm_cal_opt_results
+            
+            # Registrar métricas otimizadas no MLflow
+            mlflow.log_metrics({
+                'gmm_calibrated_optimized_precision': gmm_cal_opt_results['precision'],
+                'gmm_calibrated_optimized_recall': gmm_cal_opt_results['recall'],
+                'gmm_calibrated_optimized_f1': gmm_cal_opt_results['f1']
+            })
         
         # 8. Salvar modelos e thresholds
         print("\n=== Etapa 8: Salvando modelos ===")
-        models_dict = {
-            'baseline': baseline_model,
-            'calibrated': calibrated_model
+        
+        # Preparar dicionários para salvar
+        models_to_save = {
+            'rf_original': rf_model,
+            'rf_calibrated': calibrated_rf
         }
         
-        thresholds_dict = {
-            'baseline': baseline_threshold,
-            'calibrated_default': baseline_threshold,
-            'calibrated_optimized': best_threshold
+        # Adicionar modelos K-means se disponíveis
+        if kmeans_model and "kmeans_calibrated" in calibrated_models:
+            models_to_save['kmeans_original'] = kmeans_model
+            models_to_save['kmeans_calibrated'] = calibrated_models["kmeans_calibrated"]
+        
+        # Adicionar modelos GMM se disponíveis
+        if gmm_model and "gmm_calibrated" in calibrated_models:
+            models_to_save['gmm_original'] = gmm_model
+            models_to_save['gmm_calibrated'] = calibrated_models["gmm_calibrated"]
+        
+        # Preparar dicionário de thresholds
+        thresholds_to_save = {
+            'rf_original': rf_threshold,
+            'rf_calibrated_default': rf_threshold,
+            'rf_calibrated_optimized': rf_best_threshold
         }
         
-        output_dir = save_models(models_dict, thresholds_dict, args.output_dir)
+        # Adicionar thresholds K-means se disponíveis
+        if "kmeans" in optimized_thresholds:
+            thresholds_to_save['kmeans_calibrated_default'] = 0.5
+            thresholds_to_save['kmeans_calibrated_optimized'] = optimized_thresholds["kmeans"]
+        
+        # Adicionar thresholds GMM se disponíveis
+        if "gmm" in optimized_thresholds:
+            thresholds_to_save['gmm_calibrated_default'] = 0.5
+            thresholds_to_save['gmm_calibrated_optimized'] = optimized_thresholds["gmm"]
+        
+        output_dir = save_models(models_to_save, thresholds_to_save, args.output_dir)
         
         # Registrar modelos no MLflow
-        mlflow.sklearn.log_model(baseline_model, "baseline_model")
-        mlflow.sklearn.log_model(calibrated_model, "calibrated_model")
+        mlflow.sklearn.log_model(rf_model, "rf_original_model")
+        mlflow.sklearn.log_model(calibrated_rf, "rf_calibrated_model")
+        
+        if kmeans_model and "kmeans_calibrated" in calibrated_models:
+            mlflow.sklearn.log_model(kmeans_model, "kmeans_original_model")
+            mlflow.sklearn.log_model(calibrated_models["kmeans_calibrated"], "kmeans_calibrated_model")
+        
+        if gmm_model and "gmm_calibrated" in calibrated_models:
+            mlflow.sklearn.log_model(gmm_model, "gmm_original_model")
+            mlflow.sklearn.log_model(calibrated_models["gmm_calibrated"], "gmm_calibrated_model")
         
         # 9. Resumo dos resultados
         print("\n=== Resumo dos Resultados ===")
-        results = [baseline_results, calibrated_results_default, calibrated_results_optimized]
-        
-        results_df = pd.DataFrame(results)
+        results_df = pd.DataFrame(list(models_results.values()))
         print(results_df[['model_name', 'threshold', 'precision', 'recall', 'f1']])
         
         # Salvar resumo em CSV
@@ -455,6 +836,10 @@ def main():
         print(f"MLflow run ID: {run_id}")
         
         return output_dir, run_id
+
+# ======================================
+# EXECUTAR O SCRIPT
+# ======================================
 
 if __name__ == "__main__":
     main()

@@ -18,89 +18,29 @@ from sklearn.metrics import (precision_recall_fscore_support, roc_auc_score,
                               average_precision_score, confusion_matrix, 
                               precision_recall_curve, PrecisionRecallDisplay)
 
-def setup_mlflow_tracking(tracking_dir="/home/jupyter/smart_ads/notebooks/mlruns", 
+# Substitua a função setup_mlflow_tracking no arquivo src/evaluation/mlflow_utils.py
+# com esta versão personalizada
+
+def setup_mlflow_tracking(tracking_dir="/Users/ramonmoreira/desktop/smart_ads/mlflow", 
                           experiment_name="smart-ads-baseline", 
-                          clean_previous=True):
+                          clean_previous=False):
     """
-    Configure MLflow tracking directory and experiment.
-    
-    Args:
-        tracking_dir: Directory for MLflow tracking
-        experiment_name: Name of the experiment to create
-        clean_previous: Whether to remove existing tracking directory
-        
-    Returns:
-        Experiment ID of the created experiment
+    NOTA: Esta função está mantida apenas por compatibilidade.
+    O tracking URI já deve ser configurado no script principal.
     """
-    # Create necessary directories
-    os.makedirs(tracking_dir, exist_ok=True)
-    trash_dir = os.path.join(tracking_dir, ".trash")
-    os.makedirs(trash_dir, exist_ok=True)  # Create .trash directory explicitly
+    # Não reconfigurar o tracking URI
+    print("ATENÇÃO: setup_mlflow_tracking não é mais usado. Configure o MLflow no script principal.")
     
-    # Clean directories if requested
-    if clean_previous and os.path.exists(tracking_dir):
-        print(f"Removendo diretório MLflow existente: {tracking_dir}")
-        # Remove only directories that are not .trash
-        for item in os.listdir(tracking_dir):
-            item_path = os.path.join(tracking_dir, item)
-            if os.path.isdir(item_path) and item != ".trash":
-                shutil.rmtree(item_path, ignore_errors=True)
-    
-    # Configure MLflow
-    mlflow.set_tracking_uri(f"file://{tracking_dir}")
-    print(f"MLflow configurado para usar: {mlflow.get_tracking_uri()}")
-    
-    # Check for existing experiment and handle it properly
-    client = mlflow.tracking.MlflowClient()
-    
+    # Apenas retornar o experimento existente
     try:
-        # First, check if the experiment exists
-        experiment = client.get_experiment_by_name(experiment_name)
-        
-        if experiment:
-            print(f"Experimento '{experiment_name}' já existe (ID: {experiment.experiment_id})")
-            
-            # Check if it's in deleted state
-            if experiment.lifecycle_stage == "deleted":
-                print(f"Experimento está em estado 'deleted'")
-                
-                # Try to clean the .trash directory to completely remove the experiment
-                trash_exp_path = os.path.join(trash_dir, experiment.experiment_id)
-                if os.path.exists(trash_exp_path):
-                    print(f"Removendo experimento da pasta .trash: {trash_exp_path}")
-                    shutil.rmtree(trash_exp_path, ignore_errors=True)
-                
-                # Create a new experiment with a modified name to avoid conflicts
-                new_name = f"{experiment_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                print(f"Criando novo experimento com nome modificado: {new_name}")
-                experiment_id = mlflow.create_experiment(new_name)
-                print(f"Criado novo experimento: {new_name} (ID: {experiment_id})")
-            else:
-                # If active, we can use it or delete it depending on clean_previous
-                if clean_previous:
-                    print(f"Deletando experimento ativo: {experiment_name}")
-                    client.delete_experiment(experiment.experiment_id)
-                    
-                    # Create a new one with the same name
-                    print(f"Criando novo experimento: {experiment_name}")
-                    experiment_id = mlflow.create_experiment(experiment_name)
-                else:
-                    print(f"Usando experimento existente: {experiment_name}")
-                    experiment_id = experiment.experiment_id
+        experiment = mlflow.get_experiment_by_name(experiment_name)
+        if experiment is not None:
+            return experiment.experiment_id
         else:
-            # If experiment doesn't exist, create a new one
-            print(f"Criando novo experimento: {experiment_name}")
-            experiment_id = mlflow.create_experiment(experiment_name)
-    
+            return mlflow.create_experiment(experiment_name)
     except Exception as e:
-        print(f"Erro ao lidar com experimento: {e}")
-        # Fallback: create with timestamp to ensure uniqueness
-        new_name = f"{experiment_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        print(f"Criando experimento com nome alternativo: {new_name}")
-        experiment_id = mlflow.create_experiment(new_name)
-    
-    print(f"Experimento ativo: {experiment_name} (ID: {experiment_id})")
-    return experiment_id
+        print(f"Erro ao acessar experimento: {e}")
+        return 0
 
 def get_data_hash(df):
     """
