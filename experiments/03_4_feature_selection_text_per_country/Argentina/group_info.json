@@ -1,6 +1,0 @@
-{
-  "type": "individual",
-  "train_samples": 4752,
-  "validation_samples": 1030,
-  "test_samples": 1003
-}
