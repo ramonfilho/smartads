@@ -41,3 +41,4 @@ models/
 
 # Configurações locais
 .vscode/
+**/.claude/settings.local.json
