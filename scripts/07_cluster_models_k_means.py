@@ -14,7 +14,6 @@ import joblib
 from pathlib import Path
 import contextlib
 import warnings
-import tempfile
 
 # Adicionar o caminho do projeto ao sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -28,6 +27,7 @@ CONFIG = {
     'base_dir': os.path.abspath(os.path.dirname(os.path.dirname(__file__))),
     'data_dir': os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "data/02_3_processed_text_code6"),
     'mlflow_dir': os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "models/mlflow"),
+    'artifact_dir': os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "models/artifacts"),
     'experiment_tuning': "smart_ads_cluster_tuning",
     'experiment_best': "smart_ads_cluster_best",
     'runs_per_experiment': 3,  # Limitar número de runs por experimento
@@ -49,6 +49,44 @@ def configure_mlflow():
     print(f"MLflow configurado para usar: {mlflow_tracking_uri}")
     
     return mlflow_tracking_uri
+
+# Contextlib para garantir que runs do MLflow sejam devidamente encerrados
+@contextlib.contextmanager
+def safe_mlflow_run(experiment_id=None, run_name=None, nested=False):
+    """
+    Context manager seguro para garantir que runs do MLflow sejam sempre encerrados,
+    mesmo em caso de exceção.
+    """
+    active_run = mlflow.active_run()
+    if active_run and not nested:
+        # Se já há um run ativo e não é para ser aninhado, usar o run atual
+        yield active_run
+    else:
+        # Iniciar um novo run
+        run = mlflow.start_run(experiment_id=experiment_id, run_name=run_name, nested=nested)
+        try:
+            yield run
+        finally:
+            mlflow.end_run()
+
+def create_experiment_structure():
+    """
+    Cria a estrutura de diretórios para experimentos e artefatos.
+    """
+    # Garantir que diretórios existam
+    for key in ['mlflow_dir', 'artifact_dir']:
+        os.makedirs(CONFIG[key], exist_ok=True)
+    
+    # Criar subdiretórios específicos para artefatos
+    artifact_subdirs = ['cluster_experiment', 'cluster_best', 'models']
+    for subdir in artifact_subdirs:
+        os.makedirs(os.path.join(CONFIG['artifact_dir'], subdir), exist_ok=True)
+    
+    return {
+        'models_dir': os.path.join(CONFIG['artifact_dir'], 'models'),
+        'cluster_experiment_dir': os.path.join(CONFIG['artifact_dir'], 'cluster_experiment'),
+        'cluster_best_dir': os.path.join(CONFIG['artifact_dir'], 'cluster_best')
+    }
 
 def load_processed_datasets(data_dir):
     """
@@ -158,7 +196,7 @@ def apply_dimension_reduction(X_train_numeric, X_val_numeric, variance_threshold
         random_state: Semente aleatória para reprodutibilidade
         
     Returns:
-        Tupla (X_train_pca, X_val_pca, pca_model, n_components, variance_explained)
+        Tupla (X_train_pca, X_val_pca, pca_model, n_components)
     """
     print(f"Aplicando PCA para redução de dimensionalidade...")
     
@@ -184,9 +222,7 @@ def apply_dimension_reduction(X_train_numeric, X_val_numeric, variance_threshold
     # Garantir um mínimo de componentes
     n_components = max(n_components, 10)
     
-    variance_explained = cumulative_variance[n_components-1]
-    
-    print(f"Número ideal de componentes: {n_components} (variância explicada: {variance_explained:.4f})")
+    print(f"Número ideal de componentes: {n_components} (variância explicada: {cumulative_variance[n_components-1]:.4f})")
     
     # Criar PCA com o número ideal de componentes
     pca = PCA(n_components=n_components, random_state=random_state)
@@ -195,7 +231,7 @@ def apply_dimension_reduction(X_train_numeric, X_val_numeric, variance_threshold
     
     print(f"Dimensão final após PCA: {X_train_pca.shape}")
     
-    return X_train_pca, X_val_pca, pca, n_components, variance_explained
+    return X_train_pca, X_val_pca, pca, n_components
 
 def cluster_data(X_train_pca, X_val_pca, n_clusters=5, random_state=42):
     """
@@ -304,7 +340,7 @@ def analyze_low_conversion_cluster(X_train, y_train, cluster_labels_train, clust
     print(f"  Taxa nos outros clusters: {other_conversion_rate:.6f}")
     print(f"  Razão de conversão (cluster/outros): {conversion_rate/other_conversion_rate if other_conversion_rate > 0 else 0:.4f}")
 
-def train_cluster_models(X_train, y_train, cluster_labels_train, n_clusters, max_depth=None, n_estimators=100, random_state=42):
+def train_cluster_models(X_train, y_train, cluster_labels_train, n_clusters, experiment_id, max_depth=None, n_estimators=100, random_state=42):
     """
     Treina modelos específicos para cada cluster sem criar runs adicionais.
     """
@@ -390,6 +426,9 @@ def train_cluster_models(X_train, y_train, cluster_labels_train, n_clusters, max
             
             # Adicionar à lista
             cluster_models.append(model_info)
+            
+            # Registrar modelo no MLflow (apenas um registro por cluster)
+            mlflow.sklearn.log_model(model, f"cluster_{cluster_id}_model")
             
         except Exception as e:
             print(f"  Erro ao treinar modelo para cluster {cluster_id}: {e}")
@@ -660,7 +699,7 @@ def find_best_model_configuration(results_data):
     return best_config
 
 def run_cluster_experiment_with_params(n_clusters_list=[3, 5], max_depth_list=[None], 
-                                     n_estimators_list=[200]):
+                                     n_estimators_list=[200], dirs=None):
     """
     Executa experimentos completos variando número de clusters e hiperparâmetros.
     
@@ -668,11 +707,17 @@ def run_cluster_experiment_with_params(n_clusters_list=[3, 5], max_depth_list=[N
         n_clusters_list: Lista de números de clusters para testar
         max_depth_list: Lista de valores de max_depth para testar
         n_estimators_list: Lista de valores de n_estimators para testar
+        dirs: Dicionário com diretórios para artefatos
         
     Returns:
         DataFrame com resultados dos experimentos
     """
+    # Configurar diretórios
+    if dirs is None:
+        dirs = create_experiment_structure()
+    
     data_dir = CONFIG['data_dir']
+    cluster_experiment_dir = dirs['cluster_experiment_dir']
     
     # Carregar datasets
     datasets = load_processed_datasets(data_dir)
@@ -686,7 +731,7 @@ def run_cluster_experiment_with_params(n_clusters_list=[3, 5], max_depth_list=[N
     X_train_numeric, X_val_numeric, numeric_cols = identify_numeric_features(X_train, X_val)
     
     # Aplicar PCA
-    X_train_pca, X_val_pca, pca_model, n_components, variance_explained = apply_dimension_reduction(
+    X_train_pca, X_val_pca, pca_model, n_components = apply_dimension_reduction(
         X_train_numeric, X_val_numeric, variance_threshold=0.8)
     
     # Armazenar resultados
@@ -713,177 +758,135 @@ def run_cluster_experiment_with_params(n_clusters_list=[3, 5], max_depth_list=[N
     else:
         experiment_id = experiment.experiment_id
     
-    # Criar diretório temporário para os artefatos
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Usar um único run para todos os testes
-        with mlflow.start_run(experiment_id=experiment_id, run_name="cluster_parameter_search") as parent_run:
-            run_id = parent_run.info.run_id
+    # Usar um único run para todos os testes
+    with mlflow.start_run(experiment_id=experiment_id, run_name="cluster_parameter_search") as parent_run:
+        # Registrar parâmetros gerais
+        mlflow.log_params({
+            "n_clusters_tested": str(n_clusters_list),
+            "max_depth_tested": str(max_depth_list),
+            "n_estimators_tested": str(n_estimators_list),
+            "total_combinations": len(param_combinations)
+        })
+        
+        for n_clusters, max_depth, n_estimators in param_combinations:
+            config_name = f"clusters_{n_clusters}_depth_{str(max_depth)}_trees_{n_estimators}"
+            print(f"\n{'='*50}")
+            print(f"Testando configuração: {config_name}")
             
-            # Registrar parâmetros gerais
+            # Aplicar clustering
+            cluster_labels_train, cluster_labels_val, kmeans_model = cluster_data(
+                X_train_pca, X_val_pca, n_clusters=n_clusters)
+            
+            # Analisar clusters
+            min_conv_cluster_id = analyze_clusters(
+                cluster_labels_train, y_train, cluster_labels_val, y_val)
+                
+            # Registrar parâmetros desta configuração
             mlflow.log_params({
-                "n_clusters_tested": str(n_clusters_list),
-                "max_depth_tested": str(max_depth_list),
-                "n_estimators_tested": str(n_estimators_list),
-                "total_combinations": len(param_combinations)
+                f"{config_name}_n_clusters": n_clusters,
+                f"{config_name}_max_depth": str(max_depth),
+                f"{config_name}_n_estimators": n_estimators
             })
             
-            # Salvar modelos PCA e informações diretamente como artefatos do MLflow
-            config_file = os.path.join(temp_dir, "best_model_config.json")
-            with open(config_file, "w") as f:
-                json.dump({
-                    "pca_n_components": n_components,
-                    "pca_variance_explained": float(variance_explained)
-                }, f)
-            mlflow.log_artifact(config_file)
+            # Treinar modelos sem criar runs aninhados
+            cluster_models = train_cluster_models(
+                X_train, y_train, cluster_labels_train, n_clusters, 
+                experiment_id, max_depth=max_depth, n_estimators=n_estimators
+            )
             
-            # Salvar modelo PCA
-            pca_file = os.path.join(temp_dir, "pca_model.joblib")
-            joblib.dump(pca_model, pca_file)
-            mlflow.log_artifact(pca_file)
+            # Avaliar com threshold global
+            global_results = evaluate_ensemble_with_global_threshold(
+                X_val, y_val, cluster_labels_val, cluster_models
+            )
             
-            for n_clusters, max_depth, n_estimators in param_combinations:
-                config_name = f"clusters_{n_clusters}_depth_{str(max_depth)}_trees_{n_estimators}"
-                print(f"\n{'='*50}")
-                print(f"Testando configuração: {config_name}")
-                
-                # Aplicar clustering
-                cluster_labels_train, cluster_labels_val, kmeans_model = cluster_data(
-                    X_train_pca, X_val_pca, n_clusters=n_clusters)
-                
-                # Analisar clusters
-                min_conv_cluster_id = analyze_clusters(
-                    cluster_labels_train, y_train, cluster_labels_val, y_val)
-                    
-                # Registrar parâmetros desta configuração
-                mlflow.log_params({
-                    f"{config_name}_n_clusters": n_clusters,
-                    f"{config_name}_max_depth": str(max_depth),
-                    f"{config_name}_n_estimators": n_estimators
-                })
-                
-                # Treinar modelos sem criar runs aninhados
-                cluster_models = train_cluster_models(
-                    X_train, y_train, cluster_labels_train, n_clusters, 
-                    max_depth=max_depth, n_estimators=n_estimators
-                )
-                
-                # Salvar modelo kmeans
-                kmeans_file = os.path.join(temp_dir, f"kmeans_model_{n_clusters}.joblib")
-                joblib.dump(kmeans_model, kmeans_file)
-                mlflow.log_artifact(kmeans_file)
-                
-                # Avaliar com threshold global
-                global_results = evaluate_ensemble_with_global_threshold(
-                    X_val, y_val, cluster_labels_val, cluster_models
-                )
-                
-                # Avaliar com thresholds por cluster
-                cluster_results = evaluate_ensemble_with_cluster_thresholds(
-                    X_val, y_val, cluster_labels_val, cluster_models
-                )
-                
-                # Armazenar resultados
-                config_results = {
-                    'n_clusters': n_clusters,
-                    'max_depth': str(max_depth),  # None -> "None"
-                    'n_estimators': n_estimators,
-                    'global_precision': global_results['precision'],
-                    'global_recall': global_results['recall'],
-                    'global_f1': global_results['f1'],
-                    'global_threshold': global_results['threshold'],
-                    'cluster_precision': cluster_results['precision'],
-                    'cluster_recall': cluster_results['recall'],
-                    'cluster_f1': cluster_results['f1']
-                }
-                
-                results_data.append(config_results)
-                
-                # Registrar métricas no run principal
-                mlflow.log_metrics({
-                    f"{config_name}_global_precision": global_results['precision'],
-                    f"{config_name}_global_recall": global_results['recall'],
-                    f"{config_name}_global_f1": global_results['f1'],
-                    f"{config_name}_cluster_precision": cluster_results['precision'],
-                    f"{config_name}_cluster_recall": cluster_results['recall'],
-                    f"{config_name}_cluster_f1": cluster_results['f1']
-                })
-                
-                # Salvar modelos individualmente
-                for model_info in cluster_models:
-                    cluster_id = model_info["cluster_id"]
-                    model_filename = os.path.join(temp_dir, f"cluster_{n_clusters}_id_{cluster_id}_model.joblib")
-                    joblib.dump(model_info["model"], model_filename)
-                    mlflow.log_artifact(model_filename)
-                    
-                    # Salvar informações do modelo
-                    info_filename = os.path.join(temp_dir, f"cluster_{n_clusters}_id_{cluster_id}_info.json")
-                    with open(info_filename, "w") as f:
-                        json.dump({
-                            "threshold": float(model_info["threshold"]),
-                            "n_samples": int(model_info["n_samples"]),
-                            "conversion_rate": float(model_info["conversion_rate"])
-                        }, f)
-                    mlflow.log_artifact(info_filename)
-        
-        # Criar DataFrame com resultados
-        results_df = pd.DataFrame(results_data)
-        
-        # Encontrar melhor configuração
-        best_config = find_best_model_configuration(results_data)
-        
-        # Salvar configuração como artefato MLflow
-        if best_config:
-            best_config_file = os.path.join(temp_dir, "best_config.json")
-            with open(best_config_file, "w") as f:
-                json.dump(best_config, f, indent=2)
+            # Avaliar com thresholds por cluster
+            cluster_results = evaluate_ensemble_with_cluster_thresholds(
+                X_val, y_val, cluster_labels_val, cluster_models
+            )
             
-            # Garantir que um novo run MLflow não está ativo antes de registrar artefatos
-            active_run = mlflow.active_run()
-            if active_run:
-                # Se ainda estiver ativo, encerre-o
-                mlflow.end_run()
+            # Armazenar resultados
+            config_results = {
+                'n_clusters': n_clusters,
+                'max_depth': str(max_depth),  # None -> "None"
+                'n_estimators': n_estimators,
+                'global_precision': global_results['precision'],
+                'global_recall': global_results['recall'],
+                'global_f1': global_results['f1'],
+                'global_threshold': global_results['threshold'],
+                'cluster_precision': cluster_results['precision'],
+                'cluster_recall': cluster_results['recall'],
+                'cluster_f1': cluster_results['f1']
+            }
             
-            # Iniciar um novo run apenas para registrar a configuração
-            with mlflow.start_run(experiment_id=experiment_id, run_name="best_config"):
-                mlflow.log_artifact(best_config_file)
-                
-                # Também registrar como parâmetros
-                mlflow.log_params({
-                    "best_n_clusters": best_config['n_clusters'],
-                    "best_max_depth": best_config['max_depth'],
-                    "best_n_estimators": best_config['n_estimators'],
-                    "best_precision": best_config['global_precision'],
-                    "best_recall": best_config['global_recall'],
-                    "best_f1": best_config['global_f1']
-                })
+            results_data.append(config_results)
+            
+            # Registrar métricas no run principal
+            mlflow.log_metrics({
+                f"{config_name}_global_precision": global_results['precision'],
+                f"{config_name}_global_recall": global_results['recall'],
+                f"{config_name}_global_f1": global_results['f1'],
+                f"{config_name}_cluster_precision": cluster_results['precision'],
+                f"{config_name}_cluster_recall": cluster_results['recall'],
+                f"{config_name}_cluster_f1": cluster_results['f1']
+            })
     
-    return results_df, best_config, run_id
+    # Criar DataFrame com resultados
+    results_df = pd.DataFrame(results_data)
+    
+    # Encontrar melhor configuração
+    best_config = find_best_model_configuration(results_data)
+    
+    # Salvar melhor configuração e seu modelo como joblib
+    if best_config:
+        # Salvar PCA e KMeans da melhor configuração
+        joblib.dump(pca_model, os.path.join(cluster_experiment_dir, f"best_pca.joblib"))
+        
+        # Refazer o clustering com o melhor número de clusters para garantir consistência
+        best_n_clusters = int(best_config['n_clusters'])
+        _, _, best_kmeans = cluster_data(X_train_pca, X_val_pca, n_clusters=best_n_clusters)
+        
+        # Salvar apenas o melhor KMeans
+        joblib.dump(best_kmeans, os.path.join(cluster_experiment_dir, f"best_kmeans.joblib"))
+        
+        # Salvar a configuração em JSON
+        best_config_path = os.path.join(cluster_experiment_dir, "best_model_config.json")
+        with open(best_config_path, 'w') as f:
+            json.dump(best_config, f, indent=2)
+    
+    return results_df, best_config
 
-def run_best_cluster_configuration(best_config=None, tuning_run_id=None):
+def run_best_cluster_configuration(best_config=None, dirs=None):
     """
     Executa o experimento com a melhor configuração encontrada.
     
     Args:
         best_config: Dicionário com a melhor configuração (opcional)
-        tuning_run_id: ID do run de tuning (para buscar config se best_config=None)
+        dirs: Dicionário com diretórios para artefatos
         
     Returns:
         Resultados da melhor configuração
     """
-    data_dir = CONFIG['data_dir']
+    # Configurar diretórios
+    if dirs is None:
+        dirs = create_experiment_structure()
     
-    # Se não foi fornecida uma configuração, buscar do MLflow
-    if best_config is None and tuning_run_id is not None:
-        try:
-            # Tentar buscar do MLflow
-            client = mlflow.tracking.MlflowClient()
-            artifacts_dir = client.download_artifacts(tuning_run_id, "best_config.json")
-            with open(artifacts_dir, "r") as f:
+    data_dir = CONFIG['data_dir']
+    models_dir = dirs['models_dir']
+    cluster_best_dir = dirs['cluster_best_dir']
+    cluster_experiment_dir = dirs['cluster_experiment_dir']
+    
+    # Criar diretório para artefatos
+    os.makedirs(cluster_best_dir, exist_ok=True)
+    
+    # Se não foi fornecida uma configuração, verificar se existe arquivo salvo
+    if best_config is None:
+        config_path = os.path.join(cluster_experiment_dir, "best_model_config.json")
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
                 best_config = json.load(f)
-            print(f"Carregada configuração do MLflow run {tuning_run_id}")
-        except Exception as e:
-            print(f"Erro ao carregar configuração do MLflow: {e}")
-            # Usar configuração padrão
+            print("Carregada configuração do arquivo:", config_path)
+        else:
+            # Usar baseline se nenhum modelo melhor foi encontrado
             best_config = {
                 'n_clusters': 5,  
                 'max_depth': "None",  # Nota: será convertido para None
@@ -892,16 +895,6 @@ def run_best_cluster_configuration(best_config=None, tuning_run_id=None):
                 'global_recall': 0.27
             }
             print("Usando configuração padrão definida no código.")
-    elif best_config is None:
-        # Usar configuração padrão
-        best_config = {
-            'n_clusters': 5,  
-            'max_depth': "None",  # Nota: será convertido para None
-            'n_estimators': 200,
-            'global_precision': 0.94,
-            'global_recall': 0.27
-        }
-        print("Usando configuração padrão definida no código.")
     
     # Converter de string para None se necessário
     if best_config['max_depth'] == "None":
@@ -927,7 +920,7 @@ def run_best_cluster_configuration(best_config=None, tuning_run_id=None):
     X_train_numeric, X_val_numeric, numeric_cols = identify_numeric_features(X_train, X_val)
     
     # Aplicar PCA
-    X_train_pca, X_val_pca, pca_model, n_components, variance_explained = apply_dimension_reduction(
+    X_train_pca, X_val_pca, pca_model, n_components = apply_dimension_reduction(
         X_train_numeric, X_val_numeric, variance_threshold=0.8)
     
     # Aplicar clustering
@@ -950,159 +943,122 @@ def run_best_cluster_configuration(best_config=None, tuning_run_id=None):
     else:
         experiment_id = experiment.experiment_id
     
-    # Criar diretório temporário para os artefatos
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Garantimos que nenhum run MLflow está ativo antes de iniciar um novo
-        active_run = mlflow.active_run()
-        if active_run:
-            print(f"Encerrando run MLflow ativo: {active_run.info.run_id}")
-            mlflow.end_run()
+    # Usar run principal para todo o processamento final
+    with mlflow.start_run(experiment_id=experiment_id, run_name="best_cluster_model") as run:
+        # Registrar parâmetros
+        mlflow.log_params({
+            "n_clusters": n_clusters,
+            "max_depth": str(max_depth),
+            "n_estimators": n_estimators,
+            "min_conversion_cluster_id": min_conv_cluster_id
+        })
+        
+        # Treinar modelos
+        cluster_models = train_cluster_models(
+            X_train, y_train, cluster_labels_train, n_clusters,
+            experiment_id, max_depth=max_depth, n_estimators=n_estimators
+        )
+        
+        # Avaliar com threshold global
+        global_results = evaluate_ensemble_with_global_threshold(
+            X_val, y_val, cluster_labels_val, cluster_models
+        )
+        
+        # Avaliar com thresholds por cluster
+        cluster_results = evaluate_ensemble_with_cluster_thresholds(
+            X_val, y_val, cluster_labels_val, cluster_models
+        )
+        
+        # Comparar resultados e escolher o melhor (global vs. cluster)
+        if global_results['f1'] >= cluster_results['f1']:
+            best_approach = "global_threshold"
+            best_metrics = global_results
+        else:
+            best_approach = "cluster_thresholds"
+            best_metrics = cluster_results
             
-        # Usar run principal para todo o processamento final
-        with mlflow.start_run(experiment_id=experiment_id, run_name="best_cluster_model") as run:
-            run_id = run.info.run_id
+        # Comparar com baseline
+        baseline_precision = 0.94
+        baseline_recall = 0.27
+        baseline_f1 = 2 * (baseline_precision * baseline_recall) / (baseline_precision + baseline_recall)
+        
+        print("\nComparação com o Baseline:")
+        print(f"  Baseline: Precision={baseline_precision:.4f}, Recall={baseline_recall:.4f}, F1={baseline_f1:.4f}")
+        print(f"  Global Threshold: Precision={global_results['precision']:.4f}, Recall={global_results['recall']:.4f}, F1={global_results['f1']:.4f}")
+        print(f"  Cluster Thresholds: Precision={cluster_results['precision']:.4f}, Recall={cluster_results['recall']:.4f}, F1={cluster_results['f1']:.4f}")
+        
+        # Verificar se nosso melhor resultado é inferior ao baseline
+        if best_metrics['f1'] < baseline_f1:
+            print("\nATENÇÃO: O melhor modelo encontrado tem desempenho inferior ao baseline!")
+            print("Considerando usar o modelo baseline em vez do modelo treinado.")
             
-            # Registrar parâmetros
-            mlflow.log_params({
-                "n_clusters": n_clusters,
-                "max_depth": str(max_depth),
-                "n_estimators": n_estimators,
-                "min_conversion_cluster_id": min_conv_cluster_id
-            })
+            # Definir uma flag para usar o baseline em vez do modelo treinado
+            use_baseline = True
+        else:
+            use_baseline = False
             
-            # Treinar modelos
-            cluster_models = train_cluster_models(
-                X_train, y_train, cluster_labels_train, n_clusters,
-                max_depth=max_depth, n_estimators=n_estimators
-            )
-            
-            # Avaliar com threshold global
-            global_results = evaluate_ensemble_with_global_threshold(
-                X_val, y_val, cluster_labels_val, cluster_models
-            )
-            
-            # Avaliar com thresholds por cluster
-            cluster_results = evaluate_ensemble_with_cluster_thresholds(
-                X_val, y_val, cluster_labels_val, cluster_models
-            )
-            
-            # Comparar resultados e escolher o melhor (global vs. cluster)
-            if global_results['f1'] >= cluster_results['f1']:
-                best_approach = "global_threshold"
-                best_metrics = global_results
-            else:
-                best_approach = "cluster_thresholds"
-                best_metrics = cluster_results
-                
-            # Comparar com baseline
-            baseline_precision = 0.94
-            baseline_recall = 0.27
-            baseline_f1 = 2 * (baseline_precision * baseline_recall) / (baseline_precision + baseline_recall)
-            
-            print("\nComparação com o Baseline:")
-            print(f"  Baseline: Precision={baseline_precision:.4f}, Recall={baseline_recall:.4f}, F1={baseline_f1:.4f}")
-            print(f"  Global Threshold: Precision={global_results['precision']:.4f}, Recall={global_results['recall']:.4f}, F1={global_results['f1']:.4f}")
-            print(f"  Cluster Thresholds: Precision={cluster_results['precision']:.4f}, Recall={cluster_results['recall']:.4f}, F1={cluster_results['f1']:.4f}")
-            
-            # Verificar se nosso melhor resultado é inferior ao baseline
-            if best_metrics['f1'] < baseline_f1:
-                print("\nATENÇÃO: O melhor modelo encontrado tem desempenho inferior ao baseline!")
-                print("Considerando usar o modelo baseline em vez do modelo treinado.")
-                
-                # Definir uma flag para usar o baseline em vez do modelo treinado
-                use_baseline = True
-            else:
-                use_baseline = False
-                
-            # Registrar qual abordagem foi melhor
-            mlflow.log_param("best_approach", best_approach)
-            mlflow.log_param("use_baseline", use_baseline)
-            mlflow.log_metrics({
-                "best_precision": best_metrics['precision'],
-                "best_recall": best_metrics['recall'],
-                "best_f1": best_metrics['f1'],
-                "baseline_f1": baseline_f1,
-                "improvement_over_baseline": best_metrics['f1'] - baseline_f1
-            })
-            
-            # Salvar modelos como artefatos do MLflow
-            pca_file = os.path.join(temp_dir, "pca_model.joblib")
-            kmeans_file = os.path.join(temp_dir, "kmeans_model.joblib")
-            joblib.dump(pca_model, pca_file)
-            joblib.dump(kmeans_model, kmeans_file)
-            mlflow.log_artifact(pca_file)
-            mlflow.log_artifact(kmeans_file)
-            
-            # Salvar informações dos clusters
-            cluster_info = {
-                "approach": best_approach,
-                "n_clusters": int(n_clusters),
-                "global_threshold": float(global_results['threshold']),
-                "cluster_thresholds": {str(k): float(v) for k, v in cluster_results.get('thresholds', {}).items()} if cluster_results else {},
-                "use_baseline": use_baseline,
-                "baseline": {
-                    "precision": baseline_precision,
-                    "recall": baseline_recall,
-                    "f1": baseline_f1
-                }
+        # Registrar qual abordagem foi melhor
+        mlflow.log_param("best_approach", best_approach)
+        mlflow.log_param("use_baseline", use_baseline)
+        mlflow.log_metrics({
+            "best_precision": best_metrics['precision'],
+            "best_recall": best_metrics['recall'],
+            "best_f1": best_metrics['f1'],
+            "baseline_f1": baseline_f1,
+            "improvement_over_baseline": best_metrics['f1'] - baseline_f1
+        })
+        
+        # Salvar modelos para uso futuro
+        pca_path = os.path.join(models_dir, "pca_model.joblib")
+        kmeans_path = os.path.join(models_dir, "kmeans_model.joblib")
+        joblib.dump(pca_model, pca_path)
+        joblib.dump(kmeans_model, kmeans_path)
+        
+        # Salvar informações dos clusters
+        cluster_info = {
+            "approach": best_approach,
+            "n_clusters": int(n_clusters),
+            "global_threshold": float(global_results['threshold']),
+            "cluster_thresholds": {str(k): float(v) for k, v in cluster_results.get('thresholds', {}).items()} if cluster_results else {},
+            "use_baseline": use_baseline,
+            "baseline": {
+                "precision": baseline_precision,
+                "recall": baseline_recall,
+                "f1": baseline_f1
             }
-            
-            cluster_info_file = os.path.join(temp_dir, "cluster_info.json")
-            with open(cluster_info_file, "w") as f:
-                json.dump(cluster_info, f, indent=2)
-            mlflow.log_artifact(cluster_info_file)
-            
-            # Se devemos usar os modelos treinados, salve-os
-            if not use_baseline:
-                # Salvar modelo para cada cluster
-                for model_info in cluster_models:
-                    cluster_id = model_info["cluster_id"]
-                    
+        }
+        
+        cluster_info_path = os.path.join(models_dir, "cluster_info.json")
+        with open(cluster_info_path, 'w') as f:
+            json.dump(cluster_info, f, indent=2)
+        
+        # Se devemos usar os modelos treinados, salve-os
+        if not use_baseline:
+            # Salvar apenas um modelo representativo por cluster
+            for cluster_id in range(n_clusters):
+                # Verificar se temos modelo para esse cluster
+                model_info = next((m for m in cluster_models if m["cluster_id"] == cluster_id), None)
+                
+                if model_info:
                     # Salvar modelo
-                    model_filename = os.path.join(temp_dir, f"cluster_{cluster_id}_model.joblib")
-                    joblib.dump(model_info["model"], model_filename)
-                    mlflow.log_artifact(model_filename)
+                    model_path = os.path.join(models_dir, f"cluster_{cluster_id}_model.joblib")
+                    joblib.dump(model_info["model"], model_path)
                     
                     # Salvar threshold e metadados
-                    info_filename = os.path.join(temp_dir, f"cluster_{cluster_id}_info.json")
-                    with open(info_filename, "w") as f:
+                    with open(os.path.join(models_dir, f"cluster_{cluster_id}_info.json"), 'w') as f:
                         json.dump({
                             "threshold": float(model_info["threshold"]),
                             "n_samples": int(model_info["n_samples"]),
                             "conversion_rate": float(model_info["conversion_rate"])
-                        }, f)
-                    mlflow.log_artifact(info_filename)
-            
-            # Também salvar a performance final
-            performance_summary = {
-                "baseline": {
-                    "precision": baseline_precision,
-                    "recall": baseline_recall,
-                    "f1": baseline_f1
-                },
-                "global_threshold": {
-                    "precision": float(global_results["precision"]),
-                    "recall": float(global_results["recall"]),
-                    "f1": float(global_results["f1"])
-                },
-                "cluster_thresholds": {
-                    "precision": float(cluster_results["precision"]),
-                    "recall": float(cluster_results["recall"]),
-                    "f1": float(cluster_results["f1"])
-                },
-                "best_approach": best_approach,
-                "use_baseline": use_baseline,
-                "metrics": {
-                    "precision": float(best_metrics["precision"]),
-                    "recall": float(best_metrics["recall"]),
-                    "f1": float(best_metrics["f1"])
-                }
-            }
+                        }, f, indent=2)
         
-            performance_file = os.path.join(temp_dir, "performance_summary.json")
-            with open(performance_file, "w") as f:
-                json.dump(performance_summary, f, indent=2)
-            mlflow.log_artifact(performance_file)
+        # Registrar artefatos no MLflow
+        mlflow.log_artifact(pca_path)
+        mlflow.log_artifact(kmeans_path)
+        mlflow.log_artifact(cluster_info_path)
+        
+        # Registrar o diretório de modelos
+        mlflow.log_artifacts(models_dir, "models")
     
     return {
         "global_results": global_results,
@@ -1112,8 +1068,7 @@ def run_best_cluster_configuration(best_config=None, tuning_run_id=None):
         "cluster_models": cluster_models,
         "best_approach": best_approach,
         "best_metrics": best_metrics,
-        "use_baseline": use_baseline,
-        "run_id": run_id
+        "use_baseline": use_baseline
     }
 
 def run_full_cluster_experiment():
@@ -1128,6 +1083,9 @@ def run_full_cluster_experiment():
     # Configurar MLflow para usar o diretório correto
     mlflow_uri = configure_mlflow()
     
+    # Criar estrutura de diretórios
+    dirs = create_experiment_structure()
+    
     # Limpar arquivos anteriores do MLflow
     active_run = mlflow.active_run()
     if active_run:
@@ -1135,28 +1093,55 @@ def run_full_cluster_experiment():
         mlflow.end_run()
     
     # Executar experimento com combinações reduzidas de parâmetros
-    results_df, best_config, tuning_run_id = run_cluster_experiment_with_params(
+    results_df, best_config = run_cluster_experiment_with_params(
         n_clusters_list=[3, 5],  # Reduzido de [3, 5, 7]
         max_depth_list=[None],   # Reduzido de [None, 15]
         n_estimators_list=[200], # Reduzido de [100, 200]
+        dirs=dirs
     )
-    
-    # Garantir que todos os runs ativos sejam encerrados antes de prosseguir
-    active_run = mlflow.active_run()
-    if active_run:
-        print(f"Encerrando run MLflow ativo antes de continuar: {active_run.info.run_id}")
-        mlflow.end_run()
     
     # Executar melhor configuração
     print("\nExecutando experimento com a melhor configuração encontrada...")
-    best_result = run_best_cluster_configuration(best_config, tuning_run_id)
+    best_result = run_best_cluster_configuration(best_config, dirs)
+    
+    # Salvar informações de performance em um único arquivo JSON
+    performance_summary = {
+        "baseline": {
+            "precision": 0.94,
+            "recall": 0.27,
+            "f1": 2 * (0.94 * 0.27) / (0.94 + 0.27)
+        },
+        "global_threshold": {
+            "precision": float(best_result["global_results"]["precision"]),
+            "recall": float(best_result["global_results"]["recall"]),
+            "f1": float(best_result["global_results"]["f1"])
+        },
+        "cluster_thresholds": {
+            "precision": float(best_result["cluster_results"]["precision"]),
+            "recall": float(best_result["cluster_results"]["recall"]),
+            "f1": float(best_result["cluster_results"]["f1"])
+        },
+        "best_approach": best_result["best_approach"],
+        "use_baseline": best_result.get("use_baseline", False),
+        "metrics": {
+            "precision": float(best_result["best_metrics"]["precision"]),
+            "recall": float(best_result["best_metrics"]["recall"]),
+            "f1": float(best_result["best_metrics"]["f1"])
+        }
+    }
+    
+    # Salvar em um arquivo JSON consolidado
+    summary_path = os.path.join(dirs['models_dir'], "performance_summary.json")
+    with open(summary_path, 'w') as f:
+        json.dump(performance_summary, f, indent=2)
     
     print("\nExperimento completo concluído!")
+    print(f"Modelos salvos em: {dirs['models_dir']}")
     print(f"Logs MLflow em: {CONFIG['mlflow_dir']}")
     
     # Verificar se o melhor modelo é inferior ao baseline
-    baseline_f1 = 2 * (0.94 * 0.27) / (0.94 + 0.27)
-    best_f1 = best_result["best_metrics"]["f1"]
+    baseline_f1 = performance_summary["baseline"]["f1"]
+    best_f1 = performance_summary["metrics"]["f1"]
     
     if best_f1 < baseline_f1:
         print("\nAVISO: O melhor modelo encontrado tem performance inferior ao baseline!")
@@ -1166,8 +1151,7 @@ def run_full_cluster_experiment():
         "results_df": results_df,
         "best_config": best_config,
         "best_result": best_result,
-        "tuning_run_id": tuning_run_id,
-        "best_run_id": best_result["run_id"]
+        "performance_summary": performance_summary
     }
 
 if __name__ == "__main__":
