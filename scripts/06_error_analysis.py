@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
 Script para análise de erros do modelo RandomForest utilizando
-especificamente o último modelo treinado pelo script 04_baseline_model_training.py.
+um modelo específico salvo no MLflow.
 """
 
 import os
@@ -28,103 +28,17 @@ from src.evaluation.error_analysis import (
 # Importar a função de sanitização de nomes de colunas que foi usada no treinamento
 from src.evaluation.baseline_model import sanitize_column_names
 
-def get_latest_random_forest_run(mlflow_dir):
-    """
-    Obtém o run_id do modelo RandomForest mais recente.
-    
-    Args:
-        mlflow_dir: Diretório do MLflow tracking
-        
-    Returns:
-        Tuple com (run_id, threshold, model_uri) ou (None, None, None) se não encontrado
-    """
-    # Configurar MLflow
-    if os.path.exists(mlflow_dir):
-        mlflow.set_tracking_uri(f"file://{mlflow_dir}")
-        print(f"MLflow tracking URI: {mlflow.get_tracking_uri()}")
-    else:
-        print(f"AVISO: Diretório MLflow não encontrado: {mlflow_dir}")
-        return None, None, None
-    
-    # Inicializar cliente MLflow
-    client = mlflow.tracking.MlflowClient()
-    
-    # Procurar todos os experimentos
-    experiments = client.search_experiments()
-    
-    for experiment in experiments:
-        print(f"Verificando experimento: {experiment.name} (ID: {experiment.experiment_id})")
-        
-        # Buscar runs específicos do RandomForest ordenados pelo mais recente
-        runs = client.search_runs(
-            experiment_ids=[experiment.experiment_id],
-            filter_string="tags.model_type = 'random_forest'",
-            order_by=["attribute.start_time DESC"]
-        )
-        
-        if not runs:
-            # Se não achou pela tag, procurar pelo nome do artefato
-            runs = client.search_runs(
-                experiment_ids=[experiment.experiment_id],
-                order_by=["attribute.start_time DESC"]
-            )
-        
-        for run in runs:
-            run_id = run.info.run_id
-            print(f"  Encontrado run: {run_id}")
-            
-            # Verificar artefatos
-            artifacts = client.list_artifacts(run_id)
-            rf_artifact = None
-            
-            for artifact in artifacts:
-                if artifact.is_dir and artifact.path == 'random_forest':
-                    rf_artifact = artifact
-                    break
-            
-            if rf_artifact:
-                # Extrair o threshold das métricas
-                threshold = run.data.metrics.get('threshold', 0.17)  # Fallback para 0.17 se não encontrar
-                model_uri = f"runs:/{run_id}/random_forest"
-                
-                print(f"  Usando modelo RandomForest de {run.info.start_time}")
-                print(f"  Run ID: {run_id}")
-                print(f"  Model URI: {model_uri}")
-                print(f"  Threshold: {threshold}")
-                
-                # Mostrar métricas registradas no MLflow
-                precision = run.data.metrics.get('precision', None)
-                recall = run.data.metrics.get('recall', None)
-                f1 = run.data.metrics.get('f1', None)
-                
-                if precision and recall and f1:
-                    print(f"  Métricas do MLflow: Precision={precision:.4f}, Recall={recall:.4f}, F1={f1:.4f}")
-                
-                return run_id, threshold, model_uri
-    
-    print("Nenhum modelo RandomForest encontrado em MLflow.")
-    return None, None, None
+# Caminho fixo para o modelo que queremos analisar
+MODEL_PATH = "/Users/ramonmoreira/desktop/smart_ads/models/mlflow/783044341530730386/2c54d70c822c4e42ad92313f4f2bfe8e/artifacts/random_forest"
 
-def load_model_from_mlflow(model_uri):
-    """
-    Carrega um modelo a partir do MLflow usando seu URI.
-    
-    Args:
-        model_uri: URI do modelo no formato 'runs:/<run_id>/<artifact_path>'
-        
-    Returns:
-        Modelo carregado ou None se falhar
-    """
-    try:
-        print(f"Carregando modelo de: {model_uri}")
-        model = mlflow.sklearn.load_model(model_uri)
-        print("Modelo carregado com sucesso!")
-        return model
-    except Exception as e:
-        print(f"Erro ao carregar modelo: {str(e)}")
-        return None
+# Caminhos fixos para os datasets
+TRAIN_PATH = "/Users/ramonmoreira/desktop/smart_ads/data/03_4_feature_selection_final/train.csv"
+VAL_PATH = "/Users/ramonmoreira/desktop/smart_ads/data/03_4_feature_selection_final/validation.csv"
 
-def load_datasets(train_path=None, val_path=None):
+# Threshold padrão (fallback)
+DEFAULT_THRESHOLD = 0.12
+
+def load_datasets(train_path=TRAIN_PATH, val_path=VAL_PATH):
     """
     Carrega os datasets de treino e validação.
     
@@ -135,34 +49,177 @@ def load_datasets(train_path=None, val_path=None):
     Returns:
         Tuple (train_df, val_df)
     """
-    # Definir caminhos padrão se não fornecidos
-    if not train_path:
-        train_path = os.path.join(project_root, "data", "03_feature_selection_text_code6", "train.csv")
-        if not os.path.exists(train_path):
-            train_path = os.path.join(os.path.expanduser("~"), "desktop", "smart_ads", "data", "03_feature_selection_text_code6", "train.csv")
+    # Verificar se os arquivos existem
+    if not os.path.exists(train_path):
+        raise FileNotFoundError(f"Arquivo de treino não encontrado: {train_path}")
     
-    if not val_path:
-        val_path = os.path.join(project_root, "data", "03_feature_selection_text_code6", "validation.csv")
-        if not os.path.exists(val_path):
-            val_path = os.path.join(os.path.expanduser("~"), "desktop", "smart_ads", "data", "03_feature_selection_text_code6", "validation.csv")
+    if not os.path.exists(val_path):
+        raise FileNotFoundError(f"Arquivo de validação não encontrado: {val_path}")
     
     # Carregar os dados
     print(f"Carregando dados de treino: {train_path}")
-    train_df = pd.read_csv(train_path) if os.path.exists(train_path) else None
+    train_df = pd.read_csv(train_path)
     
     print(f"Carregando dados de validação: {val_path}")
-    val_df = pd.read_csv(val_path) if os.path.exists(val_path) else None
-    
-    if train_df is None:
-        train_path = input("Arquivo de treino não encontrado. Por favor, forneça o caminho completo: ")
-        train_df = pd.read_csv(train_path)
-    
-    if val_df is None:
-        val_path = input("Arquivo de validação não encontrado. Por favor, forneça o caminho completo: ")
-        val_df = pd.read_csv(val_path)
+    val_df = pd.read_csv(val_path)
     
     print(f"Dados carregados: treino {train_df.shape}, validação {val_df.shape}")
     return train_df, val_df
+
+def get_model_info(model):
+    """
+    Obtém informações detalhadas sobre o modelo RandomForest.
+    
+    Args:
+        model: Modelo RandomForest carregado
+        
+    Returns:
+        Dicionário com informações do modelo
+    """
+    model_info = {}
+    
+    # Informações básicas
+    model_info['tipo'] = str(type(model).__name__)
+    
+    # Hiperparâmetros
+    if hasattr(model, 'get_params'):
+        params = model.get_params()
+        model_info['hiperparametros'] = params
+    
+    # Número de estimadores (árvores)
+    if hasattr(model, 'n_estimators'):
+        model_info['n_estimadores'] = model.n_estimators
+    
+    # Profundidade máxima
+    if hasattr(model, 'max_depth'):
+        model_info['profundidade_maxima'] = model.max_depth
+    
+    # Número de features
+    if hasattr(model, 'n_features_in_'):
+        model_info['n_features'] = model.n_features_in_
+    
+    # Critério de divisão
+    if hasattr(model, 'criterion'):
+        model_info['criterio'] = model.criterion
+    
+    # Importância de features
+    if hasattr(model, 'feature_importances_') and hasattr(model, 'feature_names_in_'):
+        # Obter as 10 features mais importantes
+        importances = model.feature_importances_
+        indices = np.argsort(importances)[::-1]
+        top_indices = indices[:10]
+        top_features = [(model.feature_names_in_[i], importances[i]) for i in top_indices]
+        model_info['top_10_features'] = top_features
+    
+    # Classes
+    if hasattr(model, 'classes_'):
+        model_info['classes'] = model.classes_
+    
+    # Balanceamento de classe
+    if hasattr(model, 'class_weight') and model.class_weight is not None:
+        model_info['class_weight'] = model.class_weight
+    
+    return model_info
+
+def recover_model_threshold(model_path):
+    """
+    Tenta recuperar o threshold salvo junto com o modelo, diretamente dos arquivos.
+    
+    Args:
+        model_path: Caminho para o diretório do modelo
+        
+    Returns:
+        threshold (float) ou None se não encontrado
+    """
+    # Caminho base para a execução (subindo um nível a partir do diretório random_forest)
+    run_dir = os.path.dirname(os.path.dirname(model_path))
+    
+    # Verificar se existe um arquivo de métrica específico para threshold
+    metrics_dir = os.path.join(run_dir, "metrics")
+    if os.path.exists(metrics_dir):
+        threshold_file = os.path.join(metrics_dir, "threshold")
+        if os.path.exists(threshold_file):
+            try:
+                with open(threshold_file, 'r') as f:
+                    # O arquivo de métrica do MLflow normalmente contém linhas com timestamp valor
+                    lines = f.readlines()
+                    if lines:
+                        # Pegar o valor mais recente (última linha)
+                        last_line = lines[-1].strip()
+                        # O formato é geralmente: timestamp valor
+                        parts = last_line.split()
+                        if len(parts) >= 2:
+                            threshold_value = float(parts[1])
+                            print(f"Threshold encontrado no arquivo de métrica: {threshold_value}")
+                            return threshold_value
+            except Exception as e:
+                print(f"Erro ao ler arquivo de threshold: {e}")
+    
+    # Se não encontrou no arquivo de métrica específico, buscar no diretório de métricas geral
+    # O MLflow pode armazenar as métricas em arquivos separados
+    print("Buscando threshold nos arquivos de métricas...")
+    
+    # Carregar outras métricas importantes para mostrar junto
+    metrics = {}
+    metrics_found = False
+    
+    if os.path.exists(metrics_dir):
+        for metric_file in os.listdir(metrics_dir):
+            metric_path = os.path.join(metrics_dir, metric_file)
+            if os.path.isfile(metric_path):
+                try:
+                    with open(metric_path, 'r') as f:
+                        lines = f.readlines()
+                        if lines:
+                            # Pegar o valor mais recente
+                            last_line = lines[-1].strip()
+                            parts = last_line.split()
+                            if len(parts) >= 2:
+                                metrics[metric_file] = float(parts[1])
+                                metrics_found = True
+                except Exception as e:
+                    print(f"Erro ao ler métrica {metric_file}: {e}")
+    
+    if metrics_found:
+        print("Métricas encontradas:")
+        for metric_name, metric_value in metrics.items():
+            print(f"  - {metric_name}: {metric_value:.4f}")
+        
+        if "threshold" in metrics:
+            print(f"Threshold encontrado nas métricas: {metrics['threshold']}")
+            return metrics["threshold"]
+    
+    # Se ainda não encontrou, buscar nos parâmetros
+    params_dir = os.path.join(run_dir, "params")
+    if os.path.exists(params_dir):
+        threshold_param = os.path.join(params_dir, "threshold")
+        if os.path.exists(threshold_param):
+            try:
+                with open(threshold_param, 'r') as f:
+                    threshold_value = float(f.read().strip())
+                    print(f"Threshold encontrado nos parâmetros: {threshold_value}")
+                    return threshold_value
+            except Exception as e:
+                print(f"Erro ao ler parâmetro threshold: {e}")
+    
+    # Como último recurso, tentar ler o arquivo meta.yaml
+    meta_path = os.path.join(model_path, "meta.yaml")
+    if os.path.exists(meta_path):
+        try:
+            import yaml
+            with open(meta_path, 'r') as f:
+                meta_data = yaml.safe_load(f)
+            
+            # Verificar se há informações sobre threshold no metadata
+            if 'threshold' in meta_data:
+                threshold_value = float(meta_data['threshold'])
+                print(f"Threshold encontrado no meta.yaml: {threshold_value}")
+                return threshold_value
+        except Exception as e:
+            print(f"Erro ao ler meta.yaml: {e}")
+    
+    print("Não foi possível encontrar o threshold nos arquivos do modelo.")
+    return None
 
 def prepare_data_for_model(model, val_df, target_col="target"):
     """
@@ -218,7 +275,7 @@ def prepare_data_for_model(model, val_df, target_col="target"):
     
     return X_val, y_val
 
-def run_error_analysis(model, val_df, target_col="target", threshold=0.17, output_dir=None):
+def run_error_analysis(model, val_df, target_col="target", threshold=DEFAULT_THRESHOLD, output_dir=None):
     """
     Executa análise de erros no modelo e dados.
     
@@ -310,6 +367,19 @@ def run_error_analysis(model, val_df, target_col="target", threshold=0.17, outpu
         # Salvar dados com clusters
         clustered_df.to_csv(os.path.join(output_dir, "leads_clusters.csv"), index=False)
         
+        # Salvar métricas em um arquivo
+        metrics_df = pd.DataFrame({
+            'threshold': [threshold],
+            'precision': [precision],
+            'recall': [recall],
+            'f1': [f1],
+            'positives': [int(y_pred.sum())],
+            'positives_pct': [float(y_pred.mean() * 100)],
+            'false_positives': [int(((y_val == 0) & (y_pred == 1)).sum())],
+            'false_negatives': [int(((y_val == 1) & (y_pred == 0)).sum())]
+        })
+        metrics_df.to_csv(os.path.join(output_dir, "metrics_summary.csv"), index=False)
+        
         print(f"\nAnálise de erros concluída. Resultados salvos em: {output_dir}")
         return {
             'metrics': {
@@ -329,68 +399,76 @@ def run_error_analysis(model, val_df, target_col="target", threshold=0.17, outpu
         raise
 
 def main():
-    parser = argparse.ArgumentParser(description='Executar análise de erros com o último modelo RandomForest treinado')
-    parser.add_argument('--mlflow_dir', default=None, 
-                      help='Diretório do MLflow tracking')
-    parser.add_argument('--train_path', default=None,
-                      help='Caminho para o dataset de treino')
-    parser.add_argument('--val_path', default=None,
-                      help='Caminho para o dataset de validação')
+    parser = argparse.ArgumentParser(description='Executar análise de erros com um modelo RandomForest específico')
+    parser.add_argument('--train_path', default=TRAIN_PATH,
+                      help=f'Caminho para o dataset de treino (padrão: {TRAIN_PATH})')
+    parser.add_argument('--val_path', default=VAL_PATH,
+                      help=f'Caminho para o dataset de validação (padrão: {VAL_PATH})')
     parser.add_argument('--target_col', default='target',
                       help='Nome da coluna target')
-    parser.add_argument('--run_id', default=None,
-                      help='ID específico do run do RandomForest (opcional)')
-    parser.add_argument('--model_uri', default=None,
-                      help='URI específico do modelo RandomForest (opcional)')
     parser.add_argument('--threshold', type=float, default=None,
-                      help='Threshold personalizado para classificação (opcional)')
+                      help=f'Threshold personalizado para classificação (padrão: recuperado do modelo ou {DEFAULT_THRESHOLD})')
     
     args = parser.parse_args()
     
-    # Definir valor padrão para mlflow_dir se não fornecido
-    if args.mlflow_dir is None:
-        default_mlflow_dir = os.path.join(os.path.expanduser("~"), "desktop", "smart_ads", "models", "mlflow")
-        if os.path.exists(default_mlflow_dir):
-            args.mlflow_dir = default_mlflow_dir
-        else:
-            args.mlflow_dir = os.path.join(project_root, "models", "mlflow")
+    print("=== Iniciando análise de erros com modelo RandomForest específico ===")
+    print(f"Caminho do modelo: {MODEL_PATH}")
+    print(f"Caminho do dataset de treino: {args.train_path}")
+    print(f"Caminho do dataset de validação: {args.val_path}")
     
-    print("=== Iniciando análise de erros com o último modelo RandomForest ===")
-    print(f"Diretório MLflow: {args.mlflow_dir}")
-    
-    # Carregar modelo do MLflow
-    model = None
-    threshold = args.threshold
-    
-    # Se um model_uri específico foi fornecido, usar ele
-    if args.model_uri:
-        model = load_model_from_mlflow(args.model_uri)
-    # Se um run_id específico foi fornecido, construir o model_uri
-    elif args.run_id:
-        model_uri = f"runs:/{args.run_id}/random_forest"
-        model = load_model_from_mlflow(model_uri)
-    # Caso contrário, procurar o mais recente
-    else:
-        run_id, threshold_from_mlflow, model_uri = get_latest_random_forest_run(args.mlflow_dir)
+    # Carregar o modelo do caminho específico
+    try:
+        print("\nCarregando modelo diretamente do caminho especificado...")
+        model = mlflow.sklearn.load_model(MODEL_PATH)
+        print("Modelo carregado com sucesso!")
         
-        if model_uri:
-            model = load_model_from_mlflow(model_uri)
-            # Usar o threshold do MLflow se não especificado manualmente
-            if threshold is None:
-                threshold = threshold_from_mlflow
-                print(f"Usando threshold do MLflow: {threshold}")
-    
-    # Se ainda não tem threshold, usar o valor padrão
-    if threshold is None:
-        threshold = 0.17
-        print(f"Usando threshold padrão: {threshold}")
-    
-    # Verificar se o modelo foi carregado
-    if model is None:
-        print("ERRO: Não foi possível carregar o modelo RandomForest.")
+        # Recuperar o threshold salvo com o modelo
+        saved_threshold = recover_model_threshold(MODEL_PATH)
+        
+        # Determinar qual threshold usar
+        if args.threshold is not None:
+            threshold = args.threshold
+            print(f"Usando threshold fornecido via argumento: {threshold}")
+        elif saved_threshold is not None:
+            threshold = saved_threshold
+            print(f"Usando threshold recuperado do modelo: {threshold}")
+        else:
+            threshold = DEFAULT_THRESHOLD
+            print(f"Usando threshold padrão: {threshold}")
+        
+        # Obter e imprimir informações do modelo
+        print("\n=== Informações do Modelo ===")
+        model_info = get_model_info(model)
+        
+        print(f"Tipo de modelo: {model_info['tipo']}")
+        if 'n_estimadores' in model_info:
+            print(f"Número de árvores: {model_info['n_estimadores']}")
+        if 'profundidade_maxima' in model_info:
+            print(f"Profundidade máxima: {model_info['profundidade_maxima']}")
+        if 'criterio' in model_info:
+            print(f"Critério de divisão: {model_info['criterio']}")
+        if 'n_features' in model_info:
+            print(f"Número de features: {model_info['n_features']}")
+        if 'class_weight' in model_info:
+            print(f"Balanceamento de classes: {model_info['class_weight']}")
+        
+        if 'top_10_features' in model_info:
+            print("\nTop 10 features mais importantes:")
+            for i, (feature, importance) in enumerate(model_info['top_10_features']):
+                print(f"{i+1}. {feature}: {importance:.4f}")
+        
+        print("\nPrincipais hiperparâmetros:")
+        if 'hiperparametros' in model_info:
+            important_params = ['n_estimators', 'max_depth', 'min_samples_split', 'min_samples_leaf', 'max_features']
+            for param in important_params:
+                if param in model_info['hiperparametros']:
+                    print(f"- {param}: {model_info['hiperparametros'][param]}")
+        
+    except Exception as e:
+        print(f"ERRO ao carregar o modelo: {e}")
         sys.exit(1)
     
-    # Confirmar que é RandomForest
+    # Verificar se o modelo é RandomForest
     model_type = str(type(model))
     if 'RandomForest' not in model_type:
         print(f"AVISO: O modelo carregado não é RandomForest! É {model_type}")
@@ -400,7 +478,11 @@ def main():
             return
     
     # Carregar dados
-    train_df, val_df = load_datasets(args.train_path, args.val_path)
+    try:
+        train_df, val_df = load_datasets(args.train_path, args.val_path)
+    except FileNotFoundError as e:
+        print(f"ERRO: {str(e)}")
+        sys.exit(1)
     
     # Executar análise
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
