@@ -360,7 +360,7 @@ def train_and_evaluate_model(model, name, X_train, y_train, X_val, y_val,
                 "pr_auc": float(pr_auc),
                 "positive_count": int(positive_count),
                 "positive_pct": float(positive_pct),
-                "model_uri": model_uri,
+                "model_uri": model_uri,  # ÚNICA MODIFICAÇÃO: Incluir URI do modelo nos resultados
                 "train_time": train_time
             }
             
