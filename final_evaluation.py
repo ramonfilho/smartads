@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 """
 Script simplificado para avaliar a calibração e performance dos modelos RF e GMM calibrados no conjunto de teste.
+Utiliza as mesmas funções de sanitização de nomes do módulo baseline_model.py.
 """
 
 import os
@@ -10,6 +11,7 @@ import json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import re
 from datetime import datetime
 from sklearn.metrics import precision_score, recall_score, f1_score, roc_auc_score, average_precision_score
 from sklearn.calibration import calibration_curve
@@ -27,6 +29,47 @@ GMM_CALIB_DIR = "/Users/ramonmoreira/desktop/smart_ads/models/calibrated/gmm_cal
 
 # Diretório para salvar resultados
 RESULTS_DIR = os.path.join(BASE_DIR, "reports", "calibration_validation")
+
+# Funções de tratamento de dados do baseline_model.py
+def sanitize_column_names(df):
+    """
+    Sanitiza os nomes das colunas para evitar problemas com caracteres especiais.
+    
+    Args:
+        df: Pandas DataFrame com colunas para sanitizar
+        
+    Returns:
+        Dictionary mapping original column names to sanitized names
+    """
+    sanitized_columns = {}
+    for col in df.columns:
+        new_col = re.sub(r'[^\w\s]', '_', col)
+        new_col = re.sub(r'\s+', '_', new_col)
+        if new_col in sanitized_columns.values():
+            new_col = f"{new_col}_{df.columns.get_loc(col)}"
+        sanitized_columns[col] = new_col
+    df.rename(columns=sanitized_columns, inplace=True)
+    return sanitized_columns
+
+def convert_integer_columns_to_float(df):
+    """
+    Converte colunas inteiras para float para compatibilidade com alguns modelos.
+    
+    Args:
+        df: DataFrame para converter
+        
+    Returns:
+        List of column names that were converted
+    """
+    print("Convertendo colunas inteiras para float...")
+    integer_columns = []
+    
+    for col in df.columns:
+        if pd.api.types.is_integer_dtype(df[col].dtype):
+            df[col] = df[col].astype(float)
+            integer_columns.append(col)
+    
+    return integer_columns
 
 # Classe GMM_Wrapper necessária para carregar o modelo GMM
 class GMM_Wrapper:
@@ -160,16 +203,20 @@ class GMM_Wrapper:
 def prepare_data_for_rf_model(model, df, target_col="target"):
     """
     Prepara os dados para serem compatíveis com o modelo RandomForest.
-    Adaptado do arquivo 08_prob_calib_rf.py.
+    Usa as funções de sanitização de baseline_model.py.
     """
+    print("Preparando dados para o modelo RandomForest...")
+    
     # Extrair features e target
     X = df.drop(columns=[target_col]) if target_col in df.columns else df.copy()
     y = df[target_col] if target_col in df.columns else None
     
+    # Aplicar a mesma sanitização de nomes de colunas usada no treinamento
+    print("Sanitizando nomes das colunas...")
+    sanitize_column_names(X)
+    
     # Converter inteiros para float
-    for col in X.columns:
-        if pd.api.types.is_integer_dtype(X[col].dtype):
-            X.loc[:, col] = X[col].astype(float)
+    convert_integer_columns_to_float(X)
     
     # Verificar features do modelo
     if hasattr(model, 'feature_names_in_'):
@@ -198,6 +245,17 @@ def prepare_data_for_rf_model(model, df, target_col="target"):
         
         # Garantir a ordem correta das colunas
         X = X[model.feature_names_in_]
+    
+    # Double-check para garantir que todas as colunas ainda são numéricas
+    for col in X.columns:
+        if not pd.api.types.is_numeric_dtype(X[col].dtype):
+            print(f"Convertendo coluna não-numérica para float: {col}")
+            X[col] = X[col].astype(float)
+            
+    # Verificar por valores NaN
+    if X.isna().any().any():
+        print("Substituindo valores NaN por zeros...")
+        X = X.fillna(0)
     
     return X, y
 
@@ -313,7 +371,7 @@ def main():
         rf_model = models['RF']['model']
         rf_threshold = models['RF']['threshold']
         
-        # Preparar dados usando a função do arquivo 08_prob_calib_rf.py
+        # Preparar dados usando as funções de baseline_model.py
         X_rf_test, y_rf_test = prepare_data_for_rf_model(rf_model, rf_test_df)
         
         print(f"Gerando probabilidades para {len(X_rf_test)} instâncias...")
@@ -390,24 +448,13 @@ def main():
         gmm_results.to_csv(os.path.join(RESULTS_DIR, "gmm_test_results.csv"), index=False)
     
     # Criar tabela comparativa
-    if 'RF' in models and 'GMM' in models:
-        metrics_df = pd.DataFrame({
-            'Metric': ['Precision', 'Recall', 'F1', 'AUC-ROC', 'ECE', 'Threshold'],
-            'Random Forest': [rf_precision, rf_recall, rf_f1, rf_auc, rf_ece, rf_threshold],
-            'GMM': [gmm_precision, gmm_recall, gmm_f1, gmm_auc, gmm_ece, gmm_threshold]
-        })
-    elif 'RF' in models:
-        metrics_df = pd.DataFrame({
-            'Metric': ['Precision', 'Recall', 'F1', 'AUC-ROC', 'ECE', 'Threshold'],
-            'Random Forest': [rf_precision, rf_recall, rf_f1, rf_auc, rf_ece, rf_threshold]
-        })
-    elif 'GMM' in models:
-        metrics_df = pd.DataFrame({
-            'Metric': ['Precision', 'Recall', 'F1', 'AUC-ROC', 'ECE', 'Threshold'],
-            'GMM': [gmm_precision, gmm_recall, gmm_f1, gmm_auc, gmm_ece, gmm_threshold]
-        })
-    else:
-        metrics_df = pd.DataFrame({'Metric': ['Nenhum modelo avaliado com sucesso']})
+    metrics_df = pd.DataFrame({'Metric': ['Precision', 'Recall', 'F1', 'AUC-ROC', 'ECE', 'Threshold']})
+    
+    if 'RF' in locals() and rf_model is not None:
+        metrics_df['Random Forest'] = [rf_precision, rf_recall, rf_f1, rf_auc, rf_ece, rf_threshold]
+    
+    if 'GMM' in locals() and gmm_model is not None:
+        metrics_df['GMM'] = [gmm_precision, gmm_recall, gmm_f1, gmm_auc, gmm_ece, gmm_threshold]
     
     # Salvar comparação
     metrics_df.to_csv(os.path.join(RESULTS_DIR, "model_comparison.csv"), index=False)

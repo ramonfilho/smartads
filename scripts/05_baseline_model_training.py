@@ -14,8 +14,8 @@ from src.evaluation.baseline_model import run_baseline_model_training
 from src.evaluation.mlflow_utils import setup_mlflow_tracking, get_data_hash
 
 # Configuração de caminhos - DEFINIÇÃO EXPLÍCITA
-train_path = "/Users/ramonmoreira/desktop/smart_ads/data/03_4_feature_selection_final/train.csv"
-val_path = "/Users/ramonmoreira/desktop/smart_ads/data/03_4_feature_selection_final/validation.csv"
+train_path = "/Users/ramonmoreira/desktop/smart_ads/data/03_5_feature_selection_final_treated/train.csv"
+val_path = "/Users/ramonmoreira/desktop/smart_ads/data/03_5_feature_selection_final_treated/validation.csv"
 
 # Definir APENAS o tracking URI, não o artifact root
 mlflow_dir = "/Users/ramonmoreira/desktop/smart_ads/mlflow"
