@@ -1,3 +1,5 @@
+#ESSE SCRIPT CALIBRA O MODELO TREINADO EM CIMA DAS FEATURES SELECIONADAS APÓS O TRATAMENTO DE VALORES AUSENTES EM TODO O DATASET, COM O CÓDIGO EXPERIMENTAL 04_01
+
 #!/usr/bin/env python
 """
 Script para calibrar as probabilidades do modelo RandomForest.
@@ -26,7 +28,7 @@ from src.evaluation.baseline_model import sanitize_column_names
 from src.evaluation.mlflow_utils import find_optimal_threshold
 
 # Caminho para o modelo Random Forest
-MODEL_PATH = "/Users/ramonmoreira/desktop/smart_ads/models/mlflow/783044341530730386/2c54d70c822c4e42ad92313f4f2bfe8e/artifacts/random_forest"
+MODEL_PATH = "/Users/ramonmoreira/desktop/smart_ads/mlflow/460572322746954574/3a1a0381e74e4a4db31c6236c062e975/artifacts/random_forest"
 
 # Caminhos para os datasets
 TRAIN_PATH = "/Users/ramonmoreira/desktop/smart_ads/data/03_5_feature_selection_final_treated/train.csv"
@@ -503,7 +505,7 @@ def calibrate_model(model, X_train, y_train, X_val, y_val, method='isotonic', ou
     # Criar diretório para resultados se não especificado
     if output_dir is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_dir = os.path.join(project_root, "models", "calibrated", f"rf_calibrated_{timestamp}")
+        output_dir = os.path.join(project_root, "smart_ads", "models", "calibrated", f"rf_calibrated_{timestamp}")
     
     os.makedirs(output_dir, exist_ok=True)
     print(f"Resultados serão salvos em: {output_dir}")
@@ -724,7 +726,7 @@ def main():
     
     # Criar diretório de saída com timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = os.path.join(project_root, "models", "calibrated", f"rf_calibrated_{timestamp}")
+    output_dir = f"/Users/ramonmoreira/desktop/smart_ads/models/calibrated/rf_calibrated_{timestamp}"
     os.makedirs(output_dir, exist_ok=True)
     
     # Carregar o modelo
