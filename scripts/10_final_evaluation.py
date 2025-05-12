@@ -634,9 +634,13 @@ def evaluate_gmm_model(model_info, test_df, output_dir):
     gmm_model = model_info['model']
     gmm_threshold = model_info['threshold']
     
-    # Separar features e target
+    # Separar features e target (preservando email para uso posterior)
     X_gmm_test = test_df.drop(columns=['target'])
     y_gmm_test = test_df['target']
+    
+    # Preservar o email ou outro identificador se existir
+    has_email = 'email' in test_df.columns
+    has_email_norm = 'email_norm' in test_df.columns
     
     print(f"Gerando probabilidades para {len(X_gmm_test)} instâncias...")
     gmm_probs = gmm_model.predict_proba(X_gmm_test)[:, 1]
@@ -665,13 +669,22 @@ def evaluate_gmm_model(model_info, test_df, output_dir):
     print("Realizando análise por decil para GMM...")
     decile_df = calculate_and_plot_decile_analysis(y_gmm_test, gmm_probs, "GMM", output_dir)
     
-    # Salvar resultados
+    # Salvar resultados (AQUI É ONDE FAZEMOS A MODIFICAÇÃO)
     gmm_results = pd.DataFrame({
         'true': y_gmm_test,
         'prediction': gmm_preds,
         'probability': gmm_probs
     })
+    
+    # Adicionar email ou outro identificador se disponível
+    if has_email:
+        gmm_results['email'] = test_df['email'].values
+    if has_email_norm:
+        gmm_results['email_norm'] = test_df['email_norm'].values
+    
+    # Salvar com os identificadores incluídos
     gmm_results.to_csv(os.path.join(output_dir, "gmm_test_results.csv"), index=False)
+    print(f"Resultados salvos em: {os.path.join(output_dir, 'gmm_test_results.csv')}")
     
     return {
         'precision': gmm_precision,
