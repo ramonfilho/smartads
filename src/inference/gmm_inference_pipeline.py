@@ -4,6 +4,12 @@ Este módulo implementa uma classe que encapsula todas as etapas do pipeline de 
 para fazer predições com o modelo GMM treinado e calibrado.
 """
 
+"""
+Pipeline de inferência para o modelo GMM.
+Este módulo implementa uma classe que encapsula todas as etapas do pipeline de inferência
+para fazer predições com o modelo GMM treinado e calibrado.
+"""
+
 import os
 import sys
 import joblib
@@ -36,6 +42,41 @@ from src.preprocessing.advanced_feature_engineering import advanced_feature_engi
 # Define o caminho padrão para os modelos e parâmetros
 DEFAULT_MODEL_DIR = os.path.join(project_root, "models/calibrated/gmm_calibrated_20250508_130725")
 DEFAULT_PARAMS_DIR = os.path.join(project_root, "src/preprocessing/preprocessing_params")
+
+
+# Definir a classe GMM_Wrapper para possibilitar o carregamento do modelo calibrado
+class GMM_Wrapper:
+    """
+    Classe wrapper para o GMM que implementa a API sklearn para calibração.
+    Necessária para carregar o modelo calibrado.
+    """
+    def __init__(self, pipeline):
+        self.pipeline = pipeline
+        self.pca_model = pipeline['pca_model'] if 'pca_model' in pipeline else None
+        self.gmm_model = pipeline['gmm_model'] if 'gmm_model' in pipeline else None
+        self.scaler_model = pipeline['scaler_model'] if 'scaler_model' in pipeline else None
+        self.cluster_models = pipeline['cluster_models'] if 'cluster_models' in pipeline else {}
+        self.n_clusters = pipeline['n_clusters'] if 'n_clusters' in pipeline else 3
+        self.threshold = pipeline.get('threshold', 0.15)
+        
+        # Adicionar atributos necessários para a API sklearn
+        self.classes_ = np.array([0, 1])  # Classes binárias
+        self._fitted = True  # Marcar como já ajustado
+        self._estimator_type = "classifier"  # Indicar explicitamente que é um classificador
+        
+    def fit(self, X, y):
+        # Como o modelo já está treinado, apenas verificamos as classes
+        self.classes_ = np.unique(y)
+        self._fitted = True
+        return self
+        
+    def predict_proba(self, X):
+        # Implementação simplificada para compatibilidade
+        return np.zeros((len(X), 2))  # Será substituído pela implementação real
+    
+    def predict(self, X):
+        # Implementação simplificada para compatibilidade
+        return np.zeros(len(X))  # Será substituído pela implementação real
 
 
 class GMMInferencePipeline:
