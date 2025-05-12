@@ -47,7 +47,7 @@ print(f"Dados originais carregados: {raw_df.shape[0]} registros")
 
 # 2. Preparar um subconjunto desses dados para teste
 # Podemos usar uma amostra aleatória ou simplesmente os primeiros N registros
-test_sample = raw_df.sample(n=min(100, len(raw_df)), random_state=42)
+test_sample = raw_df.sample(n=min(10000, len(raw_df)), random_state=42)
 # Ou: test_sample = raw_df.head(100)
 print(f"Amostra para teste: {test_sample.shape[0]} registros")
 
@@ -93,6 +93,8 @@ if len(results_df) == len(test_sample):
 else:
     print(f"⚠️ Discrepância no número de registros: {len(test_sample)} entrada, {len(results_df)} saída")
 
+# Seção 6.2 no script 11_pipeline_testing.py - precisa ser atualizada:
+
 # 6.2 Se tivermos identificadores comuns, comparar com resultados conhecidos
 if has_known_results and id_column in test_sample.columns and id_column in known_results.columns:
     # Mesclar por identificador para comparar
@@ -100,27 +102,49 @@ if has_known_results and id_column in test_sample.columns and id_column in known
     comparison['new_prediction'] = results_df['prediction'].values
     comparison['new_probability'] = results_df['probability'].values
     
-    # Mesclar com resultados conhecidos
+    # Antes de mesclar, verificar os nomes das colunas nos resultados conhecidos
+    print(f"Colunas disponíveis nos resultados conhecidos: {known_results.columns.tolist()}")
+    
+    # Determinar nomes corretos das colunas (ajustar conforme necessário)
+    pred_col = 'prediction' if 'prediction' in known_results.columns else 'pred'
+    prob_col = 'probability' if 'probability' in known_results.columns else 'prob'
+    
+    # Mesclar com resultados conhecidos usando os nomes de colunas corretos
     comparison = comparison.merge(
-        known_results[[id_column, 'prediction', 'probability']],
+        known_results[[id_column, pred_col, prob_col]],
         on=id_column,
         how='left',
         suffixes=('', '_known')
     )
     
-    # Calcular métricas de correspondência
-    matches = (comparison['new_prediction'] == comparison['prediction_known'])
-    match_rate = matches.mean() * 100
+    # Renomear colunas para manter consistência
+    column_map = {
+        pred_col: 'prediction_known',
+        prob_col: 'probability_known'
+    }
+    comparison.rename(columns=column_map, inplace=True)
     
-    print(f"\nTaxa de correspondência das predições: {match_rate:.2f}%")
+    # Verificar se as colunas necessárias existem
+    required_cols = ['new_prediction', 'prediction_known', 'new_probability', 'probability_known']
+    missing_cols = [col for col in required_cols if col not in comparison.columns]
     
-    # Comparar probabilidades
-    prob_diff = np.abs(comparison['new_probability'] - comparison['probability_known'])
-    avg_diff = prob_diff.mean()
-    max_diff = prob_diff.max()
-    
-    print(f"Diferença média nas probabilidades: {avg_diff:.6f}")
-    print(f"Diferença máxima nas probabilidades: {max_diff:.6f}")
+    if missing_cols:
+        print(f"AVISO: Colunas necessárias ausentes para comparação: {missing_cols}")
+        print("Não foi possível fazer uma comparação direta com resultados conhecidos")
+    else:
+        # Calcular métricas de correspondência
+        matches = (comparison['new_prediction'] == comparison['prediction_known'])
+        match_rate = matches.mean() * 100
+        
+        print(f"\nTaxa de correspondência das predições: {match_rate:.2f}%")
+        
+        # Comparar probabilidades
+        prob_diff = np.abs(comparison['new_probability'] - comparison['probability_known'])
+        avg_diff = prob_diff.mean()
+        max_diff = prob_diff.max()
+        
+        print(f"Diferença média nas probabilidades: {avg_diff:.6f}")
+        print(f"Diferença máxima nas probabilidades: {max_diff:.6f}")
 else:
     print("\nNão foi possível fazer uma comparação direta com resultados conhecidos")
 

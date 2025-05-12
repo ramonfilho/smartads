@@ -268,10 +268,7 @@ def extract_motivation_features(df, text_cols, fit=True, params=None):
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
     
-    # Filtrar colunas de texto existentes
-    text_cols = [col for col in text_cols if col in df_result.columns]
-    
-    # Palavras-chave específicas relacionadas a motivação para aprender inglês
+    # Agrupar por categoria de motivação
     motivation_keywords = {
         'trabajo': 'work', 'empleo': 'work', 'carrera': 'work', 'profesional': 'work', 
         'puesto': 'work', 'laboral': 'work', 'sueldo': 'work', 'trabajar': 'work',
@@ -287,7 +284,6 @@ def extract_motivation_features(df, text_cols, fit=True, params=None):
         'chance': 'opportunity', 'opción': 'opportunity'
     }
     
-    # Agrupar por categoria de motivação
     for col in text_cols:
         # Verificar se temos a coluna limpa
         clean_col = f'{col}_clean'
@@ -298,15 +294,16 @@ def extract_motivation_features(df, text_cols, fit=True, params=None):
         for category in set(motivation_keywords.values()):
             df_result[f'{col}_motiv_{category}'] = 0
         
-        # Processar cada linha
-        for idx, text in enumerate(df_result[clean_col]):
+        # Processar cada linha - AQUI ESTÁ A CORREÇÃO
+        for i, (idx, text) in enumerate(df_result[clean_col].items()):
             if not isinstance(text, str) or text == '':
                 continue
                 
             # Verificar presença de cada palavra-chave
             for keyword, category in motivation_keywords.items():
                 if keyword in text:
-                    df_result.loc[idx, f'{col}_motiv_{category}'] += 1
+                    # Use .at para acesso seguro por índice
+                    df_result.at[idx, f'{col}_motiv_{category}'] += 1
         
         # Normalizar por comprimento do texto (para textos não vazios)
         word_count_col = f'{col}_word_count'
