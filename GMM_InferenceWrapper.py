@@ -1,4 +1,3 @@
-#GMM_InferenceWrapper
 #!/usr/bin/env python
 """
 Wrapper para o modelo GMM calibrado, replicando exatamente a lógica 
@@ -11,19 +10,24 @@ import pandas as pd
 import joblib
 from sklearn.base import BaseEstimator, ClassifierMixin
 
+# Diretório base do modelo não calibrado (para busca de componentes)
+BASE_MODEL_DIR = "/Users/ramonmoreira/desktop/smart_ads/models/artifacts/gmm_optimized"
+
 class GMM_InferenceWrapper(BaseEstimator, ClassifierMixin):
     """
     Wrapper para GMM que implementa a mesma API do script 09_prob_calib_gmm.py
     """
-    def __init__(self, models_dir=None, threshold=0.15):
+    def __init__(self, models_dir=None, threshold=0.15, base_model_dir=BASE_MODEL_DIR):
         """
         Inicializa o wrapper.
         
         Args:
             models_dir: Diretório contendo componentes do modelo
             threshold: Threshold para classificação binária
+            base_model_dir: Diretório base com componentes originais (não calibrados)
         """
         self.models_dir = models_dir
+        self.base_model_dir = base_model_dir
         self.threshold = threshold
         self.pipeline = None
         self.pca_model = None
@@ -36,6 +40,35 @@ class GMM_InferenceWrapper(BaseEstimator, ClassifierMixin):
         # Atributos necessários para a API sklearn
         self.classes_ = np.array([0, 1])
         self._estimator_type = "classifier"
+    
+    def _load_component(self, component_name):
+        """
+        Carrega um componente, verificando primeiro no diretório calibrado
+        e depois no diretório base, se necessário.
+        
+        Args:
+            component_name: Nome do arquivo do componente
+            
+        Returns:
+            Componente carregado
+        
+        Raises:
+            FileNotFoundError: Se o componente não for encontrado em nenhum diretório
+        """
+        # Primeiro tenta carregar do diretório principal
+        main_path = os.path.join(self.models_dir, component_name)
+        if os.path.exists(main_path):
+            return joblib.load(main_path)
+        
+        # Se não encontrar, tenta do diretório base
+        base_path = os.path.join(self.base_model_dir, component_name)
+        if os.path.exists(base_path):
+            print(f"  Componente {component_name} não encontrado no diretório principal.")
+            print(f"  Carregando do diretório base: {base_path}")
+            return joblib.load(base_path)
+        
+        # Se não encontrar em nenhum lugar, levanta exceção
+        raise FileNotFoundError(f"Componente {component_name} não encontrado em {main_path} nem em {base_path}")
     
     def fit(self, X=None, y=None):
         """
@@ -53,31 +86,74 @@ class GMM_InferenceWrapper(BaseEstimator, ClassifierMixin):
             
         print(f"Carregando componentes do modelo de {self.models_dir}...")
         
+        # Verificar se o models_dir existe
+        if not os.path.exists(self.models_dir):
+            raise FileNotFoundError(f"Diretório de modelo não encontrado: {self.models_dir}")
+        
+        # Verificar se o base_model_dir existe
+        if not os.path.exists(self.base_model_dir):
+            print(f"AVISO: Diretório base de modelo não encontrado: {self.base_model_dir}")
+        
         # Carregar componentes principais
         try:
-            self.pca_model = joblib.load(os.path.join(self.models_dir, "pca_model.joblib"))
-            self.gmm_model = joblib.load(os.path.join(self.models_dir, "gmm_model.joblib"))
-            self.scaler_model = joblib.load(os.path.join(self.models_dir, "scaler_model.joblib"))
+            # Usar método _load_component para busca em múltiplos diretórios
+            self.pca_model = self._load_component("pca_model.joblib")
+            self.gmm_model = self._load_component("gmm_model.joblib")
+            self.scaler_model = self._load_component("scaler_model.joblib")
             
             # Carregar informações de configuração
             import json
-            with open(os.path.join(self.models_dir, "experiment_config.json"), 'r') as f:
-                config = json.load(f)
+            try:
+                # Primeiro tenta carregar do diretório principal
+                config_path = os.path.join(self.models_dir, "experiment_config.json")
+                if os.path.exists(config_path):
+                    with open(config_path, 'r') as f:
+                        config = json.load(f)
+                else:
+                    # Se não encontrar, tenta do diretório base
+                    config_path = os.path.join(self.base_model_dir, "experiment_config.json")
+                    if os.path.exists(config_path):
+                        with open(config_path, 'r') as f:
+                            config = json.load(f)
+                    else:
+                        # Se não encontrar em nenhum lugar, usa valor default
+                        print("AVISO: experiment_config.json não encontrado. Usando valores default.")
+                        config = {"gmm_params": {"n_components": 3}}
+                
                 self.n_clusters = config.get('gmm_params', {}).get('n_components', 3)
+                print(f"  Usando {self.n_clusters} clusters")
+            except Exception as e:
+                print(f"AVISO: Erro ao carregar configuração: {e}")
+                print("  Usando 3 clusters (valor default)")
+                self.n_clusters = 3
             
             # Carregar threshold específico, se existir
             threshold_path = os.path.join(self.models_dir, "threshold.txt")
             if os.path.exists(threshold_path):
                 with open(threshold_path, 'r') as f:
                     self.threshold = float(f.read().strip())
-                print(f"Usando threshold: {self.threshold}")
+                print(f"  Usando threshold: {self.threshold}")
             
             # Carregar modelos de cluster
             for cluster_id in range(self.n_clusters):
-                model_path = os.path.join(self.models_dir, f"cluster_{cluster_id}_model.joblib")
+                model_name = f"cluster_{cluster_id}_model.joblib"
                 
                 try:
-                    model = joblib.load(model_path)
+                    # Primeiro tenta carregar do diretório principal
+                    model_path = os.path.join(self.models_dir, model_name)
+                    
+                    if os.path.exists(model_path):
+                        model = joblib.load(model_path)
+                    else:
+                        # Se não encontrar, tenta do diretório base
+                        model_path = os.path.join(self.base_model_dir, model_name)
+                        if os.path.exists(model_path):
+                            print(f"  Carregando modelo de cluster {cluster_id} do diretório base")
+                            model = joblib.load(model_path)
+                        else:
+                            print(f"  AVISO: Modelo para cluster {cluster_id} não encontrado. Este cluster será ignorado.")
+                            continue
+                    
                     self.cluster_models[cluster_id] = {
                         'model': model,
                         'threshold': self.threshold,
@@ -96,7 +172,7 @@ class GMM_InferenceWrapper(BaseEstimator, ClassifierMixin):
             
             # Remover duplicatas da lista de features
             self.feature_names_used = list(set(self.feature_names_used))
-            print(f"Total de {len(self.feature_names_used)} features usadas pelos modelos")
+            print(f"  Total de {len(self.feature_names_used)} features usadas pelos modelos")
             
             return self
         

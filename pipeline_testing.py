@@ -195,7 +195,32 @@ def run_pipeline():
     results_df['prediction'] = predictions
     
     # Adicionar decil de probabilidade
-    results_df['probability_decile'] = pd.qcut(results_df['probability'], 10, labels=False) + 1
+    # Usar duplicates='drop' para lidar com valores duplicados nas bordas
+    try:
+        results_df['probability_decile'] = pd.qcut(results_df['probability'], 10, labels=False, duplicates='drop') + 1
+    except ValueError as e:
+        # Se ainda houver problemas, use um método alternativo de quantis
+        print(f"AVISO: Não foi possível criar decis exatos devido à distribuição dos dados: {e}")
+        print("Usando método alternativo para criar categorias de probabilidade...")
+        
+        # Contar valores únicos
+        unique_probs = results_df['probability'].nunique()
+        print(f"Existem apenas {unique_probs} valores únicos de probabilidade")
+        
+        if unique_probs < 10:
+            # Se houver menos de 10 valores únicos, usar rank diretamente
+            results_df['probability_decile'] = results_df['probability'].rank(method='dense').astype(int)
+            max_decile = results_df['probability_decile'].max()
+            if max_decile < 10:
+                results_df['probability_decile'] = results_df['probability_decile'].apply(
+                    lambda x: int(np.ceil(x * 10 / max_decile))
+                )
+            print(f"Criados {results_df['probability_decile'].nunique()} grupos de probabilidade")
+        else:
+            # Método alternativo: classificar e dividir em grupos aproximados
+            n_bins = min(10, unique_probs)
+            results_df['probability_decile'] = np.ceil(results_df['probability'].rank(pct=True) * n_bins).astype(int)
+            results_df.loc[results_df['probability_decile'] == 0, 'probability_decile'] = 1  # Garantir mínimo de 1
     
     # Salvar resultados
     output_file = os.path.join(OUTPUT_DIR, "pipeline_test_results.csv")
@@ -210,7 +235,7 @@ def run_pipeline():
     print(f"Total de leads processados: {len(test_df)}")
     print(f"Leads qualificados: {int(qualified_leads)} ({qualified_pct:.2f}%)")
     
-    # Estatísticas por decil
+    # Estatísticas por decil ou grupo de probabilidade
     decile_stats = results_df.groupby('probability_decile').agg(
         count=('email', 'count'),
         avg_prob=('probability', 'mean'),
@@ -218,13 +243,13 @@ def run_pipeline():
         pct_qualified=('prediction', lambda x: x.mean() * 100)
     ).reset_index()
     
-    print("\nEstatísticas por decil de probabilidade:")
+    print("\nEstatísticas por grupo de probabilidade:")
     print(decile_stats)
     
     # Salvar estatísticas por decil
     decile_stats_file = os.path.join(OUTPUT_DIR, "decile_statistics.csv")
     decile_stats.to_csv(decile_stats_file, index=False)
-    print(f"Estatísticas por decil salvas em: {decile_stats_file}")
+    print(f"Estatísticas por grupo salvas em: {decile_stats_file}")
     
     return results_df
 
@@ -282,39 +307,125 @@ def compare_with_original(new_results):
     new_prob_col = 'probability'
     new_email_col = original_email_col  # Usar o mesmo campo para junção
     
-    # Mesclar resultados pelo campo de email identificado
-    print(f"Mesclando resultados por '{original_email_col}'...")
-    
-    if original_email_col not in new_results.columns:
-        print(f"ERRO: Coluna '{original_email_col}' não encontrada nos novos resultados.")
+    # Verificar se temos a coluna de email nos novos resultados
+    if new_email_col not in new_results.columns:
+        print(f"ERRO: Coluna '{new_email_col}' não encontrada nos novos resultados.")
         print(f"Colunas disponíveis: {new_results.columns.tolist()}")
         return
     
-    merged = pd.merge(
-        original_results[[original_email_col, original_prob_col]],
-        new_results[[new_email_col, new_prob_col]],
-        on=original_email_col, 
-        how='inner'
-    )
+    # Verificar valores duplicados que podem causar problemas no merge
+    orig_duplicated = original_results[original_email_col].duplicated().sum()
+    new_duplicated = new_results[new_email_col].duplicated().sum()
     
-    # Verificar quantos registros foram mesclados
-    merge_count = len(merged)
-    original_count = len(original_results)
-    new_count = len(new_results)
+    if orig_duplicated > 0:
+        print(f"AVISO: {orig_duplicated} emails duplicados nos resultados originais")
+        print("Removendo duplicatas para evitar explosão do número de registros...")
+        original_results = original_results.drop_duplicates(subset=[original_email_col])
     
-    print(f"Registros mesclados: {merge_count} de {original_count} originais e {new_count} novos")
+    if new_duplicated > 0:
+        print(f"AVISO: {new_duplicated} emails duplicados nos novos resultados")
+        print("Removendo duplicatas para evitar explosão do número de registros...")
+        new_results = new_results.drop_duplicates(subset=[new_email_col])
+    
+    # Mesclar resultados pelo campo de email identificado (com tratamento de duplicatas)
+    print(f"Mesclando resultados por '{original_email_col}'...")
+    
+    # Extrair apenas as colunas necessárias para reduzir uso de memória
+    original_subset = original_results[[original_email_col, original_prob_col]].copy()
+    new_subset = new_results[[new_email_col, new_prob_col]].copy()
+    
+    # Executar o merge com verificações adicionais
+    try:
+        # Tentar realizar o merge com diagnóstico de tamanho
+        print(f"Tamanho do dataframe original: {len(original_subset)}")
+        print(f"Tamanho do dataframe novo: {len(new_subset)}")
+        
+        # Renomear colunas para clareza
+        original_subset.rename(columns={original_prob_col: 'original_probability'}, inplace=True)
+        new_subset.rename(columns={new_prob_col: 'new_probability'}, inplace=True)
+        
+        # Realizar o merge
+        merged = pd.merge(
+            original_subset,
+            new_subset,
+            on=original_email_col, 
+            how='inner'
+        )
+        
+        # Verificar o tamanho após o merge
+        merge_count = len(merged)
+        original_count = len(original_subset)
+        new_count = len(new_subset)
+        
+        # Verificar se o tamanho é razoável (não deve ser maior que o produto das entradas)
+        max_expected = min(original_count, new_count)
+        if merge_count > max_expected * 1.1:  # Permitir uma margem de 10%
+            print(f"ALERTA: Número de registros mesclados ({merge_count}) é muito maior que o esperado.")
+            print("Isso sugere um problema com valores duplicados nas chaves de mesclagem.")
+            print("Aplicando técnica alternativa de mesclagem...")
+            
+            # Redefinir e tentar uma abordagem mais restritiva
+            merged = pd.merge(
+                original_subset.drop_duplicates(subset=original_email_col),
+                new_subset.drop_duplicates(subset=new_email_col),
+                on=original_email_col, 
+                how='inner'
+            )
+            merge_count = len(merged)
+        
+        print(f"Registros mesclados: {merge_count} de {original_count} originais e {new_count} novos")
+        
+    except Exception as e:
+        print(f"ERRO durante a mesclagem: {e}")
+        print("Tentando abordagem alternativa...")
+        
+        # Tentar uma abordagem diferente
+        try:
+            # Usar pandas concat e groupby como estratégia alternativa
+            original_subset = original_subset.set_index(original_email_col)
+            new_subset = new_subset.set_index(new_email_col)
+            
+            # Unir por índice e agrupar pelo índice
+            combined = pd.concat([original_subset, new_subset], axis=1, join='inner')
+            merge_count = len(combined)
+            
+            if merge_count > 0:
+                print(f"Mesclagem alternativa bem-sucedida: {merge_count} registros")
+                merged = combined.reset_index()
+                original_count = len(original_subset)
+                new_count = len(new_subset)
+            else:
+                print("ERRO: Nenhum registro mesclado usando método alternativo.")
+                return
+        except Exception as e2:
+            print(f"ERRO na abordagem alternativa: {e2}")
+            print("Não foi possível realizar a comparação.")
+            return
     
     if merge_count == 0:
         print("ERRO: Nenhum registro comum encontrado para comparação.")
         return
     
-    # Calcular diferenças de probabilidade (foco em probabilidades, não em classificação binária)
-    merged['prob_diff'] = merged[original_prob_col] - merged[new_prob_col]
+    # Calcular diferenças de probabilidade (usar novos nomes de coluna)
+    merged['prob_diff'] = merged['original_probability'] - merged['new_probability']
     merged['prob_diff_abs'] = merged['prob_diff'].abs()
     
     # Adicionar decil de probabilidade para ambos os conjuntos
-    merged['original_decile'] = pd.qcut(merged[original_prob_col], 10, labels=False) + 1
-    merged['new_decile'] = pd.qcut(merged[new_prob_col], 10, labels=False) + 1
+    try:
+        # Usar duplicates='drop' para lidar com valores duplicados nas bordas
+        merged['original_decile'] = pd.qcut(merged['original_probability'], 10, labels=False, duplicates='drop') + 1
+    except ValueError:
+        # Se falhar, usar método alternativo
+        print("AVISO: Não foi possível criar decis exatos para probabilidades originais.")
+        merged['original_decile'] = np.ceil(merged['original_probability'].rank(pct=True) * 10).astype(int)
+        
+    try:
+        merged['new_decile'] = pd.qcut(merged['new_probability'], 10, labels=False, duplicates='drop') + 1
+    except ValueError:
+        # Se falhar, usar método alternativo
+        print("AVISO: Não foi possível criar decis exatos para novas probabilidades.")
+        merged['new_decile'] = np.ceil(merged['new_probability'].rank(pct=True) * 10).astype(int)
+    
     merged['decile_diff'] = merged['original_decile'] - merged['new_decile']
     
     # Estatísticas de diferença
@@ -344,7 +455,7 @@ def compare_with_original(new_results):
     large_diffs_pct = (large_diffs / merge_count) * 100
     
     # Calcular correlação entre probabilidades originais e novas
-    prob_correlation = merged[[original_prob_col, new_prob_col]].corr().iloc[0, 1]
+    prob_correlation = merged[['original_probability', 'new_probability']].corr().iloc[0, 1]
     
     # Exibir resultados
     print("\n===== ESTATÍSTICAS DE COMPARAÇÃO DE PROBABILIDADES =====")
@@ -383,87 +494,96 @@ def compare_with_original(new_results):
         print("Revise a implementação para garantir processamento idêntico.")
     
     # Visualizações e análises adicionais
-    # 1. Histograma das diferenças de probabilidade
-    plt.figure(figsize=(10, 6))
-    sns.histplot(merged['prob_diff'], bins=50, kde=True)
-    plt.title('Distribuição das Diferenças de Probabilidade')
-    plt.xlabel('Diferença (Original - Pipeline)')
-    plt.ylabel('Frequência')
-    plt.grid(True, alpha=0.3)
-    hist_file = os.path.join(OUTPUT_DIR, 'probability_difference_histogram.png')
-    plt.savefig(hist_file)
-    print(f"\nHistograma de diferenças salvo em: {hist_file}")
+    try:
+        # 1. Histograma das diferenças de probabilidade
+        plt.figure(figsize=(10, 6))
+        sns.histplot(merged['prob_diff'], bins=50, kde=True)
+        plt.title('Distribuição das Diferenças de Probabilidade')
+        plt.xlabel('Diferença (Original - Pipeline)')
+        plt.ylabel('Frequência')
+        plt.grid(True, alpha=0.3)
+        hist_file = os.path.join(OUTPUT_DIR, 'probability_difference_histogram.png')
+        plt.savefig(hist_file)
+        print(f"\nHistograma de diferenças salvo em: {hist_file}")
+        
+        # 2. Gráfico de dispersão das probabilidades
+        plt.figure(figsize=(10, 10))
+        plt.scatter(merged['original_probability'], merged['new_probability'], alpha=0.5)
+        plt.plot([0, 1], [0, 1], 'r--')  # Linha de referência
+        plt.title('Comparação de Probabilidades')
+        plt.xlabel('Probabilidades Originais')
+        plt.ylabel('Probabilidades da Pipeline')
+        plt.grid(True, alpha=0.3)
+        scatter_file = os.path.join(OUTPUT_DIR, 'probability_comparison_scatter.png')
+        plt.savefig(scatter_file)
+        print(f"Gráfico de dispersão salvo em: {scatter_file}")
+        
+        # 3. Heatmap de transição entre decis
+        plt.figure(figsize=(12, 8))
+        transition_matrix = pd.crosstab(
+            merged['original_decile'], 
+            merged['new_decile'], 
+            normalize='index'
+        )
+        sns.heatmap(transition_matrix, annot=True, cmap='Blues', fmt='.2f', cbar_kws={'label': 'Proporção'})
+        plt.title('Matriz de Transição entre Decis de Probabilidade')
+        plt.xlabel('Decil (Pipeline)')
+        plt.ylabel('Decil (Original)')
+        heatmap_file = os.path.join(OUTPUT_DIR, 'decile_transition_heatmap.png')
+        plt.savefig(heatmap_file)
+        print(f"Heatmap de transição entre decis salvo em: {heatmap_file}")
+        
+        # 4. Amostras com maiores diferenças
+        if large_diffs > 0:
+            print("\n===== AMOSTRAS COM MAIORES DIFERENÇAS =====")
+            largest_diffs = merged.sort_values(by='prob_diff_abs', ascending=False).head(10)
+            pd.set_option('display.precision', 6)
+            print(largest_diffs[[original_email_col, 'original_probability', 'new_probability', 'prob_diff', 'original_decile', 'new_decile']])
+    except Exception as viz_error:
+        print(f"\nAVISO: Erro ao gerar visualizações: {viz_error}")
     
-    # 2. Gráfico de dispersão das probabilidades
-    plt.figure(figsize=(10, 10))
-    plt.scatter(merged[original_prob_col], merged[new_prob_col], alpha=0.5)
-    plt.plot([0, 1], [0, 1], 'r--')  # Linha de referência
-    plt.title('Comparação de Probabilidades')
-    plt.xlabel('Probabilidades Originais')
-    plt.ylabel('Probabilidades da Pipeline')
-    plt.grid(True, alpha=0.3)
-    scatter_file = os.path.join(OUTPUT_DIR, 'probability_comparison_scatter.png')
-    plt.savefig(scatter_file)
-    print(f"Gráfico de dispersão salvo em: {scatter_file}")
-    
-    # 3. Heatmap de transição entre decis
-    plt.figure(figsize=(12, 8))
-    transition_matrix = pd.crosstab(
-        merged['original_decile'], 
-        merged['new_decile'], 
-        normalize='index'
-    )
-    sns.heatmap(transition_matrix, annot=True, cmap='Blues', fmt='.2f', cbar_kws={'label': 'Proporção'})
-    plt.title('Matriz de Transição entre Decis de Probabilidade')
-    plt.xlabel('Decil (Pipeline)')
-    plt.ylabel('Decil (Original)')
-    heatmap_file = os.path.join(OUTPUT_DIR, 'decile_transition_heatmap.png')
-    plt.savefig(heatmap_file)
-    print(f"Heatmap de transição entre decis salvo em: {heatmap_file}")
-    
-    # 4. Amostras com maiores diferenças
-    if large_diffs > 0:
-        print("\n===== AMOSTRAS COM MAIORES DIFERENÇAS =====")
-        largest_diffs = merged.sort_values(by='prob_diff_abs', ascending=False).head(10)
-        pd.set_option('display.precision', 6)
-        print(largest_diffs[[original_email_col, original_prob_col, new_prob_col, 'prob_diff', 'original_decile', 'new_decile']])
-    
-    # 5. Salvar análise completa
-    comparison_file = os.path.join(OUTPUT_DIR, 'pipeline_comparison_results.csv')
-    merged.to_csv(comparison_file, index=False)
-    print(f"\nAnálise completa salva em: {comparison_file}")
-    
-    # 6. Salvar estatísticas de resumo
-    summary_stats = {
-        'metric': [
-            'registros_comparados', 'diferenca_media', 'diferenca_abs_media', 
-            'diferenca_maxima', 'correlacao_probabilidades',
-            'pct_pequenas_diferencas', 'pct_medias_diferencas', 'pct_grandes_diferencas',
-            'pct_mesmo_decil', 'pct_um_decil_diff', 'pct_dois_decil_diff'
-        ],
-        'value': [
-            merge_count, prob_diff_mean, prob_diff_abs_mean,
-            prob_diff_max, prob_correlation,
-            small_diffs_pct, medium_diffs_pct, large_diffs_pct,
-            same_decile_pct, one_decile_diff_pct, two_decile_diff_pct
-        ]
-    }
-    
-    summary_df = pd.DataFrame(summary_stats)
-    summary_file = os.path.join(OUTPUT_DIR, 'comparison_summary_stats.csv')
-    summary_df.to_csv(summary_file, index=False)
-    print(f"Estatísticas resumidas salvas em: {summary_file}")
-    
-    # 7. Salvar versão HTML estilizada
-    styled_sample = merged.sample(min(20, len(merged)))
-    styled_df = styled_sample[[original_email_col, original_prob_col, new_prob_col, 'prob_diff', 'original_decile', 'new_decile']]
-    styled_df = styled_df.style.applymap(color_diff, subset=['prob_diff'])
-    
-    html_file = os.path.join(OUTPUT_DIR, 'styled_comparison_samples.html')
-    with open(html_file, 'w') as f:
-        f.write("<h1>Amostra de Comparação Pipeline vs Original</h1>")
-        f.write(styled_df.to_html())
-    print(f"Amostra estilizada salva em: {html_file}")
+    try:
+        # 5. Salvar análise completa
+        comparison_file = os.path.join(OUTPUT_DIR, 'pipeline_comparison_results.csv')
+        merged.to_csv(comparison_file, index=False)
+        print(f"\nAnálise completa salva em: {comparison_file}")
+        
+        # 6. Salvar estatísticas de resumo
+        summary_stats = {
+            'metric': [
+                'registros_comparados', 'diferenca_media', 'diferenca_abs_media', 
+                'diferenca_maxima', 'correlacao_probabilidades',
+                'pct_pequenas_diferencas', 'pct_medias_diferencas', 'pct_grandes_diferencas',
+                'pct_mesmo_decil', 'pct_um_decil_diff', 'pct_dois_decil_diff'
+            ],
+            'value': [
+                merge_count, prob_diff_mean, prob_diff_abs_mean,
+                prob_diff_max, prob_correlation,
+                small_diffs_pct, medium_diffs_pct, large_diffs_pct,
+                same_decile_pct, one_decile_diff_pct, two_decile_diff_pct
+            ]
+        }
+        
+        summary_df = pd.DataFrame(summary_stats)
+        summary_file = os.path.join(OUTPUT_DIR, 'comparison_summary_stats.csv')
+        summary_df.to_csv(summary_file, index=False)
+        print(f"Estatísticas resumidas salvas em: {summary_file}")
+        
+        # 7. Salvar versão HTML estilizada
+        try:
+            styled_sample = merged.sample(min(20, len(merged)))
+            styled_df = styled_sample[[original_email_col, 'original_probability', 'new_probability', 'prob_diff', 'original_decile', 'new_decile']]
+            styled_df = styled_df.style.applymap(color_diff, subset=['prob_diff'])
+            
+            html_file = os.path.join(OUTPUT_DIR, 'styled_comparison_samples.html')
+            with open(html_file, 'w') as f:
+                f.write("<h1>Amostra de Comparação Pipeline vs Original</h1>")
+                f.write(styled_df.to_html())
+            print(f"Amostra estilizada salva em: {html_file}")
+        except Exception as style_error:
+            print(f"AVISO: Erro ao gerar amostra estilizada: {style_error}")
+    except Exception as output_error:
+        print(f"\nAVISO: Erro ao salvar resultados: {output_error}")
 
 def main():
     """Função principal"""
