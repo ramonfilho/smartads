@@ -11,7 +11,7 @@ This script enhances a dataset with advanced text features related to:
 5. Career-focused term detection
 
 Input: Two datasets (with and without basic text processing)
-Output: Enhanced dataset with new text features
+Output: Enhanced dataset with new text features and saved parameters for reproducibility
 """
 
 import os
@@ -19,6 +19,7 @@ import pandas as pd
 import numpy as np
 import re
 import time
+import joblib
 from sklearn.feature_extraction.text import TfidfVectorizer
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import nltk
@@ -37,12 +38,15 @@ except LookupError:
     nltk.download('stopwords')
 
 # Define paths
-INPUT_DIR_BASIC = "/Users/ramonmoreira/desktop/smart_ads/data/02_processed"
-INPUT_DIR_TEXT = "/Users/ramonmoreira/desktop/smart_ads/data/02_processed_text"
-OUTPUT_DIR = "/Users/ramonmoreira/desktop/smart_ads/data/02_processed_text_code6"
+PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
+INPUT_DIR_BASIC = os.path.join(PROJECT_ROOT, "data/02_1_processed")
+INPUT_DIR_TEXT = os.path.join(PROJECT_ROOT, "data/02_2_processed")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/02_3_processed")
+PARAMS_DIR = os.path.join(PROJECT_ROOT, "src/preprocessing/preprocessing_params")
 
-# Create output directory if it doesn't exist
+# Create output directories if they don't exist
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(PARAMS_DIR, exist_ok=True)
 
 # Define text columns to process
 TEXT_COLUMNS = [
@@ -89,10 +93,24 @@ def get_vader_sentiment_scores(text, sia):
     
     return sia.polarity_scores(text)
 
-def create_professional_motivation_score(df, text_columns):
+def create_professional_motivation_score(df, text_columns, fit=True, params=None):
     """
     Create an aggregate professional motivation score based on career-related keywords
+    
+    Args:
+        df: Input DataFrame
+        text_columns: List of text columns to process
+        fit: If True, parameters will be learned, otherwise existing parameters will be used
+        params: Dictionary with existing parameters (for transform mode)
+        
+    Returns:
+        DataFrame with professional motivation features
+        Updated parameters dictionary
     """
+    # Initialize parameters if needed
+    if params is None:
+        params = {}
+    
     # Professional and career-related keywords in Spanish
     work_keywords = {
         # Termos básicos de trabalho/emprego
@@ -153,6 +171,10 @@ def create_professional_motivation_score(df, text_columns):
         'inglés comercial': 1.9, 'inglés corporativo': 1.9, 'inglés técnico': 1.8
     }
     
+    # Save keywords in parameters if in fit mode
+    if fit:
+        params['work_keywords'] = work_keywords
+    
     # Initialize score array
     motivation_scores = np.zeros(len(df))
     keyword_counts = np.zeros(len(df))
@@ -186,19 +208,32 @@ def create_professional_motivation_score(df, text_columns):
     max_score = np.max(motivation_scores) if np.max(motivation_scores) > 0 else 1
     normalized_scores = motivation_scores / max_score
     
-    return pd.DataFrame({
+    result_df = pd.DataFrame({
         'professional_motivation_score': normalized_scores,
         'career_keyword_count': keyword_counts
     })
+    
+    return result_df, params
 
 def enhance_tfidf_for_career_terms(df, text_columns, fit_mode=True, vectorizers=None):
     """
     Enhance TF-IDF weights for career-related terms
+    
+    Args:
+        df: Input DataFrame
+        text_columns: List of text columns to process
+        fit_mode: If True, learn parameters, otherwise use existing ones
+        vectorizers: Dictionary with existing vectorizers (for transform mode)
+    
+    Returns:
+        DataFrame with enhanced TF-IDF features
+        Dictionary with vectorizers
     """
     # Career-related terms to boost
     career_terms = [
         'trabajo', 'empleo', 'profesional', 'oportunidades', 'laboral',
-        'carrera', 'mejor trabajo', 'oportunidades laborales', 'profesión'
+        'carrera', 'mejor trabajo', 'oportunidades laborales', 'profesión',
+        'mejor', 'comunicación', 'viajar', 'mejorar'
     ]
     
     if vectorizers is None:
@@ -224,7 +259,7 @@ def enhance_tfidf_for_career_terms(df, text_columns, fit_mode=True, vectorizers=
         if fit_mode:
             # Create and fit vectorizer
             vectorizer = TfidfVectorizer(
-                max_features=50,
+                max_features= 50,  # Increased to generate more features
                 min_df=3,
                 ngram_range=(1, 2)
             )
@@ -282,47 +317,66 @@ def enhance_tfidf_for_career_terms(df, text_columns, fit_mode=True, vectorizers=
     
     return pd.DataFrame(enhanced_tfidf_features), vectorizers
 
-def analyze_aspiration_sentiment(df, text_columns):
+def analyze_aspiration_sentiment(df, text_columns, fit=True, params=None):
     """
     Implement sentiment analysis specifically for aspirational language
+    
+    Args:
+        df: Input DataFrame
+        text_columns: List of text columns to process
+        fit: If True, learn parameters, otherwise use existing ones
+        params: Dictionary with existing parameters (for transform mode)
+        
+    Returns:
+        DataFrame with aspiration sentiment features
+        Updated parameters dictionary
     """
+    # Initialize parameters if needed
+    if params is None:
+        params = {}
+    
     # Initialize SentimentIntensityAnalyzer
     sia = SentimentIntensityAnalyzer()
     
     # Aspirational and ambitious phrases to detect
     aspiration_phrases = [
-    # Metas e objetivos explícitos
-    'quiero ser', 'espero ser', 'mi meta es', 'mi objetivo es', 'mi propósito es',
-    'aspiro a', 'deseo lograr', 'planeo', 'mi sueño es', 'mi ambición es',
-    
-    # Projeções futuras
-    'en el futuro', 'me veo', 'me visualizo', 'en cinco años', 'más adelante',
-    'cuando domine el inglés', 'una vez que aprenda', 'después de dominar',
-    
-    # Verbos de conquista no futuro
-    'lograré', 'conseguiré', 'alcanzaré', 'obtendré', 'realizaré', 'cumpliré',
-    'conquistaré', 'dominaré', 'superaré', 'progresaré', 'avanzaré',
-    
-    # Expressões de capacitação
-    'me ayudará a', 'me permitirá', 'me dará la oportunidad de', 'me capacitará para',
-    'me facilitará', 'me abrirá puertas para', 'me habilitará para', 'podré',
-    
-    # Expressões de compromisso
-    'estoy determinado a', 'estoy comprometido a', 'haré lo necesario para',
-    'no me detendré hasta', 'persistiré hasta', 'me esforzaré por',
-    
-    # Expressões com timeline específico
-    'en los próximos meses', 'dentro de un año', 'para fin de año',
-    'en corto plazo', 'a mediano plazo', 'a largo plazo',
-    
-    # Frases completas de planejamento
-    'tengo un plan para', 'he establecido como meta', 'mi estrategia es',
-    'estoy trabajando para', 'estoy en camino a', 'voy a dedicarme a'
+        # Metas e objetivos explícitos
+        'quiero ser', 'espero ser', 'mi meta es', 'mi objetivo es', 'mi propósito es',
+        'aspiro a', 'deseo lograr', 'planeo', 'mi sueño es', 'mi ambición es',
+        
+        # Projeções futuras
+        'en el futuro', 'me veo', 'me visualizo', 'en cinco años', 'más adelante',
+        'cuando domine el inglés', 'una vez que aprenda', 'después de dominar',
+        
+        # Verbos de conquista no futuro
+        'lograré', 'conseguiré', 'alcanzaré', 'obtendré', 'realizaré', 'cumpliré',
+        'conquistaré', 'dominaré', 'superaré', 'progresaré', 'avanzaré',
+        
+        # Expressões de capacitação
+        'me ayudará a', 'me permitirá', 'me dará la oportunidad de', 'me capacitará para',
+        'me facilitará', 'me abrirá puertas para', 'me habilitará para', 'podré',
+        
+        # Expressões de compromisso
+        'estoy determinado a', 'estoy comprometido a', 'haré lo necesario para',
+        'no me detendré hasta', 'persistiré hasta', 'me esforzaré por',
+        
+        # Expressões com timeline específico
+        'en los próximos meses', 'dentro de un año', 'para fin de año',
+        'en corto plazo', 'a mediano plazo', 'a largo plazo',
+        
+        # Frases completas de planejamento
+        'tengo un plan para', 'he establecido como meta', 'mi estrategia es',
+        'estoy trabajando para', 'estoy en camino a', 'voy a dedicarme a'
     ]
+    
+    # Save phrases in parameters if in fit mode
+    if fit:
+        params['aspiration_phrases'] = aspiration_phrases
     
     # Initialize features dictionary
     features = {}
     
+    # Process each text column
     for col in text_columns:
         if col not in df.columns:
             continue
@@ -355,94 +409,112 @@ def analyze_aspiration_sentiment(df, text_columns):
         features[f"{col_clean}_aspiration_score"] = np.array(aspiration_counts) * \
                                                  features[f"{col_clean}_sentiment_pos"]
     
-    return pd.DataFrame(features)
+    return pd.DataFrame(features), params
 
-def detect_commitment_expressions(df, text_columns):
+def detect_commitment_expressions(df, text_columns, fit=True, params=None):
     """
     Create features for commitment and determination expressions
+    
+    Args:
+        df: Input DataFrame
+        text_columns: List of text columns to process
+        fit: If True, learn parameters, otherwise use existing ones
+        params: Dictionary with existing parameters (for transform mode)
+        
+    Returns:
+        DataFrame with commitment expression features
+        Updated parameters dictionary
     """
+    # Initialize parameters if needed
+    if params is None:
+        params = {}
+    
     # Commitment phrases in Spanish
     commitment_phrases = {
-    # Expressões de forte comprometimento
-    'estoy decidido': 2.0,
-    'estoy comprometido': 2.0,
-    'me comprometo': 2.0,
-    'haré lo que sea': 2.0,
-    'haré lo necesario': 2.0,
-    'cueste lo que cueste': 2.0,
-    'sin duda': 1.5,
-    'estoy determinado': 2.0,
-    'daré mi máximo': 1.8,
-    'no me rendiré': 1.9,
-    'persistiré': 1.7,
-    'me esforzaré al máximo': 1.8,
-    'pondré todo de mi': 1.8,
-    'no descansaré hasta': 1.9,
-    'haré todo lo posible': 1.8,
-    
-    # Expressões de compromisso com aprendizado
-    'quiero aprender': 1.0,
-    'necesito aprender': 1.5,
-    'debo aprender': 1.2,
-    'tengo que aprender': 1.2,
-    'es importante aprender': 1.0,
-    'es necesario aprender': 1.2,
-    'estoy dispuesto a aprender': 1.4,
-    'me interesa aprender': 0.9,
-    'voy a aprender': 1.1,
-    'aprenderé': 1.1,
-    'quiero dominar': 1.3,
-    'necesito dominar': 1.6,
-    'estoy enfocado en aprender': 1.4,
-    'mi prioridad es aprender': 1.5,
-    'estoy listo para aprender': 1.3,
-    
-    # Expressões de expectativa
-    'espero poder': 0.8,
-    'espero lograr': 1.0,
-    'espero conseguir': 1.0,
-    'confío en que podré': 1.1,
-    'tengo la expectativa de': 0.9,
-    'aspiro a': 1.0,
-    'anhelo': 0.9,
-    'aguardo con interés': 0.8,
-    'tengo la confianza de': 1.0,
-    'sé que lograré': 1.2,
-    
-    # Necessidade relacionada ao trabalho
-    'necesito para mi trabajo': 1.8,
-    'necesito para mi carrera': 1.8,
-    'es esencial para mi trabajo': 1.8,
-    'lo requiere mi trabajo': 1.5,
-    'lo exige mi trabajo': 1.5,
-    'mi puesto depende de': 1.7,
-    'mi empleo exige': 1.6,
-    'para mejorar en mi trabajo': 1.7,
-    'para avanzar profesionalmente': 1.8,
-    'mi jefe requiere': 1.6,
-    'mi profesión demanda': 1.7,
-    'indispensable para mi trabajo': 1.9,
-    'fundamental para mi carrera': 1.8,
-    'clave para mi desempeño laboral': 1.7,
-    'vital para mi desarrollo profesional': 1.8,
-    
-    # Compromisso de tempo
-    'dedicaré tiempo': 1.2,
-    'invertir tiempo': 1.2,
-    'voy a dedicar': 1.2,
-    'destinaré tiempo': 1.2,
-    'apartaré tiempo': 1.1,
-    'haré espacio en mi agenda': 1.3,
-    'dedicaré horas': 1.3,
-    'reservaré tiempo': 1.2,
-    'comprometeré tiempo': 1.3,
-    'tiempo diario': 1.4,
-    'práctica constante': 1.3,
-    'estudio diario': 1.4,
-    'todos los días': 1.3,
-    'rutina de estudio': 1.4,
-    'horario establecido': 1.3
+        # Expressões de forte comprometimento
+        'estoy decidido': 2.0,
+        'estoy comprometido': 2.0,
+        'me comprometo': 2.0,
+        'haré lo que sea': 2.0,
+        'haré lo necesario': 2.0,
+        'cueste lo que cueste': 2.0,
+        'sin duda': 1.5,
+        'estoy determinado': 2.0,
+        'daré mi máximo': 1.8,
+        'no me rendiré': 1.9,
+        'persistiré': 1.7,
+        'me esforzaré al máximo': 1.8,
+        'pondré todo de mi': 1.8,
+        'no descansaré hasta': 1.9,
+        'haré todo lo posible': 1.8,
+        
+        # Expressões de compromisso com aprendizado
+        'quiero aprender': 1.0,
+        'necesito aprender': 1.5,
+        'debo aprender': 1.2,
+        'tengo que aprender': 1.2,
+        'es importante aprender': 1.0,
+        'es necesario aprender': 1.2,
+        'estoy dispuesto a aprender': 1.4,
+        'me interesa aprender': 0.9,
+        'voy a aprender': 1.1,
+        'aprenderé': 1.1,
+        'quiero dominar': 1.3,
+        'necesito dominar': 1.6,
+        'estoy enfocado en aprender': 1.4,
+        'mi prioridad es aprender': 1.5,
+        'estoy listo para aprender': 1.3,
+        
+        # Expressões de expectativa
+        'espero poder': 0.8,
+        'espero lograr': 1.0,
+        'espero conseguir': 1.0,
+        'confío en que podré': 1.1,
+        'tengo la expectativa de': 0.9,
+        'aspiro a': 1.0,
+        'anhelo': 0.9,
+        'aguardo con interés': 0.8,
+        'tengo la confianza de': 1.0,
+        'sé que lograré': 1.2,
+        
+        # Necessidade relacionada ao trabalho
+        'necesito para mi trabajo': 1.8,
+        'necesito para mi carrera': 1.8,
+        'es esencial para mi trabajo': 1.8,
+        'lo requiere mi trabajo': 1.5,
+        'lo exige mi trabajo': 1.5,
+        'mi puesto depende de': 1.7,
+        'mi empleo exige': 1.6,
+        'para mejorar en mi trabajo': 1.7,
+        'para avanzar profesionalmente': 1.8,
+        'mi jefe requiere': 1.6,
+        'mi profesión demanda': 1.7,
+        'indispensable para mi trabajo': 1.9,
+        'fundamental para mi carrera': 1.8,
+        'clave para mi desempeño laboral': 1.7,
+        'vital para mi desarrollo profesional': 1.8,
+        
+        # Compromisso de tempo
+        'dedicaré tiempo': 1.2,
+        'invertir tiempo': 1.2,
+        'voy a dedicar': 1.2,
+        'destinaré tiempo': 1.2,
+        'apartaré tiempo': 1.1,
+        'haré espacio en mi agenda': 1.3,
+        'dedicaré horas': 1.3,
+        'reservaré tiempo': 1.2,
+        'comprometeré tiempo': 1.3,
+        'tiempo diario': 1.4,
+        'práctica constante': 1.3,
+        'estudio diario': 1.4,
+        'todos los días': 1.3,
+        'rutina de estudio': 1.4,
+        'horario establecido': 1.3
     }
+    
+    # Save phrases in parameters if in fit mode
+    if fit:
+        params['commitment_phrases'] = commitment_phrases
     
     # Initialize features dictionary
     features = {}
@@ -482,103 +554,121 @@ def detect_commitment_expressions(df, text_columns):
         features[f"{col_clean}_has_commitment"] = has_commitment
         features[f"{col_clean}_commitment_count"] = commitment_counts
     
-    return pd.DataFrame(features)
+    return pd.DataFrame(features), params
 
-def create_career_term_detector(df, text_columns):
+def create_career_term_detector(df, text_columns, fit=True, params=None):
     """
     Create a detector for career-related terms with weighted importance
+    
+    Args:
+        df: Input DataFrame
+        text_columns: List of text columns to process
+        fit: If True, learn parameters, otherwise use existing ones
+        params: Dictionary with existing parameters (for transform mode)
+        
+    Returns:
+        DataFrame with career term features
+        Updated parameters dictionary
     """
+    # Initialize parameters if needed
+    if params is None:
+        params = {}
+    
     # Career-related terms with importance weights
     career_terms = {
-    # Termos de avanço na carreira
-    'crecimiento profesional': 2.0,
-    'desarrollo profesional': 2.0,
-    'avance profesional': 2.0,
-    'progreso profesional': 2.0,
-    'ascenso': 1.8,
-    'promoción': 1.8,
-    'evolución profesional': 1.9,
-    'trayectoria profesional': 1.7,
-    'plan de carrera': 1.9,
-    'mejora profesional': 1.8,
-    'superación profesional': 1.9,
-    'especialización': 1.7,
-    'adquirir experiencia': 1.6,
-    
-    # Termos de oportunidade na carreira
-    'oportunidades laborales': 2.0,
-    'oportunidades de trabajo': 2.0,
-    'mejores trabajos': 1.8,
-    'opciones de trabajo': 1.5,
-    'posibilidades laborales': 1.5,
-    'mercado laboral': 1.6,
-    'campo profesional': 1.5,
-    'sector laboral': 1.5,
-    'industria': 1.4,
-    'área profesional': 1.5,
-    'nuevas posiciones': 1.7,
-    'vacantes': 1.4,
-    'puestos disponibles': 1.5,
-    
-    # Termos de salário/compensação
-    'mejor salario': 1.8,
-    'mayor sueldo': 1.8,
-    'mejor remuneración': 1.7,
-    'ganar más': 1.6,
-    'aumentar ingresos': 1.6,
-    'incremento salarial': 1.7,
-    'mejores condiciones': 1.6,
-    'compensación competitiva': 1.7,
-    'paquete de beneficios': 1.5,
-    'incentivos económicos': 1.6,
-    'mejor nivel de vida': 1.7,
-    'estabilidad económica': 1.7,
-    'seguridad financiera': 1.6,
-    
-    # Termos de trabalho internacional
-    'trabajo internacional': 1.7,
-    'empleo internacional': 1.7,
-    'trabajar en el extranjero': 1.7,
-    'oportunidades internacionales': 1.7,
-    'empresa multinacional': 1.6,
-    'carrera global': 1.8,
-    'expatriación': 1.6,
-    'trabajar en otro país': 1.7,
-    'experiencia internacional': 1.7,
-    'proyección internacional': 1.7,
-    'comunicación global': 1.6,
-    'negocios internacionales': 1.7,
-    'mercado global': 1.6,
-    
-    # Termos específicos para inglês no trabalho
-    'comunicación en inglés': 1.9,
-    'inglés para negocios': 1.9,
-    'inglés profesional': 1.9,
-    'inglés corporativo': 1.8,
-    'requisito de inglés': 1.9,
-    'inglés como requisito': 1.9,
-    'inglés es necesario': 1.8,
-    'empresas requieren inglés': 2.0,
-    'entorno internacional': 1.8,
-    'ambiente corporativo': 1.7,
-    
-    # Termos de busca de emprego
-    'buscar trabajo': 1.5,
-    'encontrar trabajo': 1.5,
-    'conseguir empleo': 1.5,
-    'entrevista': 1.4,
-    'curriculum': 1.3,
-    'cv': 1.3,
-    'aplicar a puestos': 1.4,
-    'postular': 1.4,
-    'selección laboral': 1.4,
-    'reclutamiento': 1.4,
-    'oportunidad laboral': 1.6,
-    'proceso de selección': 1.4,
-    'perfil profesional': 1.5,
-    'red de contactos': 1.3,
-    'networking': 1.4
+        # Termos de avanço na carreira
+        'crecimiento profesional': 2.0,
+        'desarrollo profesional': 2.0,
+        'avance profesional': 2.0,
+        'progreso profesional': 2.0,
+        'ascenso': 1.8,
+        'promoción': 1.8,
+        'evolución profesional': 1.9,
+        'trayectoria profesional': 1.7,
+        'plan de carrera': 1.9,
+        'mejora profesional': 1.8,
+        'superación profesional': 1.9,
+        'especialización': 1.7,
+        'adquirir experiencia': 1.6,
+        
+        # Termos de oportunidade na carreira
+        'oportunidades laborales': 2.0,
+        'oportunidades de trabajo': 2.0,
+        'mejores trabajos': 1.8,
+        'opciones de trabajo': 1.5,
+        'posibilidades laborales': 1.5,
+        'mercado laboral': 1.6,
+        'campo profesional': 1.5,
+        'sector laboral': 1.5,
+        'industria': 1.4,
+        'área profesional': 1.5,
+        'nuevas posiciones': 1.7,
+        'vacantes': 1.4,
+        'puestos disponibles': 1.5,
+        
+        # Termos de salário/compensação
+        'mejor salario': 1.8,
+        'mayor sueldo': 1.8,
+        'mejor remuneración': 1.7,
+        'ganar más': 1.6,
+        'aumentar ingresos': 1.6,
+        'incremento salarial': 1.7,
+        'mejores condiciones': 1.6,
+        'compensación competitiva': 1.7,
+        'paquete de beneficios': 1.5,
+        'incentivos económicos': 1.6,
+        'mejor nivel de vida': 1.7,
+        'estabilidad económica': 1.7,
+        'seguridad financiera': 1.6,
+        
+        # Termos de trabalho internacional
+        'trabajo internacional': 1.7,
+        'empleo internacional': 1.7,
+        'trabajar en el extranjero': 1.7,
+        'oportunidades internacionales': 1.7,
+        'empresa multinacional': 1.6,
+        'carrera global': 1.8,
+        'expatriación': 1.6,
+        'trabajar en otro país': 1.7,
+        'experiencia internacional': 1.7,
+        'proyección internacional': 1.7,
+        'comunicación global': 1.6,
+        'negocios internacionales': 1.7,
+        'mercado global': 1.6,
+        
+        # Termos específicos para inglês no trabalho
+        'comunicación en inglés': 1.9,
+        'inglés para negocios': 1.9,
+        'inglés profesional': 1.9,
+        'inglés corporativo': 1.8,
+        'requisito de inglés': 1.9,
+        'inglés como requisito': 1.9,
+        'inglés es necesario': 1.8,
+        'empresas requieren inglés': 2.0,
+        'entorno internacional': 1.8,
+        'ambiente corporativo': 1.7,
+        
+        # Termos de busca de emprego
+        'buscar trabajo': 1.5,
+        'encontrar trabajo': 1.5,
+        'conseguir empleo': 1.5,
+        'entrevista': 1.4,
+        'curriculum': 1.3,
+        'cv': 1.3,
+        'aplicar a puestos': 1.4,
+        'postular': 1.4,
+        'selección laboral': 1.4,
+        'reclutamiento': 1.4,
+        'oportunidad laboral': 1.6,
+        'proceso de selección': 1.4,
+        'perfil profesional': 1.5,
+        'red de contactos': 1.3,
+        'networking': 1.4
     }
+    
+    # Save terms in parameters if in fit mode
+    if fit:
+        params['career_terms'] = career_terms
     
     # Initialize features dictionary
     features = {}
@@ -618,12 +708,27 @@ def create_career_term_detector(df, text_columns):
         features[f"{col_clean}_has_career_terms"] = has_career_terms
         features[f"{col_clean}_career_term_count"] = career_term_counts
     
-    return pd.DataFrame(features)
+    return pd.DataFrame(features), params
 
 def process_dataset(dataset_name, input_dir_basic, input_dir_text, output_dir, 
-                    text_columns, mode="fit", vectorizers=None):
+                    text_columns, mode="fit", vectorizers=None, params=None):
     """
-    Process a dataset (train, validation, or test) to add new text features
+    Process a dataset (train, validation, or test) to add new text features.
+    Now includes parameter handling for reproducibility.
+    
+    Args:
+        dataset_name: Name of the dataset (train, validation, test)
+        input_dir_basic: Directory with basic processed data
+        input_dir_text: Directory with text processed data
+        output_dir: Directory to save output
+        text_columns: List of text columns to process
+        mode: "fit" to learn parameters, "transform" to apply existing ones
+        vectorizers: Dictionary with existing vectorizers (for transform mode)
+        params: Dictionary with existing parameters (for transform mode)
+        
+    Returns:
+        DataFrame with enhanced features
+        Updated parameters dictionary
     """
     print(f"\n=== Processing {dataset_name} dataset ===")
     
@@ -643,6 +748,28 @@ def process_dataset(dataset_name, input_dir_basic, input_dir_text, output_dir,
     df_basic = pd.read_csv(basic_path)
     df_text = pd.read_csv(text_path)
     
+    # Usar apenas 20% dos dados se estiver no modo de fit (treinamento)
+    if mode == "fit":
+        print(f"Original dataset size: {len(df_basic)} rows")
+        
+        # Verificar se existe coluna target para amostragem estratificada
+        if 'target' in df_basic.columns:
+            print("Using stratified sampling based on target column...")
+            # Amostragem estratificada para preservar distribuição de target
+            sampled_indices = df_basic.groupby('target', group_keys=False).apply(
+                lambda x: x.sample(frac=0.2, random_state=42)
+            ).index
+            df_basic = df_basic.loc[sampled_indices]
+            df_text = df_text.loc[sampled_indices]
+        else:
+            print("Using random sampling (20% of data)...")
+            # Amostragem aleatória simples
+            sampled_indices = df_basic.sample(frac=0.2, random_state=42).index
+            df_basic = df_basic.loc[sampled_indices]
+            df_text = df_text.loc[sampled_indices]
+            
+        print(f"Sampled dataset size: {len(df_basic)} rows (20% of original)")
+    
     # Verify the datasets have the same number of rows
     if len(df_basic) != len(df_text):
         print(f"Error: Datasets have different sizes - Basic: {len(df_basic)}, Text: {len(df_text)}")
@@ -650,25 +777,48 @@ def process_dataset(dataset_name, input_dir_basic, input_dir_text, output_dir,
     
     print(f"Successfully loaded datasets with {len(df_basic)} rows")
     
+    # Initialize parameters dictionary if None
+    if params is None:
+        params = {
+            'professional_motivation': {},
+            'vectorizers': vectorizers if vectorizers is not None else {},
+            'aspiration_sentiment': {},
+            'commitment': {},
+            'career': {}
+        }
+    
     # Create feature DataFrames
     print("Creating professional motivation score...")
-    motivation_df = create_professional_motivation_score(df_basic, text_columns)
+    motivation_df, motivation_params = create_professional_motivation_score(
+        df_basic, text_columns, fit=(mode == "fit"), params=params.get('professional_motivation', {})
+    )
+    params['professional_motivation'] = motivation_params
     
     print("Enhancing TF-IDF for career terms...")
     tfidf_df, updated_vectorizers = enhance_tfidf_for_career_terms(
         df_basic, text_columns, 
         fit_mode=(mode == "fit"), 
-        vectorizers=vectorizers
+        vectorizers=params.get('vectorizers', {})
     )
+    params['vectorizers'] = updated_vectorizers
     
     print("Analyzing aspiration sentiment...")
-    sentiment_df = analyze_aspiration_sentiment(df_basic, text_columns)
+    sentiment_df, sentiment_params = analyze_aspiration_sentiment(
+        df_basic, text_columns, fit=(mode == "fit"), params=params.get('aspiration_sentiment', {})
+    )
+    params['aspiration_sentiment'] = sentiment_params
     
     print("Detecting commitment expressions...")
-    commitment_df = detect_commitment_expressions(df_basic, text_columns)
+    commitment_df, commitment_params = detect_commitment_expressions(
+        df_basic, text_columns, fit=(mode == "fit"), params=params.get('commitment', {})
+    )
+    params['commitment'] = commitment_params
     
     print("Creating career term detector...")
-    career_df = create_career_term_detector(df_basic, text_columns)
+    career_df, career_params = create_career_term_detector(
+        df_basic, text_columns, fit=(mode == "fit"), params=params.get('career', {})
+    )
+    params['career'] = career_params
     
     # Combine all new features
     print("Combining all new features...")
@@ -683,40 +833,112 @@ def process_dataset(dataset_name, input_dir_basic, input_dir_text, output_dir,
     print("Merging with existing features...")
     result_df = pd.concat([df_text, new_features], axis=1)
     
+    # Remove duplicate columns if any
+    result_df = result_df.loc[:, ~result_df.columns.duplicated()]
+    
     # Save the result
     output_path = os.path.join(output_dir, f"{dataset_name}.csv")
     result_df.to_csv(output_path, index=False)
     print(f"Saved enhanced dataset to {output_path}")
     
-    return result_df, updated_vectorizers
+    # Return both the processed dataframe and the updated parameters
+    return result_df, params
 
 def main():
     """
-    Main function to process all datasets
+    Main function to process all datasets and save parameters
     """
     start_time = time.time()
     print("Starting advanced text feature engineering process...")
     
+    # Initialize parameters dictionary
+    script03_params = {}
+    
     # Process training dataset
-    _, vectorizers = process_dataset(
+    train_df, script03_params = process_dataset(
         "train", INPUT_DIR_BASIC, INPUT_DIR_TEXT, OUTPUT_DIR, 
-        TEXT_COLUMNS, mode="fit"
+        TEXT_COLUMNS, mode="fit", params=script03_params
     )
     
+    if train_df is None:
+        print("Error processing training dataset. Exiting.")
+        return
+    
     # Process validation dataset
-    process_dataset(
+    val_df, script03_params = process_dataset(
         "validation", INPUT_DIR_BASIC, INPUT_DIR_TEXT, OUTPUT_DIR, 
-        TEXT_COLUMNS, mode="transform", vectorizers=vectorizers
+        TEXT_COLUMNS, mode="transform", 
+        vectorizers=script03_params.get('vectorizers', {}),
+        params=script03_params
     )
     
     # Process test dataset
-    process_dataset(
+    test_df, script03_params = process_dataset(
         "test", INPUT_DIR_BASIC, INPUT_DIR_TEXT, OUTPUT_DIR, 
-        TEXT_COLUMNS, mode="transform", vectorizers=vectorizers
+        TEXT_COLUMNS, mode="transform", 
+        vectorizers=script03_params.get('vectorizers', {}),
+        params=script03_params
     )
+    
+    # Save parameters for reproducibility
+    print("\n=== Saving parameters for reproducibility ===")
+    os.makedirs(PARAMS_DIR, exist_ok=True)
+    
+    # Save script03 parameters separately
+    script03_params_path = os.path.join(PARAMS_DIR, "script03_params.joblib")
+    joblib.dump(script03_params, script03_params_path)
+    print(f"Script 03 parameters saved to: {script03_params_path}")
+    
+    # Total number of features created
+    if train_df is not None:
+        total_features = train_df.shape[1]
+        print(f"Total features in processed dataset: {total_features}")
+        
+        # Count features by type
+        tfidf_features = len([col for col in train_df.columns if 'tfidf' in col])
+        sentiment_features = len([col for col in train_df.columns if 'sentiment' in col])
+        aspiration_features = len([col for col in train_df.columns if 'aspiration' in col])
+        commitment_features = len([col for col in train_df.columns if 'commitment' in col])
+        career_features = len([col for col in train_df.columns if 'career' in col])
+        
+        print(f"TF-IDF features: {tfidf_features}")
+        print(f"Sentiment features: {sentiment_features}")
+        print(f"Aspiration features: {aspiration_features}")
+        print(f"Commitment features: {commitment_features}")
+        print(f"Career features: {career_features}")
+    
+    # Try to update the main parameters file
+    all_params_path = os.path.join(PARAMS_DIR, "all_preprocessing_params.joblib")
+    if os.path.exists(all_params_path):
+        try:
+            all_params = joblib.load(all_params_path)
+            print(f"Loaded existing parameters from: {all_params_path}")
+            
+            # Add script03 parameters
+            all_params['script03_features'] = script03_params
+            
+            # Save updated parameters
+            updated_params_path = os.path.join(PARAMS_DIR, "all_preprocessing_params_updated.joblib")
+            joblib.dump(all_params, updated_params_path)
+            print(f"Updated combined parameters saved to: {updated_params_path}")
+            
+            # Create a copy with informative timestamp
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            timestamped_path = os.path.join(PARAMS_DIR, f"all_preprocessing_params_{timestamp}.joblib")
+            joblib.dump(all_params, timestamped_path)
+            print(f"Timestamped copy saved to: {timestamped_path}")
+            
+        except Exception as e:
+            print(f"Error updating main parameters file: {e}")
+            print("Script 03 parameters were still saved separately.")
+    else:
+        print(f"Main parameters file not found at: {all_params_path}")
+        print("Script 03 parameters were saved separately.")
     
     total_time = time.time() - start_time
     print(f"\nAdvanced text feature engineering completed in {total_time:.2f} seconds")
+    print(f"Results saved to: {OUTPUT_DIR}")
+    print(f"Parameters saved to: {PARAMS_DIR}")
 
 if __name__ == "__main__":
     main()
