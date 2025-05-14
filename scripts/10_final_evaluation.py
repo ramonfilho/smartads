@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 """
-Script para avaliar a calibração e performance de três modelos no conjunto de teste:
+Script para avaliar a calibração e performance de dois modelos no conjunto de teste:
 1. RF com valores ausentes não tratados nas últimas features
-2. RF com valores ausentes tratados nas últimas features
-3. GMM
+2. GMM
 
 Utiliza as mesmas funções de sanitização de nomes do módulo baseline_model.py.
 """
@@ -22,20 +21,17 @@ from sklearn.calibration import calibration_curve
 
 # Caminhos absolutos
 BASE_DIR = "/Users/ramonmoreira/desktop/smart_ads"
-DATA_DIR_GMM = "/Users/ramonmoreira/desktop/smart_ads/data/02_3_processed_text_code6"
+DATA_DIR_GMM = "/Users/ramonmoreira/desktop/smart_ads/data/02_3_processed"
 DATA_DIR_RF_UNTREATED = "/Users/ramonmoreira/desktop/smart_ads/data/03_4_feature_selection_final"
-DATA_DIR_RF_TREATED = "/Users/ramonmoreira/desktop/smart_ads/data/03_5_feature_selection_final_treated"
 TEST_PATH_GMM = os.path.join(DATA_DIR_GMM, "test.csv")
 TEST_PATH_RF_UNTREATED = os.path.join(DATA_DIR_RF_UNTREATED, "test.csv")
-TEST_PATH_RF_TREATED = os.path.join(DATA_DIR_RF_TREATED, "test.csv")
 
 # Caminhos para os modelos calibrados
 RF_UNTREATED_CALIB_DIR = "/Users/ramonmoreira/Desktop/smart_ads/models/calibrated/rf_calibrated_20250509_071445"
-RF_TREATED_CALIB_DIR = "/Users/ramonmoreira/desktop/smart_ads/models/calibrated/rf_calibrated_20250509_072522"
 GMM_CALIB_DIR = "/Users/ramonmoreira/desktop/smart_ads/models/calibrated/gmm_calibrated_20250508_130725"
 
 # Diretório para salvar resultados
-RESULTS_DIR = os.path.join(BASE_DIR, "reports", "calibration_validation_three_models")
+RESULTS_DIR = os.path.join(BASE_DIR, "reports", "calibration_validation_two_models")
 
 # Funções de tratamento de dados do baseline_model.py
 def sanitize_column_names(df):
@@ -350,7 +346,7 @@ def load_gmm_model(model_dir):
 
 def load_models():
     """
-    Carrega os três modelos calibrados.
+    Carrega os dois modelos calibrados.
     """
     print("Carregando modelos calibrados...")
     models = {}
@@ -359,11 +355,6 @@ def load_models():
     rf_untreated = load_rf_model(RF_UNTREATED_CALIB_DIR, "VALORES AUSENTES NÃO TRATADOS")
     if rf_untreated:
         models['RF_Untreated'] = rf_untreated
-    
-    # Random Forest com valores ausentes tratados
-    rf_treated = load_rf_model(RF_TREATED_CALIB_DIR, "VALORES AUSENTES TRATADOS")
-    if rf_treated:
-        models['RF_Treated'] = rf_treated
     
     # GMM
     gmm_model = load_gmm_model(GMM_CALIB_DIR)
@@ -444,7 +435,7 @@ def plot_combined_calibration_curves(models_results, output_dir):
     plt.plot([0, 1], [0, 1], "k--", label="Perfeitamente Calibrado")
     
     # Cores para cada modelo
-    colors = ['blue', 'green', 'red', 'purple', 'orange']
+    colors = ['blue', 'red', 'green', 'purple', 'orange']
     
     # Plotar cada modelo
     for i, (model_name, result) in enumerate(models_results.items()):
@@ -669,7 +660,7 @@ def evaluate_gmm_model(model_info, test_df, output_dir):
     print("Realizando análise por decil para GMM...")
     decile_df = calculate_and_plot_decile_analysis(y_gmm_test, gmm_probs, "GMM", output_dir)
     
-    # Salvar resultados (AQUI É ONDE FAZEMOS A MODIFICAÇÃO)
+    # Salvar resultados
     gmm_results = pd.DataFrame({
         'true': y_gmm_test,
         'prediction': gmm_preds,
@@ -724,17 +715,6 @@ def main():
             results_dir
         )
     
-    # Avaliar Random Forest com valores ausentes tratados
-    if 'RF_Treated' in models:
-        print("\nCarregando dados de teste para RF com valores ausentes tratados...")
-        rf_treated_test_df = pd.read_csv(TEST_PATH_RF_TREATED)
-        model_results['RF_Treated'] = evaluate_rf_model(
-            models['RF_Treated'], 
-            rf_treated_test_df, 
-            "RF_Treated", 
-            results_dir
-        )
-    
     # Avaliar GMM
     if 'GMM' in models:
         print("\nCarregando dados de teste para GMM...")
@@ -769,12 +749,10 @@ def main():
         'timestamp': timestamp,
         'model_paths': {
             'RF_Untreated': RF_UNTREATED_CALIB_DIR,
-            'RF_Treated': RF_TREATED_CALIB_DIR,
             'GMM': GMM_CALIB_DIR
         },
         'data_paths': {
             'RF_Untreated': TEST_PATH_RF_UNTREATED,
-            'RF_Treated': TEST_PATH_RF_TREATED,
             'GMM': TEST_PATH_GMM
         },
         'metrics': {}
@@ -827,8 +805,6 @@ def main():
     
     if best_calibration:
         print(f"- Melhor calibração (menor ECE): {best_calibration} ({best_ece:.4f})")
-    
-    print("\nObs: A presença de valores ausentes nas features afeta a calibração? Verifique as métricas acima para comparar.")
 
 if __name__ == "__main__":
     main()
