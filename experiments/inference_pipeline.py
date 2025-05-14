@@ -26,11 +26,10 @@ OUTPUT_DIR = os.path.join(PROJECT_ROOT, "predictions")
 sys.path.append(PROJECT_ROOT)
 
 # Importar os transformadores dos arquivos locais
-# Usando importação absoluta em vez de relativa
-from EmailNormalizationTransformer import EmailNormalizationTransformer
-from CompletePreprocessingTransformer import CompletePreprocessingTransformer
-from TextFeatureEngineeringTransformer import TextFeatureEngineeringTransformer
-from GMM_InferenceWrapper import GMM_InferenceWrapper
+from src.inference.EmailNormalizationTransformer import EmailNormalizationTransformer
+from src.inference.CompletePreprocessingTransformer import CompletePreprocessingTransformer
+from src.inference.TextFeatureEngineeringTransformer import TextFeatureEngineeringTransformer
+from src.inference.GMM_InferenceWrapper import GMM_InferenceWrapper
 
 def create_inference_pipeline(models_dir=MODELS_DIR, params_dir=PARAMS_DIR):
     """
@@ -51,10 +50,18 @@ def create_inference_pipeline(models_dir=MODELS_DIR, params_dir=PARAMS_DIR):
     
     # Definir caminhos para parâmetros
     preprocessing_params_path = os.path.join(params_dir, "all_preprocessing_params.joblib")
+    script03_params_path = os.path.join(params_dir, "script03_params.joblib")
     
     # Verificar se os parâmetros existem
     if not os.path.exists(preprocessing_params_path):
         raise ValueError(f"Parâmetros de pré-processamento não encontrados: {preprocessing_params_path}")
+    
+    # Verificar se temos parâmetros do script 3
+    if os.path.exists(script03_params_path):
+        print(f"Parâmetros do script 3 encontrados em: {script03_params_path}")
+    else:
+        print(f"AVISO: Parâmetros do script 3 não encontrados em: {script03_params_path}")
+        print("A pipeline usará apenas os parâmetros padrão.")
     
     # Determinar se existe modelo calibrado
     use_calibrated = False
@@ -80,7 +87,10 @@ def create_inference_pipeline(models_dir=MODELS_DIR, params_dir=PARAMS_DIR):
     pipeline = Pipeline([
         ('email_normalization', EmailNormalizationTransformer(email_col='email')),
         ('preprocessing', CompletePreprocessingTransformer(params_path=preprocessing_params_path)),
-        ('text_features', TextFeatureEngineeringTransformer(params_path=preprocessing_params_path)),
+        ('text_features', TextFeatureEngineeringTransformer(
+            params_path=preprocessing_params_path,
+            script03_params_path=script03_params_path
+        )),
         ('predictor', GMM_InferenceWrapper(models_dir=models_dir))
     ])
     

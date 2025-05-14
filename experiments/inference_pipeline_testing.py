@@ -26,10 +26,10 @@ PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
 sys.path.append(PROJECT_ROOT)
 
 # Importar componentes da pipeline
-from EmailNormalizationTransformer import EmailNormalizationTransformer
-from CompletePreprocessingTransformer import CompletePreprocessingTransformer
-from TextFeatureEngineeringTransformer import TextFeatureEngineeringTransformer
-from GMM_InferenceWrapper import GMM_InferenceWrapper
+from src.inference.EmailNormalizationTransformer import EmailNormalizationTransformer
+from src.inference.CompletePreprocessingTransformer import CompletePreprocessingTransformer
+from src.inference.TextFeatureEngineeringTransformer import TextFeatureEngineeringTransformer
+from src.inference.GMM_InferenceWrapper import GMM_InferenceWrapper
 
 # Configuração de caminhos
 DATA_DIR = os.path.join(PROJECT_ROOT, "data/01_split")
@@ -70,10 +70,18 @@ def create_inference_pipeline(models_dir=MODELS_DIR, params_dir=PARAMS_DIR):
     
     # Definir caminhos para parâmetros
     preprocessing_params_path = os.path.join(params_dir, "all_preprocessing_params.joblib")
+    script03_params_path = os.path.join(params_dir, "script03_params.joblib")
     
     # Verificar se os parâmetros existem
     if not os.path.exists(preprocessing_params_path):
         raise ValueError(f"Parâmetros de pré-processamento não encontrados: {preprocessing_params_path}")
+    
+    # Verificar se temos parâmetros do script 3
+    if os.path.exists(script03_params_path):
+        print(f"Parâmetros do script 3 encontrados em: {script03_params_path}")
+    else:
+        print(f"AVISO: Parâmetros do script 3 não encontrados em: {script03_params_path}")
+        print("A pipeline usará apenas os parâmetros padrão.")
     
     # Determinar se existe modelo calibrado
     use_calibrated = False
@@ -98,7 +106,10 @@ def create_inference_pipeline(models_dir=MODELS_DIR, params_dir=PARAMS_DIR):
     # Criar componentes individuais
     email_transformer = EmailNormalizationTransformer(email_col='email')
     preprocessing_transformer = CompletePreprocessingTransformer(params_path=preprocessing_params_path)
-    text_transformer = TextFeatureEngineeringTransformer(params_path=preprocessing_params_path)
+    text_transformer = TextFeatureEngineeringTransformer(
+        params_path=preprocessing_params_path,
+        script03_params_path=script03_params_path
+    )
     predictor = GMM_InferenceWrapper(models_dir=models_dir)
     
     # Criar pipeline
@@ -128,19 +139,6 @@ def run_pipeline():
     print(f"Carregando dados de teste de: {TEST_FILE}")
     test_df = pd.read_csv(TEST_FILE)
     print(f"Dados carregados: {test_df.shape[0]} linhas, {test_df.shape[1]} colunas")
-    
-    # Limitar a 10.000 exemplos se houver mais
-    if len(test_df) > 10000:
-        print(f"Limitando a 10.000 exemplos para análise robusta (de um total de {len(test_df)})")
-        # Preservar distribuição da classe alvo, se existir
-        if 'target' in test_df.columns:
-            # Amostragem estratificada
-            test_df = test_df.groupby('target', group_keys=False).apply(
-                lambda x: x.sample(min(int(10000 * len(x) / len(test_df)), len(x)), random_state=42)
-            )
-        else:
-            # Amostragem aleatória
-            test_df = test_df.sample(10000, random_state=42)
     
     # Criar pipeline
     print("\nCriando pipeline de inferência...")
