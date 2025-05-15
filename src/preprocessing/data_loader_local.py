@@ -222,7 +222,7 @@ def connect_to_gcs(bucket_name):
         Objeto LocalBucket
     """
     # CORREÇÃO: Usar o caminho correto para os dados
-    base_path = "/Users/ramonmoreira/Desktop/smart_ads/data/raw_data"
+    base_path = "/Users/ramonmoreira/Desktop/smart_ads/data/00_raw_data"
     print(f"Conectando ao armazenamento local em: {os.path.abspath(base_path)}")
     return LocalBucket(base_path)
 
