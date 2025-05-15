@@ -2,17 +2,26 @@
 #!/usr/bin/env python
 """
 Transformador para processamento de texto conforme implementado
-nos scripts 02_preprocessing.py e 03_feature_engineering.py.
+nos scripts 03_feature_engineering_1.py e 04_feature_engineering_2.py.
 """
 
 import os
 import pandas as pd
 import numpy as np
+import re
 import joblib
+import warnings
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from sklearn.decomposition import LatentDirichletAllocation
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+
+# Ignorar warnings
+warnings.filterwarnings('ignore')
 
 # Importar módulos de processamento de texto
-from src.preprocessing.text_processing import text_feature_engineering
+from src.preprocessing.text_processing import text_feature_engineering, clean_text
 from src.preprocessing.advanced_feature_engineering import advanced_feature_engineering
 from src.preprocessing.professional_motivation_features import (
     enhance_professional_features,
@@ -21,6 +30,18 @@ from src.preprocessing.professional_motivation_features import (
     create_career_term_detector,
     create_professional_motivation_score
 )
+
+# Garantir que recursos NLTK necessários estejam disponíveis
+import nltk
+try:
+    nltk.data.find('tokenizers/punkt')
+    nltk.data.find('corpora/stopwords')
+    nltk.data.find('corpora/wordnet')
+except LookupError:
+    print("Baixando recursos NLTK necessários...")
+    nltk.download('punkt', quiet=True)
+    nltk.download('stopwords', quiet=True)
+    nltk.download('wordnet', quiet=True)
 
 class TextFeatureEngineeringTransformer(BaseEstimator, TransformerMixin):
     """
@@ -41,6 +62,8 @@ class TextFeatureEngineeringTransformer(BaseEstimator, TransformerMixin):
         self.params = None
         self.script03_params = None
         self.feature_names = None
+        self.tfidf_vectorizers = {}
+        self.lda_models = {}
         
         # Colunas de texto relevantes
         self.text_cols = [
@@ -87,7 +110,290 @@ class TextFeatureEngineeringTransformer(BaseEstimator, TransformerMixin):
                 if 'script03_features' not in self.params:
                     self.params['script03_features'] = self.script03_params
         
+        # Verificar e carregar vetorizadores TF-IDF e modelos LDA (script 03)
+        # Usar caminho absoluto para garantir que encontrará os arquivos
+        models_dir = "/Users/ramonmoreira/desktop/smart_ads/data/fixed_models"
+        if os.path.exists(models_dir):
+            tfidf_path = os.path.join(models_dir, 'tfidf_vectorizers.joblib')
+            lda_path = os.path.join(models_dir, 'lda_models.joblib')
+            
+            if os.path.exists(tfidf_path):
+                self.tfidf_vectorizers = joblib.load(tfidf_path)
+                print(f"Vetorizadores TF-IDF do script 03 carregados de {tfidf_path}")
+            else:
+                print(f"Arquivo de vetorizadores TF-IDF não encontrado: {tfidf_path}")
+            
+            if os.path.exists(lda_path):
+                self.lda_models = joblib.load(lda_path)
+                print(f"Modelos LDA do script 03 carregados de {lda_path}")
+            else:
+                print(f"Arquivo de modelos LDA não encontrado: {lda_path}")
+        else:
+            print(f"Diretório de modelos do script 03 não encontrado: {models_dir}")
+            print("Apenas o processamento do script 04 será aplicado.")
+        
         return self
+    
+    def _preprocess_text(self, text):
+        """
+        Realiza pré-processamento de texto conforme o script 03.
+        
+        Args:
+            text: Texto para pré-processar
+            
+        Returns:
+            Texto pré-processado
+        """
+        if pd.isna(text) or not isinstance(text, str):
+            return ""
+
+        # Converter para minúsculas
+        text = text.lower()
+
+        # Remover URLs e emails
+        text = re.sub(r'https?://\S+|www\.\S+', '', text)
+        text = re.sub(r'\S+@\S+', '', text)
+
+        # Remover caracteres especiais e números (preservando letras acentuadas)
+        text = re.sub(r'[^\w\s\áéíóúñü]', ' ', text)
+        text = re.sub(r'\d+', ' ', text)
+
+        # Remover espaços extras
+        text = re.sub(r'\s+', ' ', text).strip()
+
+        # Tokenização simplificada
+        tokens = text.split()
+
+        # Remover stopwords (espanhol)
+        stop_words = set(stopwords.words('spanish'))
+        tokens = [token for token in tokens if token not in stop_words]
+
+        # Lematização 
+        lemmatizer = WordNetLemmatizer()
+        tokens = [lemmatizer.lemmatize(token) for token in tokens]
+
+        # Remover tokens muito curtos
+        tokens = [token for token in tokens if len(token) > 2]
+
+        # Juntar tokens novamente
+        processed_text = ' '.join(tokens)
+
+        return processed_text
+    
+    def _extract_basic_features(self, text):
+        """
+        Extrai features básicas de texto conforme o script 03.
+        
+        Args:
+            text: Texto para extrair features
+            
+        Returns:
+            Dicionário com features básicas
+        """
+        if pd.isna(text) or not isinstance(text, str) or len(text.strip()) == 0:
+            return {
+                'word_count': 0,
+                'char_count': 0,
+                'avg_word_length': 0,
+                'has_question': 0,
+                'has_exclamation': 0
+            }
+
+        # Limpar e tokenizar o texto
+        text = text.strip()
+        words = text.split()
+
+        # Extrair features
+        word_count = len(words)
+        char_count = len(text)
+        avg_word_length = sum(len(word) for word in words) / max(1, word_count)
+        has_question = 1 if '?' in text else 0
+        has_exclamation = 1 if '!' in text else 0
+
+        return {
+            'word_count': word_count,
+            'char_count': char_count,
+            'avg_word_length': avg_word_length,
+            'has_question': has_question,
+            'has_exclamation': has_exclamation
+        }
+    
+    def _apply_tfidf_vectorization(self, df, col, processed_texts):
+        """
+        Aplica o vetorizador TF-IDF para a coluna especificada.
+        
+        Args:
+            df: DataFrame a ser processado
+            col: Nome da coluna de texto
+            processed_texts: Série com textos pré-processados
+            
+        Returns:
+            DataFrame com features TF-IDF adicionadas
+        """
+        col_key = self._get_column_key(col)
+        
+        # Verificar se temos vetorizador para esta coluna
+        if col_key in self.tfidf_vectorizers:
+            vectorizer = self.tfidf_vectorizers[col_key]
+            
+            try:
+                # Transformar textos
+                tfidf_matrix = vectorizer.transform(processed_texts.fillna(''))
+                feature_names = vectorizer.get_feature_names_out()
+                
+                # Converter para DataFrame
+                tfidf_df = pd.DataFrame(
+                    tfidf_matrix.toarray(), 
+                    index=df.index,
+                    columns=[f'{col_key}_tfidf_{term}' for term in feature_names]
+                )
+                
+                # Aplicar boost para termos importantes do trabalho
+                important_terms = ['trabajo', 'empleo', 'profesional', 'oportunidades', 'laboral',
+                                  'carrera', 'mejor trabajo', 'oportunidades laborales', 'profesión']
+                
+                for term in important_terms:
+                    boost_cols = [c for c in tfidf_df.columns if term in c]
+                    for boost_col in boost_cols:
+                        tfidf_df[boost_col] = tfidf_df[boost_col] * 1.5
+                
+                return tfidf_df
+                
+            except Exception as e:
+                print(f"Erro ao aplicar TF-IDF para {col_key}: {e}")
+                return pd.DataFrame(index=df.index)
+        else:
+            print(f"Vetorizador não encontrado para {col_key}, pulando...")
+            return pd.DataFrame(index=df.index)
+    
+    def _apply_lda(self, df, col, processed_texts):
+        """
+        Aplica o modelo LDA para a coluna especificada.
+        
+        Args:
+            df: DataFrame a ser processado
+            col: Nome da coluna de texto
+            processed_texts: Série com textos pré-processados
+            
+        Returns:
+            DataFrame com features de tópicos adicionadas
+        """
+        col_key = self._get_column_key(col)
+        
+        # Verificar se temos modelo LDA para esta coluna
+        if col_key in self.lda_models:
+            lda_model_info = self.lda_models[col_key]
+            
+            try:
+                # Extrair componentes
+                lda_model = lda_model_info['lda_model']
+                vectorizer = lda_model_info['vectorizer']
+                
+                # Transformar textos
+                dtm = vectorizer.transform(processed_texts.fillna(''))
+                topic_distributions = lda_model.transform(dtm)
+                
+                # Converter para DataFrame
+                n_topics = topic_distributions.shape[1]
+                topic_df = pd.DataFrame(
+                    topic_distributions,
+                    index=df.index,
+                    columns=[f'{col_key}_topic_{i+1}' for i in range(n_topics)]
+                )
+                
+                # Adicionar tópico dominante
+                topic_df[f'{col_key}_dominant_topic'] = topic_distributions.argmax(axis=1) + 1
+                
+                return topic_df
+                
+            except Exception as e:
+                print(f"Erro ao aplicar LDA para {col_key}: {e}")
+                return pd.DataFrame(index=df.index)
+        else:
+            print(f"Modelo LDA não encontrado para {col_key}, pulando...")
+            return pd.DataFrame(index=df.index)
+    
+    def _get_column_key(self, col):
+        """
+        Gera uma chave limpa para a coluna de texto.
+        
+        Args:
+            col: Nome da coluna de texto
+            
+        Returns:
+            Chave limpa para a coluna
+        """
+        # Primeiro tenta usar o mapeamento definido
+        if col in self.column_mapping:
+            return self.column_mapping[col]
+        
+        # Caso contrário, gera um nome limpo
+        col_key = col.replace(' ', '_').replace('?', '').replace('¿', '')
+        col_key = re.sub(r'[^\w]', '', col_key)[:30].lower()
+        return col_key
+        
+    def _apply_script03_transformations(self, df):
+        """
+        Aplica as transformações do script 03_feature_engineering_1.py
+        
+        Args:
+            df: DataFrame de entrada
+            
+        Returns:
+            DataFrame com transformações do script 03 aplicadas
+        """
+        print("Aplicando transformações do script 03 (NLP básico e LDA)...")
+        
+        # Resultado final combinará todos os DataFrames de features
+        df_result = df.copy()
+        
+        # Filtrar colunas de texto existentes
+        text_cols = [col for col in self.text_cols if col in df.columns]
+        
+        if not text_cols:
+            print("Nenhuma coluna de texto encontrada para processamento script 03")
+            return df_result
+        
+        # Para cada coluna de texto
+        for col in text_cols:
+            col_key = self._get_column_key(col)
+            print(f"Processando coluna: {col}")
+            
+            # 1. Pré-processar texto
+            processed_texts = df[col].apply(self._preprocess_text)
+            
+            # 2. Extrair features básicas
+            print(f"  Extraindo features básicas para {col_key}...")
+            basic_features = processed_texts.apply(self._extract_basic_features)
+            
+            # Converter dicionário para DataFrame
+            for feature in ['word_count', 'char_count', 'avg_word_length', 'has_question', 'has_exclamation']:
+                df_result[f'{col_key}_{feature}'] = basic_features.apply(lambda x: x.get(feature, 0))
+            
+            # 3. Aplicar TF-IDF
+            print(f"  Aplicando TF-IDF para {col_key}...")
+            tfidf_df = self._apply_tfidf_vectorization(df, col, processed_texts)
+            
+            # Adicionar features TF-IDF ao DataFrame final
+            for tfidf_col in tfidf_df.columns:
+                df_result[tfidf_col] = tfidf_df[tfidf_col]
+            
+            # 4. Aplicar LDA
+            print(f"  Aplicando LDA para {col_key}...")
+            topic_df = self._apply_lda(df, col, processed_texts)
+            
+            # Adicionar features de tópicos ao DataFrame final
+            for topic_col in topic_df.columns:
+                df_result[topic_col] = topic_df[topic_col]
+            
+            # 5. Guardar texto processado para uso posterior
+            df_result[f'{col}_clean'] = processed_texts
+        
+        # Contar número de features adicionadas
+        num_added_features = df_result.shape[1] - df.shape[1]
+        print(f"Script 03: Adicionadas {num_added_features} novas features")
+        
+        return df_result
     
     def transform(self, X):
         """
@@ -105,18 +411,21 @@ class TextFeatureEngineeringTransformer(BaseEstimator, TransformerMixin):
         print(f"Aplicando processamento de texto ao DataFrame: {X.shape}")
         df_result = X.copy()
         
-        # 1. Features textuais básicas
-        print("1. Processando features textuais básicas...")
+        # 1. Aplicar transformações do script 03_feature_engineering_1.py
+        df_result = self._apply_script03_transformations(df_result)
+        
+        # 2. Features textuais básicas (script 02 e script 04)
+        print("2. Processando features textuais básicas...")
         text_params = self.params.get('text_processing', {})
         df_result, _ = text_feature_engineering(df_result, fit=False, params=text_params)
         
-        # 2. Features avançadas
-        print("2. Aplicando feature engineering avançada para texto...")
+        # 3. Features avançadas
+        print("3. Aplicando feature engineering avançada para texto...")
         advanced_params = self.params.get('advanced_features', {})
         df_result, _ = advanced_feature_engineering(df_result, fit=False, params=advanced_params)
         
-        # 3. Features de motivação profissional - usar parâmetros do script 3 se disponíveis
-        print("3. Criando features de motivação profissional...")
+        # 4. Features de motivação profissional - usar parâmetros do script 3 se disponíveis
+        print("4. Criando features de motivação profissional...")
         
         # Primeiro verifica se temos parâmetros específicos do script 3
         if self.script03_params:
@@ -240,10 +549,11 @@ class TextFeatureEngineeringTransformer(BaseEstimator, TransformerMixin):
         
         # Verificar o número total de features geradas por coluna de texto
         if self.script03_params:
-            for col in text_cols:
-                mapped_col = self.column_mapping.get(col, "unknown")
-                feature_count = sum(1 for f in df_result.columns if mapped_col in f)
-                print(f"   Total de features para '{mapped_col}': {feature_count}")
+            for col in self.text_cols:
+                if col in df_result.columns:
+                    mapped_col = self.column_mapping.get(col, "unknown")
+                    feature_count = sum(1 for f in df_result.columns if mapped_col in f)
+                    print(f"   Total de features para '{mapped_col}': {feature_count}")
         
         # Guardar nomes das features para referência
         self.feature_names = df_result.columns.tolist()
