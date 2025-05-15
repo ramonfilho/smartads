@@ -41,7 +41,7 @@ except LookupError:
 PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
 INPUT_DIR_BASIC = os.path.join(PROJECT_ROOT, "data/02_1_processed")
 INPUT_DIR_TEXT = os.path.join(PROJECT_ROOT, "data/02_2_processed")
-OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/02_3_processed")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/02_3_3_processed")
 PARAMS_DIR = os.path.join(PROJECT_ROOT, "src/preprocessing/preprocessing_params")
 
 # Create output directories if they don't exist

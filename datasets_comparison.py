@@ -16,16 +16,14 @@ PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
 
 # Diretórios a serem comparados
 DIRS = [
-    os.path.join(PROJECT_ROOT, "data/02_2_2_reprocessed"),
-    os.path.join(PROJECT_ROOT, "data/02_2_processed"),
-    os.path.join(PROJECT_ROOT, "data/02_2_reprocessed")
+    os.path.join(PROJECT_ROOT, "data/02_3_3_processed"),
+    os.path.join(PROJECT_ROOT, "data/02_3_processed")
 ]
 
 # Nome amigável para cada diretório
 DIR_NAMES = {
-    "data/02_2_2_reprocessed": "Reprocessado 2.2",
-    "data/02_2_processed": "Processado 2.2",
-    "data/02_2_reprocessed": "Reprocessado 2.2 (duplicado)"
+    "data/02_3_3_processed": "novo",
+    "data/02_3_processed": "anterior"
 }
 
 def load_datasets(directory):
