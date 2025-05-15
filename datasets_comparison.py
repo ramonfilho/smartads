@@ -22,12 +22,12 @@ PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
 # Diretórios a serem comparados
 DIRS = [
     os.path.join(PROJECT_ROOT, "data/02_2_processed"),
-    os.path.join(PROJECT_ROOT, "data/02_fixed_processed")
+    os.path.join(PROJECT_ROOT, "data/02_2_reprocessed")
 ]
 
 # Nome amigável para cada diretório
 DIR_NAMES = {
-    "data/02_fixed_processed": "Versão nova",
+    "data/02_2_reprocessed": "Versão nova",
     "data/02_2_processed": "Versão anterior"
 }
 
