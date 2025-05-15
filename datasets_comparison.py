@@ -2,11 +2,6 @@
 """
 Script para comparar datasets entre diferentes versões de processamento.
 
-Compara os conjuntos de dados nas pastas:
-- data/02_1_1_processed
-- data/02_1_processed
-- data/02_2_processed
-
 Foco nas características básicas: número de features, tipos, valores ausentes, etc.
 """
 
@@ -21,14 +16,16 @@ PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
 
 # Diretórios a serem comparados
 DIRS = [
+    os.path.join(PROJECT_ROOT, "data/02_2_2_reprocessed"),
     os.path.join(PROJECT_ROOT, "data/02_2_processed"),
     os.path.join(PROJECT_ROOT, "data/02_2_reprocessed")
 ]
 
 # Nome amigável para cada diretório
 DIR_NAMES = {
-    "data/02_2_reprocessed": "Versão nova",
-    "data/02_2_processed": "Versão anterior"
+    "data/02_2_2_reprocessed": "Reprocessado 2.2",
+    "data/02_2_processed": "Processado 2.2",
+    "data/02_2_reprocessed": "Reprocessado 2.2 (duplicado)"
 }
 
 def load_datasets(directory):

@@ -17,7 +17,7 @@ sys.path.insert(0, project_root)
 DATA_DIR = "/Users/ramonmoreira/Desktop/smart_ads/data/00_raw_data"
 
 # Defina aqui o caminho completo para o diretório de saída dos dados processados
-OUTPUT_DIR = "/Users/ramonmoreira/Desktop/smart_ads/data/split"
+OUTPUT_DIR = "/Users/ramonmoreira/Desktop/smart_ads/testing_pipeline/data_testing_pipeline/01_split_testing_pipeline"
 # =================================================
 
 # Importar funções necessárias

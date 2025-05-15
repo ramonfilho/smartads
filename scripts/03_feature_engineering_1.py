@@ -25,7 +25,7 @@ warnings.filterwarnings('ignore')
 PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
 INPUT_DIR = os.path.join(PROJECT_ROOT, "data/01_split")
 PROCESSED_DIR = os.path.join(PROJECT_ROOT, "data/02_1_processed")
-OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/02_2_reprocessed")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/02_2_processed")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Baixar recursos NLTK essenciais
