@@ -26,6 +26,80 @@ DIR_NAMES = {
     "inference/output": "inferência"
 }
 
+def export_feature_names(datasets_by_dir, output_dir=None):
+    """
+    Exporta os nomes das features de um dataset de cada diretório para um arquivo CSV.
+    
+    Args:
+        datasets_by_dir: Dicionário com conjuntos de dados organizados por diretório
+        output_dir: Diretório de saída para o arquivo (opcional)
+    """
+    if output_dir is None:
+        output_dir = os.path.join(PROJECT_ROOT, "reports")
+    
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Timestamp para o nome do arquivo
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file = os.path.join(output_dir, f"feature_names_{timestamp}.csv")
+    
+    print(f"\nExportando nomes de features para: {output_file}")
+    
+    # Coletar features de um dataset de cada diretório (preferencialmente 'train')
+    feature_dict = {}
+    
+    # Variável para armazenar as features do treino para o arquivo 03_train_columns.csv
+    train_features = None
+    
+    for dir_path, datasets in datasets_by_dir.items():
+        dir_name = os.path.basename(os.path.dirname(dir_path)) + "/" + os.path.basename(dir_path)
+        friendly_name = DIR_NAMES.get(os.path.relpath(dir_path, PROJECT_ROOT), dir_name)
+        
+        # Selecionar preferencialmente o dataset de treino, ou o primeiro disponível
+        dataset_name = None
+        if "train" in datasets:
+            dataset_name = "train"
+        elif len(datasets) > 0:
+            dataset_name = list(datasets.keys())[0]
+        
+        if dataset_name:
+            feature_names = list(datasets[dataset_name].columns)
+            feature_dict[friendly_name] = feature_names
+            print(f"  Coletadas {len(feature_names)} features do dataset '{dataset_name}' em {friendly_name}")
+            
+            # Se for o diretório de treino, salvar suas features
+            if 'treino' in friendly_name.lower() or 'train' in friendly_name.lower():
+                train_features = feature_names
+                print(f"  Marcado como conjunto de treino para uso no módulo 3")
+    
+    # Verificar se temos algum dado para exportar
+    if not feature_dict:
+        print("  Nenhuma feature encontrada para exportar!")
+        return None
+    
+    # Determinar o número máximo de features para criar o DataFrame
+    max_features = max(len(features) for features in feature_dict.values())
+    
+    # Criar um DataFrame com todas as features
+    export_df = pd.DataFrame(index=range(max_features))
+    
+    # Preencher o DataFrame com os nomes das features
+    for dir_name, features in feature_dict.items():
+        # Preencher a coluna com os nomes das features, deixando NaN para índices além do comprimento
+        export_df[dir_name] = pd.Series(features)
+    
+    # Exportar para CSV
+    export_df.to_csv(output_file, index=False)
+    print(f"  Arquivo de comparação de features exportado com sucesso!")
+    
+    # Salvar arquivo específico para o módulo 3 com as colunas do treino
+    if train_features:
+        train_cols_file = os.path.join(output_dir, "03_train_columns.csv")
+        pd.DataFrame({'column_name': train_features}).to_csv(train_cols_file, index=False)
+        print(f"  Arquivo de colunas do treino salvo em: {train_cols_file}")
+    
+    return output_file
+
 def load_datasets(directory):
     """
     Carrega os datasets de um diretório.
@@ -238,7 +312,7 @@ def compare_datasets(dirs=DIRS):
             
             if column_comparisons:
                 comparison[f"{dataset_type}_column_comparison"] = column_comparisons
-    
+    export_feature_names(all_datasets)
     return comparison
 
 def print_comparison_report(comparison):

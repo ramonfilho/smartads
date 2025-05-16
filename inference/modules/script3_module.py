@@ -468,4 +468,49 @@ def apply_script3_transformations(df, params_path):
     
     print(f"Transformações do script 3 concluídas. Dimensões: {result_df.shape}")
     
+    # NOVO: Filtrar apenas as colunas presentes no dataset de treino
+    train_cols_path = os.path.join(params_dir, "03_train_columns.csv")
+
+    # Buscar em locais alternativos se não encontrar no diretório de parâmetros
+    if not os.path.exists(train_cols_path):
+        reports_dir = os.path.join(project_root, "reports")
+        train_cols_path = os.path.join(reports_dir, "03_train_columns.csv")
+
+    if os.path.exists(train_cols_path):
+        try:
+            train_columns = pd.read_csv(train_cols_path)
+            # Extrair nomes das colunas da primeira coluna do DataFrame
+            if 'column_name' in train_columns.columns:
+                train_columns = train_columns['column_name'].tolist()
+            else:
+                # Usar os nomes das colunas se não tiver coluna 'column_name'
+                train_columns = train_columns.columns.tolist()
+            
+            print(f"Carregadas {len(train_columns)} colunas do dataset de treino.")
+            
+            # Identificar colunas extras
+            extra_cols = set(result_df.columns) - set(train_columns)
+            if extra_cols:
+                print(f"Removendo {len(extra_cols)} colunas extras não presentes no treino:")
+                print(f"  Exemplos: {list(extra_cols)[:5]}")
+                result_df = result_df.drop(columns=list(extra_cols))
+            
+            # Adicionar colunas faltantes com valores padrão
+            missing_cols = set(train_columns) - set(result_df.columns) - {'target'}  # Ignorar a coluna target
+            if missing_cols:
+                print(f"AVISO: Adicionando {len(missing_cols)} colunas faltantes com valores zero.")
+                for col in missing_cols:
+                    result_df[col] = 0.0
+            
+            # Garantir a mesma ordem das colunas (exceto target)
+            train_cols_without_target = [col for col in train_columns if col != 'target']
+            result_df = result_df[train_cols_without_target]
+            
+            print(f"Dataset alinhado com o treino: {result_df.shape}")
+        except Exception as e:
+            print(f"ERRO ao alinhar colunas: {e}")
+    else:
+        print("AVISO: Arquivo de colunas do treino não encontrado. Usando todas as colunas geradas.")
+        print(f"Caminhos verificados: {params_dir}/03_train_columns.csv, {reports_dir}/03_train_columns.csv")
+    
     return result_df
