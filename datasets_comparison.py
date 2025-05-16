@@ -16,14 +16,14 @@ PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
 
 # Diretórios a serem comparados
 DIRS = [
-    os.path.join(PROJECT_ROOT, "data/02_3_3_processed"),
-    os.path.join(PROJECT_ROOT, "data/02_3_processed")
+    os.path.join(PROJECT_ROOT, "data/02_2_processed"),
+    os.path.join(PROJECT_ROOT, "inference/output")
 ]
 
 # Nome amigável para cada diretório
 DIR_NAMES = {
-    "data/02_3_3_processed": "novo",
-    "data/02_3_processed": "anterior"
+    "data/02_2_processed": "treino",
+    "inference/output": "inferência"
 }
 
 def load_datasets(directory):
@@ -38,7 +38,9 @@ def load_datasets(directory):
     """
     datasets = {}
     
-    for file_name in ["train.csv", "validation.csv", "test.csv"]:
+    # Primeiro, tenta carregar os arquivos padrão
+    standard_files = ["train.csv", "validation.csv", "test.csv"]
+    for file_name in standard_files:
         file_path = os.path.join(directory, file_name)
         if os.path.exists(file_path):
             try:
@@ -48,6 +50,39 @@ def load_datasets(directory):
                 print(f"  ERRO ao carregar {file_path}: {e}")
         else:
             print(f"  AVISO: Arquivo {file_path} não encontrado")
+    
+    # Se não encontrou arquivos padrão, procura por arquivos .csv mais recentes
+    if not datasets and os.path.exists(directory):
+        print(f"  Procurando por arquivos CSV alternativos em {directory}...")
+        
+        csv_files = [f for f in os.listdir(directory) if f.endswith('.csv')]
+        if csv_files:
+            # Ordenar arquivos por data de modificação (mais recente primeiro)
+            csv_files.sort(key=lambda x: os.path.getmtime(os.path.join(directory, x)), reverse=True)
+            
+            # Usar os arquivos mais recentes para cada tipo (tentando inferir o tipo)
+            for file_name in csv_files[:3]:  # Considerar no máximo 3 arquivos
+                file_path = os.path.join(directory, file_name)
+                
+                # Tentar determinar o tipo de dataset (train, val, test)
+                dataset_type = "unknown"
+                if "train" in file_name.lower():
+                    dataset_type = "train"
+                elif "val" in file_name.lower():
+                    dataset_type = "validation"
+                elif "test" in file_name.lower() or "predict" in file_name.lower():
+                    dataset_type = "test"
+                else:
+                    # Se nenhum tipo identificado, usar o arquivo mais recente como "test"
+                    dataset_type = "test"
+                
+                # Carregar apenas se o tipo ainda não foi carregado
+                if dataset_type not in datasets:
+                    try:
+                        datasets[dataset_type] = pd.read_csv(file_path)
+                        print(f"  Carregado {file_name} como '{dataset_type}' de {directory}")
+                    except Exception as e:
+                        print(f"  ERRO ao carregar {file_path}: {e}")
     
     return datasets if datasets else None
 
