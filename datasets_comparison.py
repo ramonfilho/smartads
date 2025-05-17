@@ -16,13 +16,13 @@ PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
 
 # Diretórios a serem comparados
 DIRS = [
-    os.path.join(PROJECT_ROOT, "data/02_2_processed"),
+    os.path.join(PROJECT_ROOT, "data/02_3_processed"),
     os.path.join(PROJECT_ROOT, "inference/output")
 ]
 
 # Nome amigável para cada diretório
 DIR_NAMES = {
-    "data/02_2_processed": "treino",
+    "data/02_3_processed": "treino",
     "inference/output": "inferência"
 }
 
@@ -68,9 +68,9 @@ def export_feature_names(datasets_by_dir, output_dir=None):
             print(f"  Coletadas {len(feature_names)} features do dataset '{dataset_name}' em {friendly_name}")
             
             # Se for o diretório de treino, salvar suas features
-            if 'treino' in friendly_name.lower() or 'train' in friendly_name.lower():
+            if 'treino' in friendly_name.lower() or 'train' in friendly_name.lower() or '02_3_processed' in dir_path:
                 train_features = feature_names
-                print(f"  Marcado como conjunto de treino para uso no módulo 3")
+                print(f"  Marcado como conjunto de treino para uso no módulo 4")
     
     # Verificar se temos algum dado para exportar
     if not feature_dict:
@@ -92,9 +92,17 @@ def export_feature_names(datasets_by_dir, output_dir=None):
     export_df.to_csv(output_file, index=False)
     print(f"  Arquivo de comparação de features exportado com sucesso!")
     
-    # Salvar arquivo específico para o módulo 3 com as colunas do treino
+    # Salvar arquivo específico para o módulo 4 com as colunas do treino
     if train_features:
-        train_cols_file = os.path.join(output_dir, "03_train_columns.csv")
+        # Determinar qual arquivo salvar com base no diretório
+        module_number = "03"  # Valor padrão
+        
+        # Se o diretório for 02_3_processed, estamos no módulo 4
+        if any("02_3_processed" in dir_path for dir_path in datasets_by_dir):
+            module_number = "04"
+            print(f"  Detectado diretório 02_3_processed - usando módulo 4")
+        
+        train_cols_file = os.path.join(output_dir, f"{module_number}_train_columns.csv")
         pd.DataFrame({'column_name': train_features}).to_csv(train_cols_file, index=False)
         print(f"  Arquivo de colunas do treino salvo em: {train_cols_file}")
     
