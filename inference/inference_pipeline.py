@@ -11,6 +11,155 @@ print("SCRIPT INICIADO!")
 print(f"Diretório de trabalho atual: {os.getcwd()}")
 print(f"Python path: {sys.path}")
 
+# IMPORTANTE: Definir a classe GMM_Wrapper ANTES de qualquer importação
+# Desta forma, quando o joblib tentar carregar a classe, ela já estará disponível
+# no módulo '__main__' que é onde o pickle espera encontrá-la
+import numpy as np
+class GMM_Wrapper:
+    """
+    Classe wrapper para o GMM que implementa a API sklearn para calibração.
+    """
+    def __init__(self, pipeline):
+        self.pipeline = pipeline
+        self.pca_model = pipeline['pca_model']
+        self.gmm_model = pipeline['gmm_model']
+        self.scaler_model = pipeline['scaler_model']
+        self.cluster_models = pipeline['cluster_models']
+        self.n_clusters = pipeline.get('n_clusters', 3)
+        self.threshold = pipeline.get('threshold', 0.15)
+        
+        # Adicionar atributos necessários para a API sklearn
+        self.classes_ = np.array([0, 1])  # Classes binárias
+        self._fitted = True  # Marcar como já ajustado
+        self._estimator_type = "classifier"  # Indicar explicitamente que é um classificador
+        
+    def fit(self, X, y):
+        # Como o modelo já está treinado, apenas verificamos as classes
+        self.classes_ = np.unique(y)
+        self._fitted = True
+        return self
+        
+    def predict_proba(self, X):
+        # Preparar os dados para o modelo GMM
+        X_numeric = X.select_dtypes(include=['number'])
+        
+        # Substituir valores NaN por 0
+        X_numeric = X_numeric.fillna(0)
+        
+        # Aplicar o scaler
+        if hasattr(self.scaler_model, 'feature_names_in_'):
+            # Garantir que temos exatamente as features esperadas pelo scaler
+            scaler_features = self.scaler_model.feature_names_in_
+            
+            # Identificar features em X_numeric que não estão no scaler
+            unseen_features = [col for col in X_numeric.columns if col not in scaler_features]
+            if unseen_features:
+                print(f"Removendo {len(unseen_features)} features não vistas durante treinamento")
+                X_numeric = X_numeric.drop(columns=unseen_features, errors='ignore')
+            
+            # Identificar features que faltam em X_numeric mas estão no scaler
+            missing_features = [col for col in scaler_features if col not in X_numeric.columns]
+            if missing_features:
+                print(f"Adicionando {len(missing_features)} features ausentes vistas durante treinamento")
+                for col in missing_features:
+                    X_numeric[col] = 0.0
+            
+            # Garantir a ordem correta das colunas
+            X_numeric = X_numeric[scaler_features]
+        
+        # Verificar novamente por NaNs após o ajuste de colunas
+        X_numeric = X_numeric.fillna(0)
+        
+        X_scaled = self.scaler_model.transform(X_numeric)
+        
+        # Verificar por NaNs no array após scaling
+        if np.isnan(X_scaled).any():
+            # Se ainda houver NaNs, substitua-os por zeros
+            X_scaled = np.nan_to_num(X_scaled, nan=0.0)
+        
+        # Aplicar PCA
+        X_pca = self.pca_model.transform(X_scaled)
+        
+        # Aplicar GMM para obter cluster labels e probabilidades
+        cluster_labels = self.gmm_model.predict(X_pca)
+        
+        # Inicializar array de probabilidades
+        n_samples = len(X)
+        y_pred_proba = np.zeros((n_samples, 2), dtype=float)
+        
+        # Para cada cluster, fazer previsões
+        for cluster_id, model_info in self.cluster_models.items():
+            # Converter cluster_id para inteiro se for string
+            cluster_id_int = int(cluster_id) if isinstance(cluster_id, str) else cluster_id
+            
+            # Selecionar amostras deste cluster
+            cluster_mask = (cluster_labels == cluster_id_int)
+            
+            if not any(cluster_mask):
+                continue
+            
+            # Obter modelo específico do cluster
+            model = model_info['model']
+            
+            # Detectar features necessárias
+            if hasattr(model, 'feature_names_in_'):
+                expected_features = model.feature_names_in_
+                
+                # Criar um DataFrame temporário com as features corretas
+                X_temp = X.copy()
+                
+                # Lidar com features ausentes ou extras
+                missing_features = [col for col in expected_features if col not in X.columns]
+                for col in missing_features:
+                    X_temp[col] = 0.0
+                
+                # Garantir a ordem correta das colunas
+                features_to_use = [col for col in expected_features if col in X_temp.columns]
+                X_cluster = X_temp.loc[cluster_mask, features_to_use].astype(float)
+                
+                # Substituir NaNs por zeros
+                X_cluster = X_cluster.fillna(0)
+            else:
+                # Usar todas as features numéricas disponíveis
+                X_cluster = X.loc[cluster_mask].select_dtypes(include=['number']).fillna(0)
+            
+            if len(X_cluster) > 0:
+                # Fazer previsões
+                try:
+                    proba = model.predict_proba(X_cluster)
+                    
+                    # Armazenar resultados
+                    y_pred_proba[cluster_mask] = proba
+                except Exception as e:
+                    print(f"ERRO ao fazer previsões para o cluster {cluster_id_int}: {e}")
+                    # Em caso de erro, usar probabilidades default
+                    y_pred_proba[cluster_mask, 0] = 0.9  # classe negativa (majoritária)
+                    y_pred_proba[cluster_mask, 1] = 0.1  # classe positiva (minoritária)
+        
+        return y_pred_proba
+    
+    def predict(self, X):
+        proba = self.predict_proba(X)
+        return (proba[:, 1] >= self.threshold).astype(int)
+
+# Também definir a classe IdentityCalibratedModel se for necessária
+class IdentityCalibratedModel:
+    """
+    Classe que emula o CalibratedClassifierCV sem modificar as probabilidades.
+    """
+    def __init__(self, base_estimator, threshold=0.1):
+        self.base_estimator = base_estimator
+        self.threshold = threshold
+        
+    def predict_proba(self, X):
+        """Retorna as probabilidades do estimador base."""
+        return self.base_estimator.predict_proba(X)
+    
+    def predict(self, X):
+        """Aplica o threshold às probabilidades."""
+        probas = self.predict_proba(X)[:, 1]
+        return (probas >= self.threshold).astype(int)
+
 try:
     # Adicionar diretório raiz ao path
     project_root = "/Users/ramonmoreira/desktop/smart_ads"
@@ -81,14 +230,106 @@ try:
     
     gmm_module_imported = False
     try:
-        from inference.modules.gmm_module import apply_gmm_and_predict
+        from inference.modules.gmm_module import apply_gmm_and_predict as original_apply_gmm
         gmm_module_imported = True
         print("Módulo gmm_module importado com sucesso")
     except Exception as e:
         print(f"AVISO: Não foi possível importar gmm_module: {str(e)}")
     
-    # No arquivo inference_pipeline.py, modifique a função run_full_pipeline
-
+    # Função para aplicar GMM e fazer predição
+    # Implementação local que usa a abordagem do script 11
+    def apply_gmm_and_predict(df, models_dir):
+        """
+        Aplica o modelo GMM calibrado para fazer predições.
+        
+        Args:
+            df: DataFrame com features processadas
+            models_dir: Diretório com os modelos
+            
+        Returns:
+            DataFrame com predições adicionadas
+        """
+        print("\n=== Aplicando GMM calibrado e fazendo predição ===")
+        print(f"Processando {len(df)} amostras...")
+        
+        # Copiar o DataFrame para não modificar o original
+        result_df = df.copy()
+        
+        try:
+            # Caminhos para possíveis modelos
+            gmm_calib_paths = [
+                os.path.join(project_root, "models/calibrated/gmm_calibrated_20250508_130725/gmm_calibrated.joblib"),
+                os.path.join(project_root, "inference/params/10_gmm_calibrated.joblib"),
+                os.path.join(models_dir, "10_gmm_calibrated.joblib"),
+                os.path.join(models_dir, "gmm_calibrated.joblib")
+            ]
+            
+            model_path = None
+            for path in gmm_calib_paths:
+                if os.path.exists(path):
+                    model_path = path
+                    break
+            
+            if not model_path:
+                raise FileNotFoundError("Modelo GMM calibrado não encontrado em nenhum dos locais esperados")
+            
+            print(f"Carregando modelo calibrado de: {model_path}")
+            calibrated_model = joblib.load(model_path)
+            
+            # Threshold padrão (pode ser ajustado)
+            threshold = 0.1
+            
+            # Tentar obter threshold do arquivo, se existir
+            threshold_paths = [
+                os.path.join(os.path.dirname(model_path), "threshold.txt"),
+                os.path.join(models_dir, "threshold.txt"),
+                os.path.join(models_dir, "10_threshold.txt")
+            ]
+            
+            for path in threshold_paths:
+                if os.path.exists(path):
+                    try:
+                        with open(path, 'r') as f:
+                            threshold = float(f.read().strip())
+                        print(f"Threshold carregado: {threshold}")
+                        break
+                    except:
+                        pass
+            
+            # Fazer predições
+            print("Fazendo predições...")
+            start_time = datetime.now()
+            
+            # Usar o modelo para predição
+            probabilities = calibrated_model.predict_proba(df)[:, 1]
+            predictions = (probabilities >= threshold).astype(int)
+            
+            # Adicionar resultados
+            result_df['probability'] = probabilities
+            result_df['prediction'] = predictions
+            
+            # Calcular estatísticas
+            prediction_counts = dict(zip(*np.unique(predictions, return_counts=True)))
+            print(f"  Distribuição de predições: {prediction_counts}")
+            
+            if 1 in prediction_counts:
+                positive_rate = prediction_counts[1] / len(df)
+                print(f"  Taxa de positivos: {positive_rate:.4f} ({prediction_counts.get(1, 0)} de {len(df)})")
+            
+            # Tempo de processamento
+            elapsed_time = (datetime.now() - start_time).total_seconds()
+            print(f"Predições concluídas em {elapsed_time:.2f} segundos.")
+            
+        except Exception as e:
+            print(f"  ERRO durante predição: {e}")
+            print(traceback.format_exc())
+            
+            # Em caso de erro, adicionar colunas com valores default
+            result_df['prediction'] = 0
+            result_df['probability'] = 0.0
+        
+        return result_df
+    
     def run_full_pipeline(input_path, output_path, params_dir, until_step=4):
         """
         Executa a pipeline completa de inferência ou até uma etapa específica.
