@@ -13,6 +13,8 @@ mlruns/
 venv/
 ENV/
 
+.joblib
+
 # Python cache
 **pycache**/
 *.py[cod]

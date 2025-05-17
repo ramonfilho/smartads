@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Módulo para aplicar GMM e fazer predições no pipeline de inferência, usando o modelo calibrado.
+Módulo para aplicar GMM e fazer predições no pipeline de inferência.
 """
 
 import os
@@ -15,136 +15,28 @@ project_root = "/Users/ramonmoreira/desktop/smart_ads"
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# Importar as classes compartilhadas
+try:
+    from src.modeling.gmm_wrapper import GMM_Wrapper
+    from src.modeling.calibrated_model import IdentityCalibratedModel
+    print("Classes importadas com sucesso!")
+except ImportError as e:
+    print(f"AVISO: Erro ao importar classes: {e}")
+    # Definir as classes localmente como fallback
+    class GMM_Wrapper:
+        """Implementação local de GMM_Wrapper..."""
+        pass
+    
+    class IdentityCalibratedModel:
+        """Implementação local de IdentityCalibratedModel..."""
+        pass
+
 # Diretório para parâmetros
 PARAMS_DIR = os.path.join(project_root, "inference/params")
 
-# Definir a classe GMM_Wrapper exatamente como no script 10_prob_calib_gmm.py
-# Esta classe é necessária para carregar o modelo calibrado
-class GMM_Wrapper:
-    """
-    Classe wrapper para o GMM que implementa a API sklearn para calibração.
-    """
-    def __init__(self, pipeline):
-        self.pipeline = pipeline
-        self.pca_model = pipeline['pca_model']
-        self.gmm_model = pipeline['gmm_model']
-        self.scaler_model = pipeline['scaler_model']
-        self.cluster_models = pipeline['cluster_models']
-        self.n_clusters = pipeline.get('n_clusters', 3)
-        self.threshold = pipeline.get('threshold', 0.15)
-        
-        # Adicionar atributos necessários para a API sklearn
-        self.classes_ = np.array([0, 1])  # Classes binárias
-        self._fitted = True  # Marcar como já ajustado
-        self._estimator_type = "classifier"  # Indicar explicitamente que é um classificador
-        
-    def fit(self, X, y):
-        # Como o modelo já está treinado, apenas verificamos as classes
-        self.classes_ = np.unique(y)
-        self._fitted = True
-        return self
-        
-    def predict_proba(self, X):
-        # Preparar os dados para o modelo GMM
-        X_numeric = X.select_dtypes(include=['number'])
-        
-        # Substituir valores NaN por 0
-        X_numeric = X_numeric.fillna(0)
-        
-        # Aplicar o scaler
-        if hasattr(self.scaler_model, 'feature_names_in_'):
-            # Garantir que temos exatamente as features esperadas pelo scaler
-            scaler_features = self.scaler_model.feature_names_in_
-            
-            # Remover features extras e adicionar as que faltam
-            features_to_remove = [col for col in X_numeric.columns if col not in scaler_features]
-            X_numeric = X_numeric.drop(columns=features_to_remove, errors='ignore')
-            
-            for col in scaler_features:
-                if col not in X_numeric.columns:
-                    X_numeric[col] = 0.0
-            
-            # Garantir a ordem correta das colunas
-            X_numeric = X_numeric[scaler_features]
-        
-        # Verificar novamente por NaNs após o ajuste de colunas
-        X_numeric = X_numeric.fillna(0)
-        
-        X_scaled = self.scaler_model.transform(X_numeric)
-        
-        # Verificar por NaNs no array após scaling
-        if np.isnan(X_scaled).any():
-            # Se ainda houver NaNs, substitua-os por zeros
-            X_scaled = np.nan_to_num(X_scaled, nan=0.0)
-        
-        # Aplicar PCA
-        X_pca = self.pca_model.transform(X_scaled)
-        
-        # Aplicar GMM para obter cluster labels e probabilidades
-        cluster_labels = self.gmm_model.predict(X_pca)
-        
-        # Inicializar array de probabilidades
-        n_samples = len(X)
-        y_pred_proba = np.zeros((n_samples, 2), dtype=float)
-        
-        # Para cada cluster, fazer previsões
-        for cluster_id, model_info in self.cluster_models.items():
-            # Converter cluster_id para inteiro se for string
-            cluster_id_int = int(cluster_id) if isinstance(cluster_id, str) else cluster_id
-            
-            # Selecionar amostras deste cluster
-            cluster_mask = (cluster_labels == cluster_id_int)
-            
-            if not any(cluster_mask):
-                continue
-            
-            # Obter modelo específico do cluster
-            model = model_info['model']
-            
-            # Detectar features necessárias
-            if hasattr(model, 'feature_names_in_'):
-                expected_features = model.feature_names_in_
-                
-                # Criar um DataFrame temporário com as features corretas
-                X_temp = X.copy()
-                
-                # Lidar com features ausentes ou extras
-                missing_features = [col for col in expected_features if col not in X.columns]
-                for col in missing_features:
-                    X_temp[col] = 0.0
-                
-                # Garantir a ordem correta das colunas
-                features_to_use = [col for col in expected_features if col in X_temp.columns]
-                X_cluster = X_temp.loc[cluster_mask, features_to_use].astype(float)
-                
-                # Substituir NaNs por zeros
-                X_cluster = X_cluster.fillna(0)
-            else:
-                # Usar todas as features numéricas disponíveis
-                X_cluster = X.loc[cluster_mask].select_dtypes(include=['number']).fillna(0)
-            
-            if len(X_cluster) > 0:
-                # Fazer previsões
-                try:
-                    proba = model.predict_proba(X_cluster)
-                    
-                    # Armazenar resultados
-                    y_pred_proba[cluster_mask] = proba
-                except Exception as e:
-                    print(f"ERRO ao fazer previsões para o cluster {cluster_id_int}: {e}")
-                    # Em caso de erro, usar probabilidades default
-                    y_pred_proba[cluster_mask, 0] = 0.9  # classe negativa (majoritária)
-                    y_pred_proba[cluster_mask, 1] = 0.1  # classe positiva (minoritária)
-        
-        return y_pred_proba
-    
-    def predict(self, X):
-        proba = self.predict_proba(X)
-        return (proba[:, 1] >= self.threshold).astype(int)
-
 def load_calibrated_model(params_dir=PARAMS_DIR):
     """
-    Carrega o modelo GMM calibrado.
+    Carrega o modelo GMM calibrado fixado.
     
     Args:
         params_dir: Diretório com os parâmetros
@@ -154,49 +46,65 @@ def load_calibrated_model(params_dir=PARAMS_DIR):
     """
     print("\nCarregando modelo GMM calibrado...")
     
-    # Caminho absoluto para o modelo calibrado
-    model_path = "/Users/ramonmoreira/desktop/smart_ads/inference/params/10_gmm_calibrated.joblib"
+    # Procurar o modelo reconstruído
+    model_paths = [
+        os.path.join(params_dir, "10_gmm_calibrated_fixed.joblib"),  # Modelo calibrado reconstruído (prioridade)
+        os.path.join(params_dir, "10_gmm_calibrated.joblib")         # Modelo calibrado original
+    ]
     
-    # Verificar se o arquivo existe
-    if not os.path.exists(model_path):
-        print(f"ERRO: Modelo calibrado não encontrado em: {model_path}")
+    model_path = None
+    for path in model_paths:
+        if os.path.exists(path):
+            model_path = path
+            print(f"Modelo calibrado encontrado: {model_path}")
+            break
+    
+    if model_path is None:
+        # Se não encontrou o modelo calibrado, tente o wrapper
+        wrapper_path = os.path.join(params_dir, "10_gmm_wrapper_fixed.joblib")
+        if os.path.exists(wrapper_path):
+            print(f"Modelo calibrado não encontrado. Usando wrapper base: {wrapper_path}")
+            model_path = wrapper_path
+            # Carregar wrapper
+            try:
+                wrapper = joblib.load(wrapper_path)
+                # Criar modelo calibrado na hora
+                from src.modeling.calibrated_model import IdentityCalibratedModel
+                model = IdentityCalibratedModel(wrapper, threshold=0.1)
+                print(f"Criado modelo calibrado a partir do wrapper")
+                return model, 0.1
+            except Exception as e:
+                print(f"Erro ao carregar wrapper: {e}")
         
-        # Tentar caminhos alternativos
-        alt_paths = [
-            os.path.join(params_dir, "10_gmm_calibrated.joblib"),
-            os.path.join(params_dir, "models", "10_gmm_calibrated.joblib")
-        ]
-        
-        for alt_path in alt_paths:
-            if os.path.exists(alt_path):
-                print(f"Modelo encontrado em: {alt_path}")
-                model_path = alt_path
+        # Se não encontrou nenhum modelo, erro
+        raise FileNotFoundError("Não foi possível encontrar o modelo calibrado em nenhum caminho esperado.")
+    
+    # Procurar o threshold
+    threshold_paths = [
+        os.path.join(params_dir, "10_threshold_fixed.txt"),
+        os.path.join(params_dir, "10_threshold.txt")
+    ]
+    
+    threshold = 0.1  # Default para o caso de não encontrar o arquivo
+    for path in threshold_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, 'r') as f:
+                    threshold = float(f.read().strip())
+                print(f"Threshold carregado de {path}: {threshold}")
                 break
-        else:
-            raise FileNotFoundError(f"Modelo calibrado não encontrado em nenhum caminho conhecido")
-    
-    # Caminho para o threshold (assumindo que está no mesmo diretório que o modelo)
-    threshold_path = os.path.join(os.path.dirname(model_path), "10_threshold.txt")
-    
-    # Verificar se o arquivo de threshold existe
-    if not os.path.exists(threshold_path):
-        print(f"AVISO: Arquivo de threshold não encontrado: {threshold_path}")
-        print("Usando threshold padrão: 0.5")
-        threshold = 0.5
-    else:
-        # Carregar threshold
-        with open(threshold_path, 'r') as f:
-            threshold = float(f.read().strip())
+            except Exception as e:
+                print(f"AVISO: Erro ao ler threshold de {path}: {e}")
     
     # Carregar modelo calibrado
     print(f"  Carregando modelo de: {model_path}")
     try:
-        calibrated_model = joblib.load(model_path)
+        model = joblib.load(model_path)
         print(f"  Modelo carregado com sucesso!")
         print(f"  Threshold: {threshold:.4f}")
-        return calibrated_model, threshold
+        return model, threshold
     except Exception as e:
-        print(f"  ERRO ao carregar modelo calibrado: {e}")
+        print(f"  ERRO ao carregar modelo: {e}")
         import traceback
         print(traceback.format_exc())
         raise
@@ -259,52 +167,22 @@ def apply_gmm_and_predict(df, params_dir=PARAMS_DIR):
     
     return result_df
 
-# Função para testar o carregamento do modelo
-def test_model_loading(params_dir=PARAMS_DIR):
-    """
-    Testa se conseguimos carregar o modelo calibrado.
-    
-    Args:
-        params_dir: Diretório com os parâmetros
-    """
-    print("Testando carregamento do modelo calibrado...")
-    model_path = os.path.join(params_dir, "10_gmm_calibrated.joblib")
-    
-    try:
-        # Carregar o modelo
-        model = joblib.load(model_path)
-        
-        # Verificar o tipo do modelo
-        print(f"Tipo do modelo: {type(model).__name__}")
-        
-        # Verificar atributos
-        if hasattr(model, 'base_estimator'):
-            print(f"Tipo do estimador base: {type(model.base_estimator).__name__}")
-            
-            # Se o base_estimator for o GMM_Wrapper
-            if hasattr(model.base_estimator, 'pipeline'):
-                # Verifica os componentes do pipeline
-                pipeline = model.base_estimator.pipeline
-                for key, value in pipeline.items():
-                    print(f"Pipeline contém: {key} ({type(value).__name__})")
-                
-                # Verifica os modelos por cluster
-                if 'cluster_models' in pipeline:
-                    print(f"Número de modelos por cluster: {len(pipeline['cluster_models'])}")
-        
-        print("Modelo carregado com sucesso!")
-        return True
-    except Exception as e:
-        print(f"Erro ao carregar modelo: {e}")
-        import traceback
-        print(traceback.format_exc())
-        return False
-
 if __name__ == "__main__":
-    # Primeiro testar se conseguimos carregar o modelo
+    # Teste do módulo
+    import sys
+    
     if len(sys.argv) > 1 and sys.argv[1] == "--test":
-        success = test_model_loading()
-        sys.exit(0 if success else 1)
+        try:
+            # Testar carregamento do modelo
+            model, threshold = load_calibrated_model()
+            print(f"Modelo calibrado carregado com sucesso. Threshold: {threshold}")
+            
+            sys.exit(0)
+        except Exception as e:
+            print(f"Erro no teste: {e}")
+            import traceback
+            print(traceback.format_exc())
+            sys.exit(1)
     
     # Pipeline completo
     if len(sys.argv) > 1:
