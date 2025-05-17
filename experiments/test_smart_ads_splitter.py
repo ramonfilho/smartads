@@ -14,7 +14,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(project_root)
 
 # Importar funções do data splitter específico para Smart Ads
-from src.modeling.stacking.data_splitter import (
+from src.models1.stacking.data_splitter import (
     categorize_smart_ads_features,
     print_feature_group_stats,
     validate_feature_groups,

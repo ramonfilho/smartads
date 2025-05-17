@@ -26,15 +26,15 @@ sys.path.append(project_root)
 # Importar módulos do projeto
 from src.evaluation.mlflow_utils import setup_mlflow_tracking, get_data_hash
 from src.evaluation.baseline_model import sanitize_column_names
-from src.modeling.stacking.data_splitter import (
+from src.models1.stacking.data_splitter import (
     get_feature_categories, prepare_data_for_specialists,
     print_feature_group_stats, validate_feature_groups
 )
-from src.modeling.stacking.specialist_models import (
+from src.models1.stacking.specialist_models import (
     SpecialistModel, StackingEnsemble, prepare_specialist_data
 )
-from src.modeling.stacking.meta_learner import MetaLearner
-from src.modeling.stacking.stacking_evaluation import evaluate_and_log_stacking_ensemble
+from src.models1.stacking.meta_learner import MetaLearner
+from src.models1.stacking.stacking_evaluation import evaluate_and_log_stacking_ensemble
 
 def parse_arguments():
     """
