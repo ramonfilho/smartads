@@ -135,12 +135,56 @@ class GMM_Wrapper:
                     # Em caso de erro, usar probabilidades default
                     y_pred_proba[cluster_mask, 0] = 0.9  # classe negativa (majoritária)
                     y_pred_proba[cluster_mask, 1] = 0.1  # classe positiva (minoritária)
+        # Estatísticas das probabilidades
+        probs_positiva = y_pred_proba[:, 1]
+        stats = {
+            'min': probs_positiva.min(),
+            'max': probs_positiva.max(),
+            'mean': probs_positiva.mean(),
+            'median': np.median(probs_positiva),
+            'std': probs_positiva.std(),
+            '% > 0.1': (probs_positiva >= 0.1).mean(),
+            '% > 0.5': (probs_positiva >= 0.5).mean(),
+        }
+        
+        print("DEBUG: Estatísticas de probabilidade por cluster:")
+        for cluster_id, model_info in self.cluster_models.items():
+            # Filtrar amostras deste cluster
+            cluster_mask = (cluster_labels == int(cluster_id))
+            if any(cluster_mask):
+                cluster_probs = y_pred_proba[cluster_mask, 1]
+                print(f"  Cluster {cluster_id}: {len(cluster_probs)} amostras")
+                print(f"    min={cluster_probs.min():.6f}, max={cluster_probs.max():.6f}, mean={cluster_probs.mean():.6f}")
+                print(f"    % > 0.1: {(cluster_probs >= 0.1).mean():.6f}")
+        
+        print(f"DEBUG: Estatísticas finais: {stats}")
         
         return y_pred_proba
     
     def predict(self, X):
         proba = self.predict_proba(X)
         return (proba[:, 1] >= self.threshold).astype(int)
+
+def inspect_model(model, prefix=""):
+    """Inspeciona a estrutura de um modelo."""
+    print(f"{prefix}Tipo: {type(model)}")
+    
+    # Verificar se é um modelo de calibração
+    if hasattr(model, 'base_estimator'):
+        print(f"{prefix}Contém base_estimator: {type(model.base_estimator)}")
+        inspect_model(model.base_estimator, prefix + "  ")
+    
+    # Verificar se é um modelo GMM_Wrapper
+    if hasattr(model, 'cluster_models'):
+        print(f"{prefix}Número de clusters: {len(model.cluster_models)}")
+        print(f"{prefix}IDs dos clusters: {list(model.cluster_models.keys())}")
+        
+        # Verificar modelo por cluster
+        for cluster_id, cluster_info in model.cluster_models.items():
+            if isinstance(cluster_info, dict) and 'model' in cluster_info:
+                print(f"{prefix}Modelo cluster {cluster_id}: {type(cluster_info['model'])}")
+            else:
+                print(f"{prefix}Cluster {cluster_id}: {type(cluster_info)}")
 
 # Também definir a classe IdentityCalibratedModel se for necessária
 class IdentityCalibratedModel:
@@ -295,7 +339,21 @@ try:
                         break
                     except:
                         pass
-            
+            print("\nINSPEÇÃO DETALHADA DO MODELO:")
+
+            print("=" * 50)
+            inspect_model(calibrated_model, "MODELO CALIBRADO: ")
+            print("=" * 50)
+
+            # Verificar também o threshold exato que será usado
+            if hasattr(calibrated_model, 'threshold'):
+                threshold_from_model = calibrated_model.threshold
+                print(f"Threshold extraído do modelo: {threshold_from_model}")
+            elif hasattr(calibrated_model, 'base_estimator') and hasattr(calibrated_model.base_estimator, 'threshold'):
+                threshold_from_model = calibrated_model.base_estimator.threshold
+                print(f"Threshold extraído do estimador base: {threshold_from_model}")
+            print(f"Threshold que será usado: {threshold}")
+            print("=" * 50)
             # Fazer predições
             print("Fazendo predições...")
             start_time = datetime.now()

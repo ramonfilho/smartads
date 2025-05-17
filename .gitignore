@@ -46,4 +46,5 @@ models/
 .vscode/
 **/.claude/settings.local.json
 
-/inference/params/
+inference/params/
+inference/output/
