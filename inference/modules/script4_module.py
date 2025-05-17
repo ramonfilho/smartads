@@ -105,58 +105,61 @@ def enhance_tfidf_for_career_terms(df, text_columns, vectorizers=None):
                     key_to_use = key
                     break
         
+        # MODIFICAÇÃO: Tratamento especial para déjame_un_mensaje
+        if 'déjame' in col_clean:
+            print(f"  Processando features especiais para déjame_un_mensaje...")
+            
+            # Obter o vetorizador de déjame_un_mensaje
+            déjame_key = 'déjame_un_mensaje'
+            if déjame_key in vectorizers:
+                vectorizer = vectorizers[déjame_key]
+                
+                # Obter todos os termos do vetorizador
+                all_terms = vectorizer.get_feature_names_out().tolist()
+                print(f"    Vetorizador contém {len(all_terms)} termos")
+                
+                # Criar features para todos os termos do vetorizador
+                clean_name = 'déjame_un_mensaje'  # Usar nome sem _original
+                
+                for term in all_terms:
+                    feature_name = f"{clean_name}_tfidf_{term}"
+                    
+                    # Calcular valores baseados no texto (abordagem simplificada)
+                    values = []
+                    for text in df[col]:
+                        text = normalize_text(text)
+                        if term in text:
+                            values.append(0.5)  # valor arbitrário para presença do termo
+                        else:
+                            values.append(0.0)
+                    enhanced_tfidf_features[feature_name] = pd.Series(values)
+                
+                # Adicionar features de sentimento/motivação com zeros
+                sentiment_features = [
+                    'aspiration_count', 'aspiration_score', 
+                    'career_term_count', 'career_term_score', 
+                    'commitment_count', 'commitment_score', 
+                    'has_career_terms', 'has_commitment', 
+                    'sentiment_compound', 'sentiment_neg', 'sentiment_pos'
+                ]
+                
+                for feature in sentiment_features:
+                    feature_name = f"{clean_name}_{feature}"
+                    enhanced_tfidf_features[feature_name] = pd.Series(np.zeros(len(df)))
+                
+                print(f"    Adicionadas {len(all_terms)} features TF-IDF específicas")
+                print(f"    Adicionadas {len(sentiment_features)} features de sentimento/motivação")
+            else:
+                print(f"    AVISO: Vetorizador para déjame_un_mensaje não encontrado!")
+            
+            # Pular o processamento normal para esta coluna
+            continue
+        
         # Skip if no vectorizer for this column
         if key_to_use is None:
             print(f"  Pulando TF-IDF para {col_clean} (nenhum vetorizador encontrado)")
             continue
         
-        # Adicionar manualmente features TF-IDF para déjame_un_mensaje
-        if 'déjame' in col_clean:
-            # Lista exata dos termos TF-IDF faltantes conforme missing_columns.txt
-            tfidf_terms = [
-                'aprender', 'con', 'curso', 'de', 'el', 'en', 'es', 'esta', 'este',
-                'estoy', 'gracias', 'hablar', 'hola', 'idioma', 'ingles', 'inglés',
-                'la', 'las', 'me', 'mi', 'muchas', 'muy', 'más', 'no', 'oportunidad',
-                'para', 'pero', 'poder', 'por', 'que', 'quiero', 'se', 'un', 'una'
-            ]
-            
-            # Lista exata das features de sentimento/motivação faltantes
-            sentiment_features = [
-                'aspiration_count', 'aspiration_score', 
-                'career_term_count', 'career_term_score', 
-                'commitment_count', 'commitment_score', 
-                'has_career_terms', 'has_commitment', 
-                'sentiment_compound', 'sentiment_neg', 'sentiment_pos'
-            ]
-            
-            print(f"  Adicionando features específicas para déjame_un_mensaje...")
-            
-            # IMPORTANTE: Usar o nome sem _original
-            clean_name = 'déjame_un_mensaje'
-            
-            # Adicionar features TF-IDF
-            for term in tfidf_terms:
-                feature_name = f"{clean_name}_tfidf_{term}"
-                
-                # Calcular valores baseados no texto
-                values = []
-                for text in df[col]:
-                    text = normalize_text(text)
-                    if term in text:
-                        values.append(0.5)  # valor arbitrário para presença do termo
-                    else:
-                        values.append(0.0)
-                enhanced_tfidf_features[feature_name] = pd.Series(values)
-            
-            # Adicionar features de sentimento/motivação
-            for feature in sentiment_features:
-                feature_name = f"{clean_name}_{feature}"
-                enhanced_tfidf_features[feature_name] = pd.Series(np.zeros(len(df)))
-            
-            print(f"    Adicionadas {len(tfidf_terms)} features TF-IDF específicas")
-            print(f"    Adicionadas {len(sentiment_features)} features de sentimento/motivação")
-            continue  # Pular o processamento normal para esta coluna
-            
         vectorizer = vectorizers[key_to_use]
         print(f"  Aplicando TF-IDF para {col_clean} (usando vetorizador para '{key_to_use}')...")
         
@@ -588,15 +591,20 @@ def apply_script4_transformations(df, params_path):
     if os.path.exists(train_cols_path):
         try:
             print(f"Usando arquivo de colunas do estágio 4: {train_cols_path}")
+            # Trecho modificado para lidar com formatos diferentes:
             train_columns_df = pd.read_csv(train_cols_path)
-            
-            # Extrair nomes das colunas
             if 'column_name' in train_columns_df.columns:
-                train_columns = train_columns_df['column_name'].tolist()
+                # Formato 1: Uma coluna chamada 'column_name' contendo os nomes das colunas
+                train_columns = train_columns_df['column_name'].dropna().tolist()
+            elif train_columns_df.shape[0] == 1 and train_columns_df.shape[1] > 1:
+                # Formato 2: Uma única linha com todas as colunas (correto)
+                train_columns = train_columns_df.columns.tolist()
             else:
-                # Tentar buscar na primeira coluna
+                # Formato 3: Primeira coluna contém os nomes das colunas
                 first_col = train_columns_df.columns[0]
                 train_columns = train_columns_df[first_col].dropna().tolist()
+
+            print(f"Carregadas {len(train_columns)} colunas do dataset de treino (estágio 4).")
             
             print(f"Carregadas {len(train_columns)} colunas do dataset de treino (estágio 4).")
             
