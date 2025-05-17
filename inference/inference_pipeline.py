@@ -135,6 +135,7 @@ class GMM_Wrapper:
                     # Em caso de erro, usar probabilidades default
                     y_pred_proba[cluster_mask, 0] = 0.9  # classe negativa (majoritária)
                     y_pred_proba[cluster_mask, 1] = 0.1  # classe positiva (minoritária)
+        
         # Estatísticas das probabilidades
         probs_positiva = y_pred_proba[:, 1]
         stats = {
@@ -165,6 +166,25 @@ class GMM_Wrapper:
         proba = self.predict_proba(X)
         return (proba[:, 1] >= self.threshold).astype(int)
 
+# Também definir a classe IdentityCalibratedModel se for necessária
+class IdentityCalibratedModel:
+    """
+    Classe que emula o CalibratedClassifierCV sem modificar as probabilidades.
+    """
+    def __init__(self, base_estimator, threshold=0.1):
+        self.base_estimator = base_estimator
+        self.threshold = threshold
+        
+    def predict_proba(self, X):
+        """Retorna as probabilidades do estimador base."""
+        return self.base_estimator.predict_proba(X)
+    
+    def predict(self, X):
+        """Aplica o threshold às probabilidades."""
+        probas = self.predict_proba(X)[:, 1]
+        return (probas >= self.threshold).astype(int)
+
+# Função para inspecionar modelos
 def inspect_model(model, prefix=""):
     """Inspeciona a estrutura de um modelo."""
     print(f"{prefix}Tipo: {type(model)}")
@@ -185,24 +205,6 @@ def inspect_model(model, prefix=""):
                 print(f"{prefix}Modelo cluster {cluster_id}: {type(cluster_info['model'])}")
             else:
                 print(f"{prefix}Cluster {cluster_id}: {type(cluster_info)}")
-
-# Também definir a classe IdentityCalibratedModel se for necessária
-class IdentityCalibratedModel:
-    """
-    Classe que emula o CalibratedClassifierCV sem modificar as probabilidades.
-    """
-    def __init__(self, base_estimator, threshold=0.1):
-        self.base_estimator = base_estimator
-        self.threshold = threshold
-        
-    def predict_proba(self, X):
-        """Retorna as probabilidades do estimador base."""
-        return self.base_estimator.predict_proba(X)
-    
-    def predict(self, X):
-        """Aplica o threshold às probabilidades."""
-        probas = self.predict_proba(X)[:, 1]
-        return (probas >= self.threshold).astype(int)
 
 try:
     # Adicionar diretório raiz ao path
@@ -320,6 +322,64 @@ try:
             print(f"Carregando modelo calibrado de: {model_path}")
             calibrated_model = joblib.load(model_path)
             
+            # Inspeção detalhada dos calibradores
+            print("\nINSPEÇÃO DETALHADA DOS CALIBRADORES:")
+            print("=" * 50)
+            print(f"Tipo de modelo carregado: {type(calibrated_model)}")
+
+            if hasattr(calibrated_model, 'calibrated_classifiers_'):
+                print(f"Número de calibradores: {len(calibrated_model.calibrated_classifiers_)}")
+                # Examinar o primeiro calibrador
+                calibrator = calibrated_model.calibrated_classifiers_[0]
+                print(f"Tipo do calibrador: {type(calibrator)}")
+                
+                if hasattr(calibrator, 'calibrators'):
+                    # Isso contém os modelos de regressão isotônica
+                    isotonic_regressors = calibrator.calibrators
+                    print(f"Número de regressores isotônicos: {len(isotonic_regressors)}")
+                    for i, regressor in enumerate(isotonic_regressors):
+                        print(f"  Regressor {i}: Tipo = {type(regressor)}")
+                        # Tentar obter os pontos de X e Y do regressor isotônico
+                        if hasattr(regressor, 'X_thresholds_'):
+                            print(f"    {len(regressor.X_thresholds_)} pontos de calibração")
+                            # Mostrar alguns pontos do mapeamento
+                            n_points = min(5, len(regressor.X_thresholds_))
+                            for j in range(n_points):
+                                x_val = regressor.X_thresholds_[j]
+                                y_val = regressor.y_thresholds_[j]
+                                print(f"    Ponto {j}: {x_val:.6f} -> {y_val:.6f}")
+                        elif hasattr(regressor, '_necessary_X'):
+                            print(f"    {len(regressor._necessary_X)} pontos de calibração")
+                            # Mostrar alguns pontos do mapeamento
+                            n_points = min(5, len(regressor._necessary_X))
+                            for j in range(n_points):
+                                x_val = regressor._necessary_X[j]
+                                y_val = regressor._necessary_y[j]
+                                print(f"    Ponto {j}: {x_val:.6f} -> {y_val:.6f}")
+                
+                # Verificar método de predição
+                if hasattr(calibrator, 'predict_proba'):
+                    print("Calibrador possui método predict_proba próprio")
+                else:
+                    print("Calibrador não possui método predict_proba")
+                    
+                # Tentar visualizar estrutura completa
+                for attr_name in dir(calibrator):
+                    if not attr_name.startswith('_'):
+                        try:
+                            attr_value = getattr(calibrator, attr_name)
+                            if not callable(attr_value):
+                                print(f"  Atributo {attr_name}: {attr_value}")
+                        except:
+                            pass
+                
+            elif hasattr(calibrated_model, 'base_estimator'):
+                print(f"Modelo possui base_estimator: {type(calibrated_model.base_estimator)}")
+            else:
+                print("Modelo não possui calibrated_classifiers_ nem base_estimator")
+
+            print("=" * 50)
+            
             # Threshold padrão (pode ser ajustado)
             threshold = 0.1
             
@@ -339,13 +399,17 @@ try:
                         break
                     except:
                         pass
+            
+            # Detalhes do modelo
             print("\nINSPEÇÃO DETALHADA DO MODELO:")
-
             print("=" * 50)
+            print(f"Tipo de modelo carregado: {type(calibrated_model)}")
+            if hasattr(calibrated_model, 'method'):
+                print(f"Usando calibração: {calibrated_model.method}")
             inspect_model(calibrated_model, "MODELO CALIBRADO: ")
             print("=" * 50)
-
-            # Verificar também o threshold exato que será usado
+            
+            # Verificar threshold
             if hasattr(calibrated_model, 'threshold'):
                 threshold_from_model = calibrated_model.threshold
                 print(f"Threshold extraído do modelo: {threshold_from_model}")
@@ -354,12 +418,66 @@ try:
                 print(f"Threshold extraído do estimador base: {threshold_from_model}")
             print(f"Threshold que será usado: {threshold}")
             print("=" * 50)
+            
             # Fazer predições
             print("Fazendo predições...")
             start_time = datetime.now()
             
-            # Usar o modelo para predição
-            probabilities = calibrated_model.predict_proba(df)[:, 1]
+            try:
+                # Verificar se o modelo tem calibradores
+                if hasattr(calibrated_model, 'calibrated_classifiers_') and len(calibrated_model.calibrated_classifiers_) > 0:
+                    # Obter calibrador
+                    calibrator = calibrated_model.calibrated_classifiers_[0]
+                    
+                    # Verificar se tem regressores isotônicos
+                    if hasattr(calibrator, 'calibrators') and len(calibrator.calibrators) > 0:
+                        # Obter o regressor isotônico
+                        isotonic_regressor = calibrator.calibrators[0]
+                        
+                        # Obter o estimador base
+                        base_estimator = calibrator.estimator
+                        
+                        # Obter probabilidades brutas
+                        print("Obtendo probabilidades brutas do estimador base...")
+                        raw_probs = base_estimator.predict_proba(df)[:, 1]
+                        
+                        # Aplicar calibração isotônica
+                        print("Aplicando calibração isotônica...")
+                        calibrated_probs = isotonic_regressor.predict(raw_probs)
+                        
+                        # Comparar estatísticas
+                        print("\nComparação de probabilidades antes e depois da calibração:")
+                        print(f"Brutas (antes da calibração):")
+                        print(f"  Min: {raw_probs.min():.6f}")
+                        print(f"  Max: {raw_probs.max():.6f}")
+                        print(f"  Mean: {raw_probs.mean():.6f}")
+                        print(f"  % > 0.1: {(raw_probs >= 0.1).mean():.6f}")
+                        
+                        print(f"Calibradas (após isotônica):")
+                        print(f"  Min: {calibrated_probs.min():.6f}")
+                        print(f"  Max: {calibrated_probs.max():.6f}")
+                        print(f"  Mean: {calibrated_probs.mean():.6f}")
+                        print(f"  % > 0.1: {(calibrated_probs >= 0.1).mean():.6f}")
+                        
+                        # Usar probabilidades calibradas
+                        probabilities = calibrated_probs
+                        print("Usando probabilidades com calibração isotônica aplicada manualmente")
+                    else:
+                        # Fallback para método padrão
+                        probabilities = calibrated_model.predict_proba(df)[:, 1]
+                        print("Usando método padrão (calibradores não encontrados)")
+                else:
+                    # Método padrão
+                    probabilities = calibrated_model.predict_proba(df)[:, 1]
+                    print("Usando método padrão para cálculo de probabilidades")
+            except Exception as e:
+                print(f"Erro ao aplicar calibração: {e}")
+                print(traceback.format_exc())
+                # Fallback
+                probabilities = calibrated_model.predict_proba(df)[:, 1]
+                print("Usando método padrão após erro")
+            
+            # Aplicar threshold para classes
             predictions = (probabilities >= threshold).astype(int)
             
             # Adicionar resultados
