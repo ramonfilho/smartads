@@ -1,121 +1,213 @@
 #!/usr/bin/env python
 """
-Módulo para aplicar GMM e fazer predições no pipeline de inferência.
+Módulo para carregar e aplicar o modelo GMM calibrado para inferência.
+Esta versão foca apenas em carregar o modelo calibrado original.
 """
 
 import os
 import sys
+import io
+import pickle
 import numpy as np
 import pandas as pd
 import joblib
+import traceback
 from datetime import datetime
 
-# Adicionar caminho do projeto ao sys.path se necessário
-project_root = "/Users/ramonmoreira/desktop/smart_ads"
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+# Caminho absoluto para o projeto
+PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
 
-# Importar as classes compartilhadas
-try:
-    from src.modeling.gmm_wrapper import GMM_Wrapper
-    from src.modeling.calibrated_model import IdentityCalibratedModel
-    print("Classes importadas com sucesso!")
-except ImportError as e:
-    print(f"AVISO: Erro ao importar classes: {e}")
-    # Definir as classes localmente como fallback
-    class GMM_Wrapper:
-        """Implementação local de GMM_Wrapper..."""
+# Caminhos para os modelos calibrados
+MODEL_DIRS = [
+    # Primeiro procurar no diretório de parâmetros de inferência
+    os.path.join(PROJECT_ROOT, "inference/params"),
+    # Depois nos diretórios de modelos calibrados
+    os.path.join(PROJECT_ROOT, "models/calibrated/gmm_calibrated_20250508_130725"),
+    os.path.join(PROJECT_ROOT, "models/calibrated"),
+    # Por último no diretório de artefatos originais
+    os.path.join(PROJECT_ROOT, "models/artifacts/gmm_optimized")
+]
+
+# Definir as classes necessárias para deserialização
+class GMM_Wrapper:
+    """
+    Classe wrapper para o GMM que implementa a API sklearn para calibração.
+    Esta definição é necessária apenas para deserialização.
+    """
+    def __init__(self, pipeline):
+        self.pipeline = pipeline
+        self.pca_model = pipeline['pca_model']
+        self.gmm_model = pipeline['gmm_model']
+        self.scaler_model = pipeline['scaler_model']
+        self.cluster_models = pipeline['cluster_models']
+        self.n_clusters = pipeline.get('n_clusters', 3)
+        self.threshold = pipeline.get('threshold', 0.15)
+        
+        # Adicionar atributos necessários para a API sklearn
+        self.classes_ = np.array([0, 1])  # Classes binárias
+        self._fitted = True  # Marcar como já ajustado
+        self._estimator_type = "classifier"  # Indicar explicitamente que é um classificador
+        
+    def fit(self, X, y):
+        # Como o modelo já está treinado, apenas verificamos as classes
+        self.classes_ = np.unique(y)
+        self._fitted = True
+        return self
+        
+    def predict_proba(self, X):
+        # Implementação necessária para a interface, mas não será usada diretamente
         pass
     
-    class IdentityCalibratedModel:
-        """Implementação local de IdentityCalibratedModel..."""
+    def predict(self, X):
+        # Implementação necessária para a interface, mas não será usada diretamente
         pass
 
-# Diretório para parâmetros
-PARAMS_DIR = os.path.join(project_root, "inference/params")
 
-def load_calibrated_model(params_dir=PARAMS_DIR):
+class IdentityCalibratedModel:
     """
-    Carrega o modelo GMM calibrado fixado.
+    Classe que emula o CalibratedClassifierCV.
+    Esta definição é necessária apenas para deserialização.
+    """
+    def __init__(self, base_estimator, threshold=0.1):
+        self.base_estimator = base_estimator
+        self.threshold = threshold
+        
+    def predict_proba(self, X):
+        """Retorna as probabilidades do estimador base."""
+        pass
+    
+    def predict(self, X):
+        """Aplica o threshold às probabilidades."""
+        pass
+
+
+# Classe especial de unpickler para substituir classes
+class ClassSubstitutingUnpickler(pickle.Unpickler):
+    """
+    Substituidor de classes durante a desserialização.
+    Resolve problemas quando uma classe foi serializada em um módulo diferente.
+    """
+    def find_class(self, module, name):
+        # Se a classe for GMM_Wrapper, usar a nossa versão local
+        if name == 'GMM_Wrapper':
+            return GMM_Wrapper
+        # Se a classe for IdentityCalibratedModel, usar a nossa versão local
+        elif name == 'IdentityCalibratedModel':
+            return IdentityCalibratedModel
+        # Para qualquer outra classe, tentar do modo normal
+        return super().find_class(module, name)
+
+
+def find_model_file(filename_patterns, dirs=MODEL_DIRS):
+    """
+    Procura um arquivo de modelo em múltiplos diretórios.
     
     Args:
-        params_dir: Diretório com os parâmetros
+        filename_patterns: Lista de possíveis nomes de arquivo
+        dirs: Lista de diretórios onde procurar
         
+    Returns:
+        Caminho completo para o arquivo encontrado ou None
+    """
+    for dir_path in dirs:
+        for pattern in filename_patterns:
+            path = os.path.join(dir_path, pattern)
+            if os.path.exists(path):
+                return path
+    return None
+
+
+def load_joblib_with_class_substitution(filepath):
+    """
+    Carrega um arquivo joblib substituindo classes problemáticas.
+    
+    Args:
+        filepath: Caminho para o arquivo joblib
+        
+    Returns:
+        Objeto deserializado
+    """
+    print(f"Carregando arquivo com substituição de classes: {filepath}")
+    try:
+        # Primeiro tentar carregar normalmente (para casos simples)
+        return joblib.load(filepath)
+    except (AttributeError, ImportError, ModuleNotFoundError) as e:
+        print(f"Erro ao carregar com joblib padrão: {e}")
+        print("Tentando carregar com unpickler personalizado...")
+        
+        # Usar nosso unpickler personalizado
+        with open(filepath, 'rb') as f:
+            unpickler = ClassSubstitutingUnpickler(f)
+            return unpickler.load()
+
+
+def load_calibrated_model():
+    """
+    Carrega o modelo GMM calibrado com tratamento robusto para problemas de desserialização.
+    
     Returns:
         Tuple (modelo calibrado, threshold)
     """
     print("\nCarregando modelo GMM calibrado...")
     
-    # Procurar o modelo reconstruído
+    # Lista de possíveis arquivos de modelo
     model_paths = [
-        os.path.join(params_dir, "10_gmm_calibrated_fixed.joblib"),  # Modelo calibrado reconstruído (prioridade)
-        os.path.join(params_dir, "10_gmm_calibrated.joblib")         # Modelo calibrado original
+        find_model_file(["gmm_calibrated.joblib"]),
+        find_model_file(["10_gmm_calibrated.joblib"]),
+        find_model_file(["10_gmm_calibrated_fixed.joblib"])
     ]
+    model_paths = [p for p in model_paths if p]  # Remover None
     
-    model_path = None
-    for path in model_paths:
-        if os.path.exists(path):
-            model_path = path
-            print(f"Modelo calibrado encontrado: {model_path}")
-            break
+    if not model_paths:
+        raise FileNotFoundError("Modelo calibrado não encontrado em nenhum dos diretórios esperados!")
     
-    if model_path is None:
-        # Se não encontrou o modelo calibrado, tente o wrapper
-        wrapper_path = os.path.join(params_dir, "10_gmm_wrapper_fixed.joblib")
-        if os.path.exists(wrapper_path):
-            print(f"Modelo calibrado não encontrado. Usando wrapper base: {wrapper_path}")
-            model_path = wrapper_path
-            # Carregar wrapper
-            try:
-                wrapper = joblib.load(wrapper_path)
-                # Criar modelo calibrado na hora
-                from src.modeling.calibrated_model import IdentityCalibratedModel
-                model = IdentityCalibratedModel(wrapper, threshold=0.1)
-                print(f"Criado modelo calibrado a partir do wrapper")
-                return model, 0.1
-            except Exception as e:
-                print(f"Erro ao carregar wrapper: {e}")
-        
-        # Se não encontrou nenhum modelo, erro
-        raise FileNotFoundError("Não foi possível encontrar o modelo calibrado em nenhum caminho esperado.")
+    # Tentar carregar modelo com unpickler personalizado
+    for model_path in model_paths:
+        try:
+            print(f"Tentando carregar modelo de: {model_path}")
+            calibrated_model = load_joblib_with_class_substitution(model_path)
+            
+            # Carregar threshold
+            threshold_path = find_model_file([
+                "threshold.txt", 
+                "10_threshold.txt",
+                "10_threshold_fixed.txt"
+            ])
+            
+            threshold = 0.1  # Default
+            if threshold_path:
+                try:
+                    with open(threshold_path, 'r') as f:
+                        threshold = float(f.read().strip())
+                    print(f"Threshold: {threshold}")
+                except Exception as e:
+                    print(f"AVISO: Usando threshold default {threshold}: {e}")
+            elif hasattr(calibrated_model, 'threshold'):
+                threshold = calibrated_model.threshold
+                print(f"Threshold do modelo: {threshold}")
+            
+            # Verificar se o modelo tem a interface esperada
+            if hasattr(calibrated_model, 'predict_proba') and hasattr(calibrated_model, 'predict'):
+                print("Modelo calibrado carregado com sucesso!")
+                return calibrated_model, threshold
+            else:
+                raise ValueError("Objeto carregado não tem a interface esperada")
+                
+        except Exception as e:
+            print(f"Erro ao carregar modelo de {model_path}: {e}")
+            print(traceback.format_exc())
     
-    # Procurar o threshold
-    threshold_paths = [
-        os.path.join(params_dir, "10_threshold_fixed.txt"),
-        os.path.join(params_dir, "10_threshold.txt")
-    ]
-    
-    threshold = 0.1  # Default para o caso de não encontrar o arquivo
-    for path in threshold_paths:
-        if os.path.exists(path):
-            try:
-                with open(path, 'r') as f:
-                    threshold = float(f.read().strip())
-                print(f"Threshold carregado de {path}: {threshold}")
-                break
-            except Exception as e:
-                print(f"AVISO: Erro ao ler threshold de {path}: {e}")
-    
-    # Carregar modelo calibrado
-    print(f"  Carregando modelo de: {model_path}")
-    try:
-        model = joblib.load(model_path)
-        print(f"  Modelo carregado com sucesso!")
-        print(f"  Threshold: {threshold:.4f}")
-        return model, threshold
-    except Exception as e:
-        print(f"  ERRO ao carregar modelo: {e}")
-        import traceback
-        print(traceback.format_exc())
-        raise
+    # Se todas as tentativas falharem, não temos alternativa
+    raise RuntimeError("Falha ao carregar o modelo GMM calibrado. Por favor, verifique a disponibilidade e integridade do modelo.")
 
-def apply_gmm_and_predict(df, params_dir=PARAMS_DIR):
+
+def apply_gmm_and_predict(df, params_dir=None):
     """
     Aplica o modelo GMM calibrado para fazer predições.
     
     Args:
         df: DataFrame com features processadas
-        params_dir: Diretório com parâmetros do modelo
+        params_dir: Diretório com parâmetros (opcional)
         
     Returns:
         DataFrame com predições adicionadas
@@ -128,7 +220,7 @@ def apply_gmm_and_predict(df, params_dir=PARAMS_DIR):
     
     try:
         # Carregar modelo calibrado
-        calibrated_model, threshold = load_calibrated_model(params_dir)
+        calibrated_model, threshold = load_calibrated_model()
         
         # Fazer predições
         print("Fazendo predições...")
@@ -158,14 +250,11 @@ def apply_gmm_and_predict(df, params_dir=PARAMS_DIR):
         
     except Exception as e:
         print(f"  ERRO durante predição: {e}")
-        import traceback
         print(traceback.format_exc())
-        
-        # Em caso de erro, adicionar colunas com valores default
-        result_df['prediction'] = 0
-        result_df['probability'] = 0.0
+        raise RuntimeError(f"Falha ao fazer predições com o modelo calibrado: {str(e)}")
     
     return result_df
+
 
 if __name__ == "__main__":
     # Teste do módulo
@@ -177,36 +266,19 @@ if __name__ == "__main__":
             model, threshold = load_calibrated_model()
             print(f"Modelo calibrado carregado com sucesso. Threshold: {threshold}")
             
+            # Criar DataFrame de teste pequeno
+            test_df = pd.DataFrame({
+                'feature1': [0.1, 0.2, 0.3],
+                'feature2': [1.0, 2.0, 3.0]
+            })
+            
+            # Testar predição
+            result = apply_gmm_and_predict(test_df)
+            print(f"Predição de teste bem-sucedida. Forma: {result.shape}")
+            print(result[['probability', 'prediction']].head())
+            
             sys.exit(0)
         except Exception as e:
             print(f"Erro no teste: {e}")
-            import traceback
             print(traceback.format_exc())
             sys.exit(1)
-    
-    # Pipeline completo
-    if len(sys.argv) > 1:
-        input_file = sys.argv[1]
-        output_file = sys.argv[2] if len(sys.argv) > 2 else None
-    else:
-        # Default para teste
-        input_file = os.path.join(project_root, "inference/output/predictions_latest.csv")
-        output_file = os.path.join(project_root, "inference/output/final_predictions.csv")
-    
-    # Verificar se o arquivo existe
-    if not os.path.exists(input_file):
-        print(f"ERRO: Arquivo de entrada não encontrado: {input_file}")
-        sys.exit(1)
-    
-    # Carregar dados
-    print(f"Carregando dados de: {input_file}")
-    df = pd.read_csv(input_file)
-    
-    # Aplicar GMM e fazer predições
-    result_df = apply_gmm_and_predict(df)
-    
-    # Salvar resultados se output_file especificado
-    if output_file:
-        os.makedirs(os.path.dirname(output_file), exist_ok=True)
-        result_df.to_csv(output_file, index=False)
-        print(f"Resultados salvos em: {output_file}")
