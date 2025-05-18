@@ -43,8 +43,8 @@ os.environ["OMP_NUM_THREADS"] = "8"  # Otimiza para MacBook M1
 PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
 INPUT_DIR_BASIC = os.path.join(PROJECT_ROOT, "data/02_processed") # Resultado do Script 02
 INPUT_DIR_TEXT = os.path.join(PROJECT_ROOT, "data/03_feature_engineering_1") # Resultado do Script 03
-OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/4_feature_engineering_2_2") # Saída deste script
-PARAMS_DIR = os.path.join(PROJECT_ROOT, "src/preprocessing/preprocessing_params_2")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/4_feature_engineering_2") # Saída deste script
+PARAMS_DIR = os.path.join(PROJECT_ROOT, "src/preprocessing/04_params") # Parâmetros do Script 04
 
 # Criar diretórios se não existirem
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -425,7 +425,7 @@ def main():
             print("\n>>> SALVANDO PARÂMETROS <<<")
             try:
                 # Salvar parâmetros específicos do script
-                script_params_path = os.path.join(PARAMS_DIR, "script04_params.joblib")
+                script_params_path = os.path.join(PARAMS_DIR, "04_params.joblib")
                 joblib.dump(all_params, script_params_path)
                 print(f"✓ Parâmetros do Script 04 salvos em: {script_params_path}")
                 

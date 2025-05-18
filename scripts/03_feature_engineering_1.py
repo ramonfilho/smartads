@@ -24,8 +24,8 @@ warnings.filterwarnings('ignore')
 # Configurar projeto - ajustado para seu ambiente local
 PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
 INPUT_DIR = os.path.join(PROJECT_ROOT, "data/01_split")
-PROCESSED_DIR = os.path.join(PROJECT_ROOT, "data/02_1_processed")
-OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/02_2_processed")
+PROCESSED_DIR = os.path.join(PROJECT_ROOT, "data/02_processed")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/03_feature_engineering_1")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Baixar recursos NLTK essenciais
@@ -550,8 +550,8 @@ def main():
     # Salvar modelos para uso na pipeline de inferência
     os.makedirs(os.path.join(OUTPUT_DIR, "models"), exist_ok=True)
     import joblib
-    joblib.dump(tfidf_vectorizers, os.path.join(OUTPUT_DIR, "models", "tfidf_vectorizers.joblib"))
-    joblib.dump(lda_models, os.path.join(OUTPUT_DIR, "models", "lda_models.joblib"))
+    joblib.dump(tfidf_vectorizers, os.path.join(OUTPUT_DIR, "models", "03_tfidf_vectorizers.joblib"))
+    joblib.dump(lda_models, os.path.join(OUTPUT_DIR, "models", "03_lda_models.joblib"))
     
     print("\n=== Processamento de NLP concluído! ===")
     print(f"Modelos salvos em: {os.path.join(OUTPUT_DIR, 'models')}")

@@ -216,7 +216,7 @@ def process_datasets(input_dir, output_dir, params_dir=None, preserve_text=True)
     # 4. Salvar parâmetros aprendidos
     if params_dir:
         os.makedirs(params_dir, exist_ok=True)
-        params_path = os.path.join(params_dir, "all_preprocessing_params.joblib")
+        params_path = os.path.join(params_dir, "02_params.joblib")
         joblib.dump(params, params_path)
         print(f"Parâmetros de pré-processamento salvos em {params_path}")
     
