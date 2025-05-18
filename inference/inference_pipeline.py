@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 """
 Pipeline completa de inferência para o projeto Smart Ads.
+Modificada para usar a classe GMM_Wrapper do módulo src.modeling.gmm_wrapper
+e garantir consistência entre treinamento e inferência.
 """
 
 import os
@@ -11,241 +13,8 @@ print("SCRIPT INICIADO!")
 print(f"Diretório de trabalho atual: {os.getcwd()}")
 print(f"Python path: {sys.path}")
 
-# IMPORTANTE: Definir a classe GMM_Wrapper ANTES de qualquer importação
-# Desta forma, quando o joblib tentar carregar a classe, ela já estará disponível
-# no módulo '__main__' que é onde o pickle espera encontrá-la
-import numpy as np
-
-# Pontos de calibração para mapear para o modelo de referência
-REFERENCE_CALIBRATION_POINTS = [
-    (0.000000, 0.000000),
-    (0.007105, 0.008055),
-    (0.017600, 0.014551),
-    (0.027550, 0.020770),
-    (0.037500, 0.034242),
-    (0.047500, 0.186238),  # Salto importante aqui
-    (0.097200, 0.513811),  # Salto importante aqui
-    (0.297000, 1.000000),
-    (0.496000, 1.000000),
-    (0.576000, 1.000000),
-    (0.646000, 1.000000),
-    (0.716000, 1.000000),
-    (0.786000, 1.000000),
-    (0.855000, 1.000000),
-    (0.925000, 1.000000),
-    (0.995000, 0.762743),
-    (1.000000, 1.000000),
-]
-
-def map_to_reference_probabilities(probs):
-    """
-    Mapeia as probabilidades da pipeline para as probabilidades do modelo de referência.
-    """
-    # Extrair arrays para interpolação
-    x_vals = np.array([p[0] for p in REFERENCE_CALIBRATION_POINTS])
-    y_vals = np.array([p[1] for p in REFERENCE_CALIBRATION_POINTS])
-    
-    # Garantir que valores estão dentro dos limites
-    probs_clipped = np.clip(probs, x_vals[0], x_vals[-1])
-    
-    # Aplicar interpolação linear
-    mapped_probs = np.interp(probs_clipped, x_vals, y_vals)
-    
-    return mapped_probs
-
-class GMM_Wrapper:
-    """
-    Classe wrapper para o GMM que implementa a API sklearn para calibração.
-    """
-    def __init__(self, pipeline):
-        self.pipeline = pipeline
-        self.pca_model = pipeline['pca_model']
-        self.gmm_model = pipeline['gmm_model']
-        self.scaler_model = pipeline['scaler_model']
-        self.cluster_models = pipeline['cluster_models']
-        self.n_clusters = pipeline.get('n_clusters', 3)
-        self.threshold = pipeline.get('threshold', 0.15)
-        
-        # Adicionar atributos necessários para a API sklearn
-        self.classes_ = np.array([0, 1])  # Classes binárias
-        self._fitted = True  # Marcar como já ajustado
-        self._estimator_type = "classifier"  # Indicar explicitamente que é um classificador
-        
-    def fit(self, X, y):
-        # Como o modelo já está treinado, apenas verificamos as classes
-        self.classes_ = np.unique(y)
-        self._fitted = True
-        return self
-        
-    def predict_proba(self, X):
-        # Preparar os dados para o modelo GMM
-        X_numeric = X.select_dtypes(include=['number'])
-        
-        # Substituir valores NaN por 0
-        X_numeric = X_numeric.fillna(0)
-        
-        # Aplicar o scaler
-        if hasattr(self.scaler_model, 'feature_names_in_'):
-            # Garantir que temos exatamente as features esperadas pelo scaler
-            scaler_features = self.scaler_model.feature_names_in_
-            
-            # Identificar features em X_numeric que não estão no scaler
-            unseen_features = [col for col in X_numeric.columns if col not in scaler_features]
-            if unseen_features:
-                print(f"Removendo {len(unseen_features)} features não vistas durante treinamento")
-                X_numeric = X_numeric.drop(columns=unseen_features, errors='ignore')
-            
-            # Identificar features que faltam em X_numeric mas estão no scaler
-            missing_features = [col for col in scaler_features if col not in X_numeric.columns]
-            if missing_features:
-                print(f"Adicionando {len(missing_features)} features ausentes vistas durante treinamento")
-                for col in missing_features:
-                    X_numeric[col] = 0.0
-            
-            # Garantir a ordem correta das colunas
-            X_numeric = X_numeric[scaler_features]
-        
-        # Verificar novamente por NaNs após o ajuste de colunas
-        X_numeric = X_numeric.fillna(0)
-        
-        X_scaled = self.scaler_model.transform(X_numeric)
-        
-        # Verificar por NaNs no array após scaling
-        if np.isnan(X_scaled).any():
-            # Se ainda houver NaNs, substitua-os por zeros
-            X_scaled = np.nan_to_num(X_scaled, nan=0.0)
-        
-        # Aplicar PCA
-        X_pca = self.pca_model.transform(X_scaled)
-        
-        # Aplicar GMM para obter cluster labels e probabilidades
-        cluster_labels = self.gmm_model.predict(X_pca)
-        
-        # Inicializar array de probabilidades
-        n_samples = len(X)
-        y_pred_proba = np.zeros((n_samples, 2), dtype=float)
-        
-        # Para cada cluster, fazer previsões
-        for cluster_id, model_info in self.cluster_models.items():
-            # Converter cluster_id para inteiro se for string
-            cluster_id_int = int(cluster_id) if isinstance(cluster_id, str) else cluster_id
-            
-            # Selecionar amostras deste cluster
-            cluster_mask = (cluster_labels == cluster_id_int)
-            
-            if not any(cluster_mask):
-                continue
-            
-            # Obter modelo específico do cluster
-            model = model_info['model']
-            
-            # Detectar features necessárias
-            if hasattr(model, 'feature_names_in_'):
-                expected_features = model.feature_names_in_
-                
-                # Criar um DataFrame temporário com as features corretas
-                X_temp = X.copy()
-                
-                # Lidar com features ausentes ou extras
-                missing_features = [col for col in expected_features if col not in X.columns]
-                for col in missing_features:
-                    X_temp[col] = 0.0
-                
-                # Garantir a ordem correta das colunas
-                features_to_use = [col for col in expected_features if col in X_temp.columns]
-                X_cluster = X_temp.loc[cluster_mask, features_to_use].astype(float)
-                
-                # Substituir NaNs por zeros
-                X_cluster = X_cluster.fillna(0)
-            else:
-                # Usar todas as features numéricas disponíveis
-                X_cluster = X.loc[cluster_mask].select_dtypes(include=['number']).fillna(0)
-            
-            if len(X_cluster) > 0:
-                # Fazer previsões
-                try:
-                    proba = model.predict_proba(X_cluster)
-                    
-                    # Armazenar resultados
-                    y_pred_proba[cluster_mask] = proba
-                except Exception as e:
-                    print(f"ERRO ao fazer previsões para o cluster {cluster_id_int}: {e}")
-                    # Em caso de erro, usar probabilidades default
-                    y_pred_proba[cluster_mask, 0] = 0.9  # classe negativa (majoritária)
-                    y_pred_proba[cluster_mask, 1] = 0.1  # classe positiva (minoritária)
-        
-        # Estatísticas das probabilidades
-        probs_positiva = y_pred_proba[:, 1]
-        stats = {
-            'min': probs_positiva.min(),
-            'max': probs_positiva.max(),
-            'mean': probs_positiva.mean(),
-            'median': np.median(probs_positiva),
-            'std': probs_positiva.std(),
-            '% > 0.1': (probs_positiva >= 0.1).mean(),
-            '% > 0.5': (probs_positiva >= 0.5).mean(),
-        }
-        
-        print("DEBUG: Estatísticas de probabilidade por cluster:")
-        for cluster_id, model_info in self.cluster_models.items():
-            # Filtrar amostras deste cluster
-            cluster_mask = (cluster_labels == int(cluster_id))
-            if any(cluster_mask):
-                cluster_probs = y_pred_proba[cluster_mask, 1]
-                print(f"  Cluster {cluster_id}: {len(cluster_probs)} amostras")
-                print(f"    min={cluster_probs.min():.6f}, max={cluster_probs.max():.6f}, mean={cluster_probs.mean():.6f}")
-                print(f"    % > 0.1: {(cluster_probs >= 0.1).mean():.6f}")
-        
-        print(f"DEBUG: Estatísticas finais: {stats}")
-        
-        return y_pred_proba
-    
-    def predict(self, X):
-        proba = self.predict_proba(X)
-        return (proba[:, 1] >= self.threshold).astype(int)
-
-# Também definir a classe IdentityCalibratedModel se for necessária
-class IdentityCalibratedModel:
-    """
-    Classe que emula o CalibratedClassifierCV sem modificar as probabilidades.
-    """
-    def __init__(self, base_estimator, threshold=0.1):
-        self.base_estimator = base_estimator
-        self.threshold = threshold
-        
-    def predict_proba(self, X):
-        """Retorna as probabilidades do estimador base."""
-        return self.base_estimator.predict_proba(X)
-    
-    def predict(self, X):
-        """Aplica o threshold às probabilidades."""
-        probas = self.predict_proba(X)[:, 1]
-        return (probas >= self.threshold).astype(int)
-
-# Função para inspecionar modelos
-def inspect_model(model, prefix=""):
-    """Inspeciona a estrutura de um modelo."""
-    print(f"{prefix}Tipo: {type(model)}")
-    
-    # Verificar se é um modelo de calibração
-    if hasattr(model, 'base_estimator'):
-        print(f"{prefix}Contém base_estimator: {type(model.base_estimator)}")
-        inspect_model(model.base_estimator, prefix + "  ")
-    
-    # Verificar se é um modelo GMM_Wrapper
-    if hasattr(model, 'cluster_models'):
-        print(f"{prefix}Número de clusters: {len(model.cluster_models)}")
-        print(f"{prefix}IDs dos clusters: {list(model.cluster_models.keys())}")
-        
-        # Verificar modelo por cluster
-        for cluster_id, cluster_info in model.cluster_models.items():
-            if isinstance(cluster_info, dict) and 'model' in cluster_info:
-                print(f"{prefix}Modelo cluster {cluster_id}: {type(cluster_info['model'])}")
-            else:
-                print(f"{prefix}Cluster {cluster_id}: {type(cluster_info)}")
-
 try:
-    # Adicionar diretório raiz ao path
+    # Adicionar diretório raiz ao path para importar módulos do projeto
     project_root = "/Users/ramonmoreira/desktop/smart_ads"
     sys.path.insert(0, project_root)
     print(f"Diretório raiz adicionado: {project_root}")
@@ -255,7 +24,7 @@ try:
         "script2": os.path.join(project_root, "inference/modules/script2_module.py"),
         "script3": os.path.join(project_root, "inference/modules/script3_module.py"),
         "script4": os.path.join(project_root, "inference/modules/script4_module.py"),
-        "gmm": os.path.join(project_root, "inference/modules/gmm_module.py")
+        "gmm_wrapper": os.path.join(project_root, "src/modeling/gmm_wrapper.py")
     }
     
     for name, path in module_paths.items():
@@ -266,16 +35,17 @@ try:
     
     # Importações básicas
     import pandas as pd
+    import numpy as np
     import joblib
     from datetime import datetime
     import argparse
     print("Importações básicas bem-sucedidas")
     
+    # Importar NLTK para processamento de texto, se necessário
     import nltk
     from nltk.corpus import stopwords
     from nltk.tokenize import word_tokenize
     from nltk.stem import WordNetLemmatizer
-    from transformers import AutoTokenizer, AutoModel
     try:
         nltk.data.find('tokenizers/punkt')
         nltk.data.find('corpora/stopwords')
@@ -285,6 +55,15 @@ try:
         nltk.download('punkt')
         nltk.download('stopwords')
         nltk.download('wordnet')
+
+    # Importar a classe GMM_Wrapper do módulo oficial
+    try:
+        from src.modeling.gmm_wrapper import GMM_Wrapper
+        print("Módulo GMM_Wrapper importado com sucesso do caminho oficial")
+    except Exception as e:
+        print(f"ERRO AO IMPORTAR GMM_Wrapper do módulo src.modeling: {str(e)}")
+        print(traceback.format_exc())
+        sys.exit(1)
 
     # Importar módulos da pipeline com melhor tratamento de erros
     try:
@@ -312,23 +91,15 @@ try:
     except Exception as e:
         print(f"AVISO: Não foi possível importar script4_module: {str(e)}")
     
-    gmm_module_imported = False
-    try:
-        from inference.modules.gmm_module import apply_gmm_and_predict as original_apply_gmm
-        gmm_module_imported = True
-        print("Módulo gmm_module importado com sucesso")
-    except Exception as e:
-        print(f"AVISO: Não foi possível importar gmm_module: {str(e)}")
-    
     # Função para aplicar GMM e fazer predição
-    # Implementação local que usa a abordagem do script 11
-    def apply_gmm_and_predict(df, models_dir):
+    def apply_gmm_and_predict(df, params_dir):
         """
         Aplica o modelo GMM calibrado para fazer predições.
+        Usa o mesmo modelo calibrado que foi avaliado no script 11.
         
         Args:
             df: DataFrame com features processadas
-            models_dir: Diretório com os modelos
+            params_dir: Diretório com os parâmetros do modelo
             
         Returns:
             DataFrame com predições adicionadas
@@ -340,16 +111,16 @@ try:
         result_df = df.copy()
         
         try:
-            # Caminhos para possíveis modelos
-            gmm_calib_paths = [
-                os.path.join(project_root, "models/calibrated/gmm_calibrated_20250508_130725/gmm_calibrated.joblib"),
-                os.path.join(project_root, "inference/params/10_gmm_calibrated.joblib"),
-                os.path.join(models_dir, "10_gmm_calibrated.joblib"),
-                os.path.join(models_dir, "gmm_calibrated.joblib")
+            # Caminhos para o modelo calibrado (usando o mesmo do script 11)
+            model_paths = [
+                os.path.join(project_root, "models/calibrated/gmm_calibrated_20250518_152543/gmm_calibrated.joblib"),
+                os.path.join(params_dir, "gmm_calibrated.joblib"),
+                os.path.join(params_dir, "models/gmm_calibrated.joblib")
             ]
             
+            # Encontrar o primeiro caminho de modelo que existe
             model_path = None
-            for path in gmm_calib_paths:
+            for path in model_paths:
                 if os.path.exists(path):
                     model_path = path
                     break
@@ -357,201 +128,47 @@ try:
             if not model_path:
                 raise FileNotFoundError("Modelo GMM calibrado não encontrado em nenhum dos locais esperados")
             
-            print(f"Carregando modelo calibrado de: {model_path}")
-            calibrated_model = joblib.load(model_path)
-            
-            # Inspeção detalhada dos calibradores
-            print("\nINSPEÇÃO DETALHADA DOS CALIBRADORES:")
-            print("=" * 50)
-            print(f"Tipo de modelo carregado: {type(calibrated_model)}")
-
-            if hasattr(calibrated_model, 'calibrated_classifiers_'):
-                print(f"Número de calibradores: {len(calibrated_model.calibrated_classifiers_)}")
-                # Examinar o primeiro calibrador
-                calibrator = calibrated_model.calibrated_classifiers_[0]
-                print(f"Tipo do calibrador: {type(calibrator)}")
-                
-                if hasattr(calibrator, 'calibrators'):
-                    # Isso contém os modelos de regressão isotônica
-                    isotonic_regressors = calibrator.calibrators
-                    print(f"Número de regressores isotônicos: {len(isotonic_regressors)}")
-                    for i, regressor in enumerate(isotonic_regressors):
-                        print(f"  Regressor {i}: Tipo = {type(regressor)}")
-                        # Tentar obter os pontos de X e Y do regressor isotônico
-                        if hasattr(regressor, 'X_thresholds_'):
-                            print(f"    {len(regressor.X_thresholds_)} pontos de calibração")
-                            # Mostrar alguns pontos do mapeamento
-                            n_points = min(5, len(regressor.X_thresholds_))
-                            for j in range(n_points):
-                                x_val = regressor.X_thresholds_[j]
-                                y_val = regressor.y_thresholds_[j]
-                                print(f"    Ponto {j}: {x_val:.6f} -> {y_val:.6f}")
-                        elif hasattr(regressor, '_necessary_X'):
-                            print(f"    {len(regressor._necessary_X)} pontos de calibração")
-                            # Mostrar alguns pontos do mapeamento
-                            n_points = min(5, len(regressor._necessary_X))
-                            for j in range(n_points):
-                                x_val = regressor._necessary_X[j]
-                                y_val = regressor._necessary_y[j]
-                                print(f"    Ponto {j}: {x_val:.6f} -> {y_val:.6f}")
-                
-                # Verificar método de predição
-                if hasattr(calibrator, 'predict_proba'):
-                    print("Calibrador possui método predict_proba próprio")
-                else:
-                    print("Calibrador não possui método predict_proba")
-                    
-                # Tentar visualizar estrutura completa
-                for attr_name in dir(calibrator):
-                    if not attr_name.startswith('_'):
-                        try:
-                            attr_value = getattr(calibrator, attr_name)
-                            if not callable(attr_value):
-                                print(f"  Atributo {attr_name}: {attr_value}")
-                        except:
-                            pass
-                
-            elif hasattr(calibrated_model, 'base_estimator'):
-                print(f"Modelo possui base_estimator: {type(calibrated_model.base_estimator)}")
-            else:
-                print("Modelo não possui calibrated_classifiers_ nem base_estimator")
-
-            print("=" * 50)
-            
-            # Threshold padrão (pode ser ajustado)
-            threshold = 0.1
-            
-            # Tentar obter threshold do arquivo, se existir
+            # Caminhos para o threshold
             threshold_paths = [
                 os.path.join(os.path.dirname(model_path), "threshold.txt"),
-                os.path.join(models_dir, "threshold.txt"),
-                os.path.join(models_dir, "10_threshold.txt")
+                os.path.join(params_dir, "threshold.txt")
             ]
             
+            # Carregar threshold
+            threshold = 0.1  # Valor padrão
             for path in threshold_paths:
                 if os.path.exists(path):
                     try:
                         with open(path, 'r') as f:
                             threshold = float(f.read().strip())
-                        print(f"Threshold carregado: {threshold}")
                         break
-                    except:
-                        pass
+                    except Exception as e:
+                        print(f"AVISO: Erro ao ler threshold de {path}: {e}")
             
-            # Detalhes do modelo
-            print("\nINSPEÇÃO DETALHADA DO MODELO:")
-            print("=" * 50)
+            print(f"Carregando modelo calibrado de: {model_path}")
+            print(f"Usando threshold: {threshold}")
+            
+            # Carregar o modelo calibrado
+            calibrated_model = joblib.load(model_path)
+            
+            # Detalhes do modelo para debug
             print(f"Tipo de modelo carregado: {type(calibrated_model)}")
-            if hasattr(calibrated_model, 'method'):
-                print(f"Usando calibração: {calibrated_model.method}")
-            inspect_model(calibrated_model, "MODELO CALIBRADO: ")
-            print("=" * 50)
-            
-            # Verificar threshold
-            if hasattr(calibrated_model, 'threshold'):
-                threshold_from_model = calibrated_model.threshold
-                print(f"Threshold extraído do modelo: {threshold_from_model}")
-            elif hasattr(calibrated_model, 'base_estimator') and hasattr(calibrated_model.base_estimator, 'threshold'):
-                threshold_from_model = calibrated_model.base_estimator.threshold
-                print(f"Threshold extraído do estimador base: {threshold_from_model}")
-            print(f"Threshold que será usado: {threshold}")
-            print("=" * 50)
+            if hasattr(calibrated_model, 'base_estimator'):
+                print(f"Base estimator: {type(calibrated_model.base_estimator)}")
+            if hasattr(calibrated_model, 'calibrated_classifiers_'):
+                print(f"Número de calibradores: {len(calibrated_model.calibrated_classifiers_)}")
             
             # Fazer predições
             print("Fazendo predições...")
             start_time = datetime.now()
             
-            try:
-                # Verificar se o modelo tem calibradores
-                if hasattr(calibrated_model, 'calibrated_classifiers_') and len(calibrated_model.calibrated_classifiers_) > 0:
-                    # Obter calibrador
-                    calibrator = calibrated_model.calibrated_classifiers_[0]
-                    
-                    # Verificar se tem regressores isotônicos
-                    if hasattr(calibrator, 'calibrators') and len(calibrator.calibrators) > 0:
-                        # Obter o regressor isotônico
-                        isotonic_regressor = calibrator.calibrators[0]
-                        
-                        # Obter o estimador base
-                        base_estimator = calibrator.estimator
-                        
-                        # Obter probabilidades brutas
-                        print("Obtendo probabilidades brutas do estimador base...")
-                        raw_probs = base_estimator.predict_proba(df)[:, 1]
-                        
-                        # Aplicar calibração isotônica
-                        print("Aplicando calibração isotônica...")
-                        calibrated_probs = isotonic_regressor.predict(raw_probs)
-                        
-                        # Comparar estatísticas
-                        print("\nComparação de probabilidades antes e depois da calibração:")
-                        print(f"Brutas (antes da calibração):")
-                        print(f"  Min: {raw_probs.min():.6f}")
-                        print(f"  Max: {raw_probs.max():.6f}")
-                        print(f"  Mean: {raw_probs.mean():.6f}")
-                        print(f"  % > 0.1: {(raw_probs >= 0.1).mean():.6f}")
-                        
-                        print(f"Calibradas (após isotônica):")
-                        print(f"  Min: {calibrated_probs.min():.6f}")
-                        print(f"  Max: {calibrated_probs.max():.6f}")
-                        print(f"  Mean: {calibrated_probs.mean():.6f}")
-                        print(f"  % > 0.1: {(calibrated_probs >= 0.1).mean():.6f}")
-                        
-                        # Usar probabilidades calibradas
-                        print("Usando probabilidades com calibração isotônica aplicada manualmente")
-                        probabilities = calibrated_probs
-                        
-                        # MODIFICAÇÃO: Aplicar mapeamento para modelo de referência
-                        print("Aplicando mapeamento para modelo de referência...")
-                        mapped_probs = map_to_reference_probabilities(probabilities)
-                        
-                        # Mostrar estatísticas após mapeamento
-                        print(f"Estatísticas após mapeamento para referência:")
-                        print(f"  Min: {mapped_probs.min():.6f}")
-                        print(f"  Max: {mapped_probs.max():.6f}")
-                        print(f"  Mean: {mapped_probs.mean():.6f}")
-                        print(f"  % > 0.1: {(mapped_probs >= 0.1).mean():.6f}")
-                        
-                        # Usar probabilidades mapeadas para referência
-                        probabilities = mapped_probs
-                        
-                    else:
-                        # Fallback para método padrão
-                        probabilities = calibrated_model.predict_proba(df)[:, 1]
-                        print("Usando método padrão (calibradores não encontrados)")
-                        
-                        # MODIFICAÇÃO: Aplicar mapeamento para modelo de referência
-                        print("Aplicando mapeamento para modelo de referência...")
-                        mapped_probs = map_to_reference_probabilities(probabilities)
-                        probabilities = mapped_probs
-                else:
-                    # Método padrão
-                    probabilities = calibrated_model.predict_proba(df)[:, 1]
-                    print("Usando método padrão para cálculo de probabilidades")
-                    
-                    # MODIFICAÇÃO: Aplicar mapeamento para modelo de referência
-                    print("Aplicando mapeamento para modelo de referência...")
-                    mapped_probs = map_to_reference_probabilities(probabilities)
-                    probabilities = mapped_probs
-            except Exception as e:
-                print(f"Erro ao aplicar calibração: {e}")
-                print(traceback.format_exc())
-                # Fallback
-                probabilities = calibrated_model.predict_proba(df)[:, 1]
-                print("Usando método padrão após erro")
-                
-                # MODIFICAÇÃO: Tentar aplicar mapeamento mesmo em caso de erro
-                try:
-                    print("Tentando aplicar mapeamento para modelo de referência após erro...")
-                    mapped_probs = map_to_reference_probabilities(probabilities)
-                    probabilities = mapped_probs
-                except Exception as e2:
-                    print(f"Erro ao aplicar mapeamento: {e2}")
+            # Obter probabilidades
+            probabilities = calibrated_model.predict_proba(df)[:, 1]
             
             # Aplicar threshold para classes
             predictions = (probabilities >= threshold).astype(int)
             
-            # Adicionar resultados
+            # Adicionar ao DataFrame
             result_df['probability'] = probabilities
             result_df['prediction'] = predictions
             
@@ -598,7 +215,7 @@ try:
         # Etapa 1: Pré-processamento básico (script 2)
         if until_step >= 1:
             print("\n--- Etapa 1: Pré-processamento básico ---")
-            params_path = os.path.join(params_dir, "02_all_preprocessing_params.joblib")
+            params_path = os.path.join(params_dir, "02_params.joblib")
             if not os.path.exists(params_path):
                 print(f"ERRO: Arquivo de parâmetros não encontrado: {params_path}")
                 sys.exit(1)
@@ -639,7 +256,7 @@ try:
         if until_step >= 3 and script4_module_imported:
             print("\n--- Etapa 3: Features de motivação profissional ---")
             try:
-                params_path = os.path.join(params_dir, "04_motivation_features_params.joblib")
+                params_path = os.path.join(params_dir, "04_params.joblib")
                 latest_result = apply_script4_transformations(latest_result, params_path)
                 step3_complete = True
                 
@@ -653,13 +270,12 @@ try:
                 print(traceback.format_exc())
                 # Continuar com o último resultado válido
         
-        # Etapa 4: Aplicação de GMM e modelos por cluster (scripts 8/10)
+        # Etapa 4: Aplicação de GMM e predição
         step4_complete = False
-        if until_step >= 4 and gmm_module_imported:
+        if until_step >= 4:
             print("\n--- Etapa 4: Aplicação de GMM e predição ---")
             try:
-                models_dir = os.path.join(params_dir, "models")
-                latest_result = apply_gmm_and_predict(latest_result, models_dir)
+                latest_result = apply_gmm_and_predict(latest_result, params_dir)
                 step4_complete = True
             except Exception as e:
                 print(f"ERRO durante a etapa 4: {str(e)}")

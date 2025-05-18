@@ -548,7 +548,7 @@ def apply_script4_transformations(df, params_path):
     
     # Definir o caminho correto para o arquivo de parâmetros
     params_dir = os.path.dirname(params_path)
-    motivation_params_path = os.path.join(params_dir, "04_script03_params.joblib")
+    motivation_params_path = os.path.join(params_dir, "04_params.joblib")
     
     # Carregar parâmetros
     print(f"Carregando parâmetros de: {motivation_params_path}")
