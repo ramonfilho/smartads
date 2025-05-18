@@ -50,14 +50,16 @@ def normalize_text(text):
     
     return text
 
-def enhance_tfidf_for_career_terms(df, text_columns, vectorizers=None):
+def enhance_tfidf_for_career_terms(df, text_columns, vectorizers=None, column_mapping=None):
     """
-    Enhance TF-IDF weights for career-related terms
+    Enhance TF-IDF weights for career-related terms - VERSÃO CORRIGIDA
+    Usa mapeamento de colunas e tratamento robusto de erros
     
     Args:
         df: Input DataFrame
         text_columns: List of text columns to process
         vectorizers: Dictionary with existing vectorizers
+        column_mapping: Dictionary mapping column names to vectorizer keys
     
     Returns:
         DataFrame with enhanced TF-IDF features
@@ -72,19 +74,14 @@ def enhance_tfidf_for_career_terms(df, text_columns, vectorizers=None):
     if vectorizers is None:
         vectorizers = {}
     
+    if column_mapping is None:
+        column_mapping = {}
+    
     # Dictionary to store enhanced TF-IDF features
     enhanced_tfidf_features = {}
     
     # Debug: mostrar as chaves disponíveis em vectorizers
     print(f"  Vetorizadores disponíveis: {list(vectorizers.keys())}")
-    
-    # Mapeamento de nomes de colunas para chaves de vetorizadores
-    column_to_key_map = {
-        'cuando_hables_inglés_con_fluid_original': 'cuando_hables_inglés_con_fluid',
-        'qué_esperas_aprender_en_la_sem_original': 'qué_esperas_aprender_en_la',
-        'déjame_un_mensaje_original': 'déjame_un_mensaje',
-        'qué_esperas_aprender_en_la_inm_original': 'qué_esperas_aprender_en_la'
-    }
     
     for col in text_columns:
         if col not in df.columns:
@@ -92,20 +89,27 @@ def enhance_tfidf_for_career_terms(df, text_columns, vectorizers=None):
             
         col_clean = clean_column_name(col)
         
-        # Tentar encontrar um vetorizador usando o mapeamento
+        # Determinar qual vetorizador usar
         key_to_use = None
-        if col_clean in vectorizers:
+        
+        # 1. Primeiro verificar o mapeamento explícito
+        if col in column_mapping and column_mapping[col] in vectorizers:
+            key_to_use = column_mapping[col]
+            print(f"  Aplicando TF-IDF para {col_clean} (usando vetorizador para '{key_to_use}')...")
+        # 2. Tentar pelo nome limpo da coluna
+        elif col_clean in vectorizers:
             key_to_use = col_clean
-        elif col_clean in column_to_key_map and column_to_key_map[col_clean] in vectorizers:
-            key_to_use = column_to_key_map[col_clean]
+            print(f"  Aplicando TF-IDF para {col_clean} (usando correspondência direta)...")
+        # 3. Buscar correspondência parcial
         else:
-            # Tentar encontrar uma correspondência parcial
             for key in vectorizers.keys():
+                # Verificar se o nome do vetorizador está contido no nome da coluna ou vice-versa
                 if key in col_clean or col_clean in key:
                     key_to_use = key
+                    print(f"  Aplicando TF-IDF para {col_clean} (usando correspondência parcial '{key}')...")
                     break
         
-        # MODIFICAÇÃO: Tratamento especial para déjame_un_mensaje
+        # Tratamento especial para déjame_un_mensaje
         if 'déjame' in col_clean:
             print(f"  Processando features especiais para déjame_un_mensaje...")
             
@@ -118,16 +122,17 @@ def enhance_tfidf_for_career_terms(df, text_columns, vectorizers=None):
                 all_terms = vectorizer.get_feature_names_out().tolist()
                 print(f"    Vetorizador contém {len(all_terms)} termos")
                 
-                # Criar features para todos os termos do vetorizador
-                clean_name = 'déjame_un_mensaje'  # Usar nome sem _original
+                # IMPORTANTE: Usar o nome sem _original para consistência com treinamento
+                clean_name = 'déjame_un_mensaje'  # Use este nome exato para todas as features
                 
+                # Criar features para todos os termos do vetorizador
                 for term in all_terms:
                     feature_name = f"{clean_name}_tfidf_{term}"
                     
                     # Calcular valores baseados no texto (abordagem simplificada)
                     values = []
                     for text in df[col]:
-                        text = normalize_text(text)
+                        text = normalize_text(text) if pd.notna(text) else ""
                         if term in text:
                             values.append(0.5)  # valor arbitrário para presença do termo
                         else:
@@ -160,47 +165,64 @@ def enhance_tfidf_for_career_terms(df, text_columns, vectorizers=None):
             print(f"  Pulando TF-IDF para {col_clean} (nenhum vetorizador encontrado)")
             continue
         
-        vectorizer = vectorizers[key_to_use]
-        print(f"  Aplicando TF-IDF para {col_clean} (usando vetorizador para '{key_to_use}')...")
-        
-        texts = [normalize_text(text) for text in df[col]]
-        
-        # Get feature names
-        feature_names = vectorizer.get_feature_names_out()
-        
-        # Create placeholder array
-        feature_matrix = np.zeros((len(texts), len(feature_names)))
-        
-        # Fill in values for valid texts
-        valid_indices = [i for i, text in enumerate(texts) if text]
-        if valid_indices:
-            try:
-                valid_texts = [texts[i] for i in valid_indices]
-                valid_matrix = vectorizer.transform(valid_texts)
-                valid_array = valid_matrix.toarray()
-                
-                # Boost weights for career terms
-                for term_idx, term in enumerate(feature_names):
-                    if any(career_term in term for career_term in career_terms):
-                        valid_array[:, term_idx] *= 1.5
-                
-                # Place values in correct positions
-                for local_idx, global_idx in enumerate(valid_indices):
-                    feature_matrix[global_idx] = valid_array[local_idx]
-                
-                # Create DataFrame with enhanced weights
-                for i, term in enumerate(feature_names):
-                    # Removendo _original no nome da coluna para corresponder ao esperado
+        # Aplicar o vetorizador
+        try:
+            vectorizer = vectorizers[key_to_use]
+            
+            # Normalizar textos
+            texts = [normalize_text(text) if pd.notna(text) else "" for text in df[col]]
+            
+            # Get feature names
+            feature_names = vectorizer.get_feature_names_out()
+            
+            # Create placeholder array
+            feature_matrix = np.zeros((len(texts), len(feature_names)))
+            
+            # Fill in values for valid texts
+            valid_indices = [i for i, text in enumerate(texts) if text]
+            if valid_indices:
+                try:
+                    valid_texts = [texts[i] for i in valid_indices]
+                    valid_matrix = vectorizer.transform(valid_texts)
+                    valid_array = valid_matrix.toarray()
+                    
+                    # Boost weights for career terms
+                    for term_idx, term in enumerate(feature_names):
+                        if any(career_term in term for career_term in career_terms):
+                            valid_array[:, term_idx] *= 1.5
+                    
+                    # Place values in correct positions
+                    for local_idx, global_idx in enumerate(valid_indices):
+                        feature_matrix[global_idx] = valid_array[local_idx]
+                    
+                    # IMPORTANTE: Usar nome sem _original para consistência
                     col_name_clean = col_clean.replace('_original', '')
+                    
+                    # Create DataFrame with enhanced weights
+                    for i, term in enumerate(feature_names):
+                        feature_name = f"{col_name_clean}_tfidf_{term}"
+                        enhanced_tfidf_features[feature_name] = pd.Series(feature_matrix[:, i])
+                    
+                    print(f"    Geradas {len(feature_names)} features TF-IDF")
+                except Exception as e:
+                    print(f"    ERRO ao processar TF-IDF para {col_clean}: {e}")
+                    import traceback
+                    print(traceback.format_exc())
+                    
+                    # Tratar erro criando features zeradas
+                    col_name_clean = col_clean.replace('_original', '')
+                    for i, term in enumerate(feature_names):
+                        feature_name = f"{col_name_clean}_tfidf_{term}"
+                        enhanced_tfidf_features[feature_name] = pd.Series(np.zeros(len(df)))
+            else:
+                # Sem textos válidos, criar features zeradas
+                col_name_clean = col_clean.replace('_original', '')
+                for i, term in enumerate(feature_names):
                     feature_name = f"{col_name_clean}_tfidf_{term}"
-                    enhanced_tfidf_features[feature_name] = pd.Series(feature_matrix[:, i])
+                    enhanced_tfidf_features[feature_name] = pd.Series(np.zeros(len(df)))
                 
-                print(f"    Geradas {len(feature_names)} features TF-IDF")
-            except Exception as e:
-                print(f"    ERRO ao processar TF-IDF para {col_clean}: {e}")
-                print(f"    {str(e)}")
-                import traceback
-                print(traceback.format_exc())
+        except Exception as e:
+            print(f"    ERRO ao processar TF-IDF para {col_clean}: {e}")
     
     # Adicionar features TF-IDF especiais para qué_esperas_aprender_en_la
     qué_specials = ['los', 'mucho', 'pueda', 'todo lo']
@@ -535,7 +557,8 @@ def process_dataset(df, params):
 
 def apply_script4_transformations(df, params_path):
     """
-    Função principal para aplicar transformações do script 4.
+    Função principal para aplicar transformações do script 4 - VERSÃO CORRIGIDA.
+    Adaptada para lidar com diferentes estruturas de parâmetros.
     
     Args:
         df: DataFrame de entrada (output do script 3)
@@ -546,178 +569,355 @@ def apply_script4_transformations(df, params_path):
     """
     print(f"\n=== Aplicando transformações do script 4 (features de motivação profissional) ===")
     
-    # Definir o caminho correto para o arquivo de parâmetros
-    params_dir = os.path.dirname(params_path)
-    motivation_params_path = os.path.join(params_dir, "04_params.joblib")
+    # Definir caminhos
+    project_root = "/Users/ramonmoreira/desktop/smart_ads"
+    train_data_path = os.path.join(project_root, "data/04_feature_engineering_2/train.csv")
+    params_file_path = os.path.join(project_root, "src/preprocessing/preprocessing_params_2/script04_params.joblib")
     
-    # Carregar parâmetros
-    print(f"Carregando parâmetros de: {motivation_params_path}")
+    # Extrair colunas do dataset de treino
+    if os.path.exists(train_data_path):
+        print(f"Extraindo colunas do dataset de treino: {train_data_path}")
+        try:
+            # Ler apenas os cabeçalhos para economia de memória
+            train_columns = pd.read_csv(train_data_path, nrows=0).columns.tolist()
+            print(f"Extraídas {len(train_columns)} colunas do dataset de treino.")
+            
+            # Armazenar em arquivo para referência futura
+            train_cols_dir = os.path.join(project_root, "inference/params")
+            os.makedirs(train_cols_dir, exist_ok=True)
+            
+            train_cols_path = os.path.join(train_cols_dir, "04_train_columns.csv")
+            pd.DataFrame({'column_name': train_columns}).to_csv(train_cols_path, index=False)
+            print(f"Colunas do treino salvas em: {train_cols_path}")
+            
+        except Exception as e:
+            print(f"ERRO ao extrair colunas do dataset de treino: {e}")
+            train_columns = None
+    else:
+        print(f"AVISO: Dataset de treino não encontrado: {train_data_path}")
+        train_columns = None
+    
+    # Carregar parâmetros do local correto
+    print(f"Carregando parâmetros de: {params_file_path}")
     try:
-        params = joblib.load(motivation_params_path)
+        params_raw = joblib.load(params_file_path)
         print(f"Parâmetros carregados com sucesso.")
+        
+        # CORREÇÃO: Adaptar estrutura de parâmetros para a esperada
+        # Criar estrutura de parâmetros adaptada
+        params = {
+            'professional_motivation': {},
+            'aspiration_sentiment': {},
+            'commitment': {},
+            'career': {},
+            'vectorizers': {}
+        }
+        
+        # Verificar a estrutura dos parâmetros carregados
+        if isinstance(params_raw, dict):
+            # Transferir vetorizadores se existirem
+            if 'vectorizers' in params_raw:
+                params['vectorizers'] = params_raw['vectorizers']
+            elif 'career_tfidf' in params_raw:
+                # Estrutura detectada: os vetorizadores estão no nível raiz
+                params['vectorizers'] = {
+                    'career_tfidf': params_raw.get('career_tfidf', {})
+                }
+            
+            # Transferir outros parâmetros importantes
+            # Verificar 'work_keywords' no nível raiz
+            if 'work_keywords' in params_raw:
+                params['professional_motivation']['work_keywords'] = params_raw['work_keywords']
+            
+            # Verificar 'aspiration_phrases' no nível raiz
+            if 'aspiration_phrases' in params_raw:
+                params['aspiration_sentiment']['aspiration_phrases'] = params_raw['aspiration_phrases']
+            
+            # Verificar 'commitment_phrases' no nível raiz
+            if 'commitment_phrases' in params_raw:
+                params['commitment']['commitment_phrases'] = params_raw['commitment_phrases']
+            
+            # Verificar 'career_terms' no nível raiz ou no dicionário 'career_tfidf'
+            if 'career_terms' in params_raw:
+                params['career']['career_terms'] = params_raw['career_terms']
+            elif 'career_tfidf' in params_raw and 'career_terms' in params_raw['career_tfidf']:
+                params['career']['career_terms'] = params_raw['career_tfidf']['career_terms']
+        
+        # Verificar se temos os parâmetros necessários
+        required_params = [
+            ('professional_motivation', 'work_keywords'),
+            ('aspiration_sentiment', 'aspiration_phrases'),
+            ('commitment', 'commitment_phrases'),
+            ('career', 'career_terms')
+        ]
+        
+        for section, param_name in required_params:
+            if param_name not in params[section]:
+                print(f"AVISO: Parâmetro '{param_name}' não encontrado. Usando valores padrão.")
+                
+                # Adicionar valores padrão para o parâmetro ausente
+                if param_name == 'work_keywords':
+                    params[section][param_name] = {
+                        'trabajo': 1.0, 'empleo': 1.0, 'carrera': 1.2, 'profesional': 1.2,
+                        'oportunidades': 1.0, 'mejor': 0.7, 'mejorar': 0.7
+                    }
+                elif param_name == 'aspiration_phrases':
+                    params[section][param_name] = [
+                        'quiero ser', 'espero ser', 'mi meta es', 'mi objetivo es',
+                        'en el futuro', 'me veo', 'me visualizo'
+                    ]
+                elif param_name == 'commitment_phrases':
+                    params[section][param_name] = {
+                        'estoy decidido': 2.0, 'me comprometo': 2.0, 'quiero aprender': 1.0
+                    }
+                elif param_name == 'career_terms':
+                    # Tentar extrair do arquivo carregado se estiver em outra estrutura
+                    career_terms = None
+                    
+                    # Procurar em career_tfidf > cuando_hables_inglés_con_fluid > career_terms
+                    if ('career_tfidf' in params_raw and 
+                        'cuando_hables_inglés_con_fluid' in params_raw['career_tfidf'] and
+                        'career_terms' in params_raw['career_tfidf']['cuando_hables_inglés_con_fluid']):
+                        
+                        career_terms = params_raw['career_tfidf']['cuando_hables_inglés_con_fluid']['career_terms']
+                        print(f"  Encontrado 'career_terms' em estrutura alternativa")
+                    
+                    if career_terms:
+                        params[section][param_name] = career_terms
+                    else:
+                        params[section][param_name] = {
+                            'crecimiento profesional': 2.0, 'desarrollo profesional': 2.0,
+                            'oportunidades laborales': 2.0, 'mejor salario': 1.8
+                        }
+        
+        # Verificar vetorizadores
+        vectorizers = params.get('vectorizers', {})
+        if not vectorizers:
+            print("AVISO: Nenhum vetorizador encontrado nos parâmetros.")
+        else:
+            print(f"Vetorizadores disponíveis: {list(vectorizers.keys())}")
+            
     except Exception as e:
         print(f"AVISO: Erro ao carregar parâmetros: {e}")
-        print(f"Usando valores padrão para parâmetros.")
+        print(traceback.format_exc())
+        print("Usando valores padrão para parâmetros.")
+        
         # Parâmetros padrão básicos para fallback
         params = {
-            'work_keywords': {
-                'trabajo': 1.0, 'empleo': 1.0, 'carrera': 1.2, 'profesional': 1.2,
-                'oportunidades': 1.0, 'mejor': 0.7, 'mejorar': 0.7
+            'professional_motivation': {
+                'work_keywords': {
+                    'trabajo': 1.0, 'empleo': 1.0, 'carrera': 1.2, 'profesional': 1.2,
+                    'oportunidades': 1.0, 'mejor': 0.7, 'mejorar': 0.7
+                }
             },
-            'aspiration_phrases': [
-                'quiero ser', 'espero ser', 'mi meta es', 'mi objetivo es',
-                'en el futuro', 'me veo', 'me visualizo'
-            ],
-            'commitment_phrases': {
-                'estoy decidido': 2.0, 'me comprometo': 2.0, 'quiero aprender': 1.0
+            'aspiration_sentiment': {
+                'aspiration_phrases': [
+                    'quiero ser', 'espero ser', 'mi meta es', 'mi objetivo es',
+                    'en el futuro', 'me veo', 'me visualizo'
+                ]
             },
-            'career_terms': {
-                'crecimiento profesional': 2.0, 'desarrollo profesional': 2.0,
-                'oportunidades laborales': 2.0, 'mejor salario': 1.8
-            }
+            'commitment': {
+                'commitment_phrases': {
+                    'estoy decidido': 2.0, 'me comprometo': 2.0, 'quiero aprender': 1.0
+                }
+            },
+            'career': {
+                'career_terms': {
+                    'crecimiento profesional': 2.0, 'desarrollo profesional': 2.0,
+                    'oportunidades laborales': 2.0, 'mejor salario': 1.8
+                }
+            },
+            'vectorizers': {}
         }
     
-    # Aplicar processamento
-    result_df = process_dataset(df, params)
+    # Identificar as colunas de texto originais
+    text_cols = [
+        'Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_original',
+        '¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_original', 
+        'Déjame un mensaje_original',
+        '¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_original'
+    ]
     
-    # Buscar arquivo de colunas específico para o script 4
-    train_cols_path = os.path.join(params_dir, "04_train_columns.csv")
-
-    # Buscar em locais alternativos se não encontrar no diretório de parâmetros
-    if not os.path.exists(train_cols_path):
-        reports_dir = os.path.join(project_root, "reports")
-        train_cols_path = os.path.join(reports_dir, "04_train_columns.csv")
-
-    if os.path.exists(train_cols_path):
-        try:
-            print(f"Usando arquivo de colunas do estágio 4: {train_cols_path}")
-            # Trecho modificado para lidar com formatos diferentes:
-            train_columns_df = pd.read_csv(train_cols_path)
-            if 'column_name' in train_columns_df.columns:
-                # Formato 1: Uma coluna chamada 'column_name' contendo os nomes das colunas
-                train_columns = train_columns_df['column_name'].dropna().tolist()
-            elif train_columns_df.shape[0] == 1 and train_columns_df.shape[1] > 1:
-                # Formato 2: Uma única linha com todas as colunas (correto)
-                train_columns = train_columns_df.columns.tolist()
-            else:
-                # Formato 3: Primeira coluna contém os nomes das colunas
-                first_col = train_columns_df.columns[0]
-                train_columns = train_columns_df[first_col].dropna().tolist()
-
-            print(f"Carregadas {len(train_columns)} colunas do dataset de treino (estágio 4).")
-            
-            print(f"Carregadas {len(train_columns)} colunas do dataset de treino (estágio 4).")
-            
-            # Identificar colunas extras e faltantes
-            extra_cols = set(result_df.columns) - set(train_columns)
-            missing_cols = set(train_columns) - set(result_df.columns) - {'target'}  # Ignorar a coluna target
-            
-            # Log detalhado das discrepâncias
-            if extra_cols:
-                print(f"Removendo {len(extra_cols)} colunas extras não presentes no treino:")
-                
-                # Agrupar colunas por prefixo para facilitar análise
-                prefixes = {}
-                for col in extra_cols:
-                    prefix = col.split('_')[0] if '_' in col else col
-                    if prefix not in prefixes:
-                        prefixes[prefix] = []
-                    prefixes[prefix].append(col)
-                
-                # Log por grupo de prefixo
-                for prefix, cols in prefixes.items():
-                    print(f"  Grupo '{prefix}': {len(cols)} colunas")
-                    if len(cols) > 0:
-                        print(f"    Exemplos: {cols[:min(3, len(cols))]}")
-                
-                # Salvar lista completa para análise posterior
-                reports_dir = os.path.join(project_root, "reports")
-                os.makedirs(reports_dir, exist_ok=True)
-                with open(os.path.join(reports_dir, 'extra_columns.txt'), 'w') as f:
-                    for col in sorted(extra_cols):
-                        f.write(f"{col}\n")
-                print(f"  Lista completa salva em: {os.path.join(reports_dir, 'extra_columns.txt')}")
-                
-                # Remover colunas extras
-                result_df = result_df.drop(columns=list(extra_cols))
-            
-            if missing_cols:
-                print(f"AVISO: Adicionando {len(missing_cols)} colunas faltantes com valores zero.")
-                
-                # Agrupar colunas por prefixo para facilitar análise
-                prefixes = {}
-                for col in missing_cols:
-                    prefix = col.split('_')[0] if '_' in col else col
-                    if prefix not in prefixes:
-                        prefixes[prefix] = []
-                    prefixes[prefix].append(col)
-                
-                # Log por grupo de prefixo
-                for prefix, cols in prefixes.items():
-                    print(f"  Grupo '{prefix}': {len(cols)} colunas")
-                    if len(cols) > 0:
-                        print(f"    Exemplos: {cols[:min(3, len(cols))]}")
-                
-                # Salvar lista completa para análise posterior
-                reports_dir = os.path.join(project_root, "reports")
-                os.makedirs(reports_dir, exist_ok=True)
-                with open(os.path.join(reports_dir, 'missing_columns.txt'), 'w') as f:
-                    for col in sorted(missing_cols):
-                        f.write(f"{col}\n")
-                print(f"  Lista completa salva em: {os.path.join(reports_dir, 'missing_columns.txt')}")
-                
-                # Adicionar colunas faltantes
-                for col in missing_cols:
-                    result_df[col] = 0.0
-            
-            # Garantir a mesma ordem das colunas (exceto target)
-            train_cols_without_target = [col for col in train_columns if col != 'target']
-            result_df = result_df[train_cols_without_target]
-            
-            print(f"Dataset alinhado com o treino (estágio 4): {result_df.shape}")
-        except Exception as e:
-            print(f"ERRO ao alinhar colunas com estágio 4: {e}")
-            print(traceback.format_exc())
-    else:
-        print("AVISO: Arquivo de colunas do estágio 4 não encontrado.")
-        print(f"Caminhos verificados: {params_dir}/04_train_columns.csv, {reports_dir}/04_train_columns.csv")
+    # Verificar quais colunas existem no DataFrame
+    existing_text_cols = [col for col in text_cols if col in df.columns]
+    
+    if len(existing_text_cols) == 0:
+        print("AVISO: Nenhuma das colunas de texto esperadas foi encontrada.")
+        # Tentar identificar colunas de texto alternativas
+        alternative_cols = [
+            col for col in df.columns 
+            if col.endswith('_original') and any(term in col for term in [
+                'mensaje', 'inglés', 'vida', 'oportunidades', 'esperas', 'aprender', 
+                'Semana', 'Inmersión', 'Déjame', 'fluidez'
+            ])
+        ]
         
-        # Tentar arquivo de estágio 3 como fallback
-        fallback_path = os.path.join(reports_dir, "03_train_columns.csv")
-        if os.path.exists(fallback_path):
-            print(f"Usando arquivo de estágio 3 como fallback: {fallback_path}")
-            try:
-                train_columns_df = pd.read_csv(fallback_path)
-                if 'column_name' in train_columns_df.columns:
-                    train_columns = train_columns_df['column_name'].tolist()
-                else:
-                    first_col = train_columns_df.columns[0]
-                    train_columns = train_columns_df[first_col].dropna().tolist()
-                
-                print(f"Carregadas {len(train_columns)} colunas do dataset de treino (fallback estágio 3).")
-                
-                # Identificar colunas extras
-                extra_cols = set(result_df.columns) - set(train_columns)
-                if extra_cols:
-                    print(f"Removendo {len(extra_cols)} colunas extras (usando estágio 3):")
-                    print(f"  Exemplos: {list(extra_cols)[:5]}")
-                    result_df = result_df.drop(columns=list(extra_cols))
-                
-                # Adicionar colunas faltantes
-                missing_cols = set(train_columns) - set(result_df.columns) - {'target'}
-                if missing_cols:
-                    print(f"AVISO: Adicionando {len(missing_cols)} colunas faltantes com valores zero.")
-                    for col in missing_cols:
-                        result_df[col] = 0.0
-                
-                # Garantir a mesma ordem das colunas
-                train_cols_without_target = [col for col in train_columns if col != 'target']
-                result_df = result_df[train_cols_without_target]
-                
-                print(f"Dataset alinhado com fallback (estágio 3): {result_df.shape}")
-            except Exception as e:
-                print(f"ERRO ao usar fallback de estágio 3: {e}")
-                print(traceback.format_exc())
+        if alternative_cols:
+            print(f"Encontradas {len(alternative_cols)} colunas de texto alternativas:")
+            for col in alternative_cols:
+                print(f"  - {col}")
+            text_cols = alternative_cols
+        else:
+            print("ERRO: Não foi possível encontrar colunas de texto para processamento.")
+            return df
+    else:
+        print(f"Encontradas {len(existing_text_cols)} das {len(text_cols)} colunas de texto esperadas.")
+        text_cols = existing_text_cols
+    
+    print("\nAplicando engenharia de features profissionais...")
+    print(f"  Processando {len(text_cols)} colunas de texto.")
+    
+    # Mapeamento preciso para vetorizadores
+    column_to_key_map = {
+        'Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_original': 'cuando_hables_inglés_con_fluid',
+        '¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_original': 'qué_esperas_aprender_en_la',
+        'Déjame un mensaje_original': 'déjame_un_mensaje',
+        '¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_original': 'qué_esperas_aprender_en_la'
+    }
+    
+    # Extrair parâmetros específicos
+    work_keywords = params.get('professional_motivation', {}).get('work_keywords', {})
+    aspiration_phrases = params.get('aspiration_sentiment', {}).get('aspiration_phrases', [])
+    commitment_phrases = params.get('commitment', {}).get('commitment_phrases', {})
+    career_terms = params.get('career', {}).get('career_terms', {})
+    vectorizers = params.get('vectorizers', {})
+    
+    # Extrair e exibir career_terms para debug
+    print(f"Career terms encontrados ({len(career_terms)} termos):")
+    for i, (term, weight) in enumerate(list(career_terms.items())[:5]):
+        print(f"  {term}: {weight}")
+    if len(career_terms) > 5:
+        print(f"  ... e mais {len(career_terms) - 5} termos")
+    
+    # 1. Criar score de motivação profissional
+    print("  1. Criando score de motivação profissional...")
+    try:
+        motivation_df = create_professional_motivation_score(df, text_cols, work_keywords)
+    except Exception as e:
+        print(f"ERRO ao criar score de motivação profissional: {e}")
+        print(traceback.format_exc())
+        motivation_df = pd.DataFrame(index=df.index)
+    
+    # 2. Aplicar TF-IDF para termos de carreira
+    print("  2. Aplicando TF-IDF para termos de carreira...")
+    try:
+        tfidf_df = enhance_tfidf_for_career_terms(df, text_cols, vectorizers, column_to_key_map)
+    except Exception as e:
+        print(f"ERRO ao aplicar TF-IDF: {e}")
+        print(traceback.format_exc())
+        tfidf_df = pd.DataFrame(index=df.index)
+    
+    # 3. Analisar sentimento de aspiração
+    print("  3. Analisando sentimento de aspiração...")
+    try:
+        aspiration_df = analyze_aspiration_sentiment(df, text_cols, aspiration_phrases)
+    except Exception as e:
+        print(f"ERRO ao analisar sentimento de aspiração: {e}")
+        print(traceback.format_exc())
+        aspiration_df = pd.DataFrame(index=df.index)
+    
+    # 4. Detectar expressões de compromisso
+    print("  4. Detectando expressões de compromisso...")
+    try:
+        commitment_df = detect_commitment_expressions(df, text_cols, commitment_phrases)
+    except Exception as e:
+        print(f"ERRO ao detectar expressões de compromisso: {e}")
+        print(traceback.format_exc())
+        commitment_df = pd.DataFrame(index=df.index)
+    
+    # 5. Criar detector de termos de carreira
+    print("  5. Criando detector de termos de carreira...")
+    try:
+        career_df = create_career_term_detector(df, text_cols, career_terms)
+    except Exception as e:
+        print(f"ERRO ao criar detector de termos de carreira: {e}")
+        print(traceback.format_exc())
+        career_df = pd.DataFrame(index=df.index)
+    
+    # Combinar todas as features
+    print("  Combinando todas as features...")
+    dfs = [df, motivation_df, tfidf_df, aspiration_df, commitment_df, career_df]
+    result_df = pd.concat(dfs, axis=1)
+    
+    # Remover colunas duplicadas
+    result_df = result_df.loc[:, ~result_df.columns.duplicated()]
+    
+    print(f"  Processamento completo: {result_df.shape[1] - df.shape[1]} novas features adicionadas.")
+    
+    # Alinhar com as colunas do treinamento
+    if train_columns:
+        # Remover colunas que não estão no treino
+        extra_cols = set(result_df.columns) - set(train_columns)
+        
+        # Remover a coluna target da comparação
+        if 'target' in extra_cols:
+            extra_cols.remove('target')
+        
+        if extra_cols:
+            print(f"Removendo {len(extra_cols)} colunas extras não presentes no treino:")
+            
+            # Agrupar por prefixo para melhor diagnóstico
+            prefixes = {}
+            for col in extra_cols:
+                prefix = col.split('_')[0] if '_' in col else col
+                if prefix not in prefixes:
+                    prefixes[prefix] = []
+                prefixes[prefix].append(col)
+            
+            for prefix, cols in prefixes.items():
+                print(f"  Grupo '{prefix}': {len(cols)} colunas")
+                if len(cols) > 0:
+                    print(f"    Exemplos: {cols[:min(3, len(cols))]}")
+            
+            # Salvar detalhes para análise
+            reports_dir = os.path.join(project_root, "reports")
+            os.makedirs(reports_dir, exist_ok=True)
+            with open(os.path.join(reports_dir, 'extra_columns.txt'), 'w') as f:
+                for col in sorted(extra_cols):
+                    f.write(f"{col}\n")
+            
+            # Remover colunas extras
+            result_df = result_df.drop(columns=list(extra_cols))
+        
+        # Adicionar colunas que estão no treino mas não aqui
+        missing_cols = set(train_columns) - set(result_df.columns)
+        
+        # Remover a coluna target da comparação
+        if 'target' in missing_cols:
+            missing_cols.remove('target')
+        
+        if missing_cols:
+            print(f"AVISO: Adicionando {len(missing_cols)} colunas faltantes com valores zero.")
+            
+            # Agrupar por prefixo para melhor diagnóstico
+            prefixes = {}
+            for col in missing_cols:
+                prefix = col.split('_')[0] if '_' in col else col
+                if prefix not in prefixes:
+                    prefixes[prefix] = []
+                prefixes[prefix].append(col)
+            
+            for prefix, cols in prefixes.items():
+                print(f"  Grupo '{prefix}': {len(cols)} colunas")
+                if len(cols) > 0:
+                    print(f"    Exemplos: {cols[:min(3, len(cols))]}")
+            
+            # Salvar detalhes para análise
+            with open(os.path.join(reports_dir, 'missing_columns.txt'), 'w') as f:
+                for col in sorted(missing_cols):
+                    f.write(f"{col}\n")
+            
+            # Adicionar colunas faltantes
+            for col in missing_cols:
+                result_df[col] = 0.0
+        
+        # Garantir a mesma ordem das colunas (exceto target)
+        train_cols_without_target = [col for col in train_columns if col != 'target']
+        result_df = result_df[train_cols_without_target]
+        
+        print(f"Dataset alinhado com o treino: {result_df.shape}")
+    else:
+        print("AVISO: Não foi possível alinhar as colunas com o dataset de treino.")
     
     print(f"Transformações do script 4 concluídas. Dimensões finais: {result_df.shape}")
     

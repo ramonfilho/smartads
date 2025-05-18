@@ -1,17 +1,152 @@
 #!/usr/bin/env python
 """
 Pipeline completa de inferência para o projeto Smart Ads.
-Modificada para usar a classe GMM_Wrapper do módulo src.modeling.gmm_wrapper
-e garantir consistência entre treinamento e inferência.
+Esta versão implementa a abordagem do script 11_final_evaluation.py,
+seguindo fielmente a função evaluate_gmm_model() para garantir 
+máxima consistência com o modelo de referência.
+
+IMPORTANTE: A definição da classe GMM_Wrapper é feita no nível do módulo principal
+para garantir que o joblib possa carregar o modelo corretamente.
 """
 
 import os
 import sys
 import traceback
+import numpy as np
 
 print("SCRIPT INICIADO!")
 print(f"Diretório de trabalho atual: {os.getcwd()}")
 print(f"Python path: {sys.path}")
+
+# CRÍTICO: Definir a classe GMM_Wrapper AQUI no nível do módulo
+# Esta definição precisa estar exatamente igual à do script original
+# que foi usado para salvar o modelo
+class GMM_Wrapper:
+    """
+    Classe wrapper para o GMM que implementa a API sklearn para calibração.
+    """
+    def __init__(self, pipeline):
+        self.pipeline = pipeline
+        self.pca_model = pipeline['pca_model']
+        self.gmm_model = pipeline['gmm_model'] 
+        self.scaler_model = pipeline['scaler_model']
+        self.cluster_models = pipeline['cluster_models']
+        self.n_clusters = pipeline.get('n_clusters', 3)
+        self.threshold = pipeline.get('threshold', 0.15)
+        
+        # Adicionar atributos necessários para a API sklearn
+        self.classes_ = np.array([0, 1])  # Classes binárias
+        self._fitted = True  # Marcar como já ajustado
+        self._estimator_type = "classifier"  # Indicar explicitamente que é um classificador
+        
+    def fit(self, X, y):
+        # Como o modelo já está treinado, apenas verificamos as classes
+        self.classes_ = np.unique(y)
+        self._fitted = True
+        return self
+        
+    def predict_proba(self, X):
+        # Preparar os dados para o modelo GMM
+        X_numeric = X.select_dtypes(include=['number'])
+        
+        # Substituir valores NaN por 0
+        X_numeric = X_numeric.fillna(0)
+        
+        # Aplicar o scaler
+        if hasattr(self.scaler_model, 'feature_names_in_'):
+            # Garantir que temos exatamente as features esperadas pelo scaler
+            scaler_features = self.scaler_model.feature_names_in_
+            
+            # Identificar features em X_numeric que não estão no scaler
+            unseen_features = [col for col in X_numeric.columns if col not in scaler_features]
+            if unseen_features:
+                # print(f"Removendo {len(unseen_features)} features não vistas durante treinamento")
+                X_numeric = X_numeric.drop(columns=unseen_features, errors='ignore')
+            
+            # Identificar features que faltam em X_numeric mas estão no scaler
+            missing_features = [col for col in scaler_features if col not in X_numeric.columns]
+            if missing_features:
+                # print(f"Adicionando {len(missing_features)} features ausentes vistas durante treinamento")
+                for col in missing_features:
+                    X_numeric[col] = 0.0
+            
+            # Garantir a ordem correta das colunas
+            X_numeric = X_numeric[scaler_features]
+        
+        # Verificar novamente por NaNs após o ajuste de colunas
+        X_numeric = X_numeric.fillna(0)
+        
+        X_scaled = self.scaler_model.transform(X_numeric)
+        
+        # Verificar por NaNs no array após scaling
+        if np.isnan(X_scaled).any():
+            # Se ainda houver NaNs, substitua-os por zeros
+            X_scaled = np.nan_to_num(X_scaled, nan=0.0)
+        
+        # Aplicar PCA
+        X_pca = self.pca_model.transform(X_scaled)
+        
+        # Aplicar GMM para obter cluster labels e probabilidades
+        cluster_labels = self.gmm_model.predict(X_pca)
+        
+        # Inicializar array de probabilidades
+        n_samples = len(X)
+        y_pred_proba = np.zeros((n_samples, 2), dtype=float)
+        
+        # Para cada cluster, fazer previsões
+        for cluster_id, model_info in self.cluster_models.items():
+            # Converter cluster_id para inteiro se for string
+            cluster_id_int = int(cluster_id) if isinstance(cluster_id, str) else cluster_id
+            
+            # Selecionar amostras deste cluster
+            cluster_mask = (cluster_labels == cluster_id_int)
+            
+            if not any(cluster_mask):
+                continue
+            
+            # Obter modelo específico do cluster
+            model = model_info['model']
+            
+            # Detectar features necessárias
+            if hasattr(model, 'feature_names_in_'):
+                expected_features = model.feature_names_in_
+                
+                # Criar um DataFrame temporário com as features corretas
+                X_temp = X.copy()
+                
+                # Lidar com features ausentes ou extras
+                missing_features = [col for col in expected_features if col not in X.columns]
+                for col in missing_features:
+                    X_temp[col] = 0.0
+                
+                # Garantir a ordem correta das colunas
+                features_to_use = [col for col in expected_features if col in X_temp.columns]
+                X_cluster = X_temp.loc[cluster_mask, features_to_use].astype(float)
+                
+                # Substituir NaNs por zeros
+                X_cluster = X_cluster.fillna(0)
+            else:
+                # Usar todas as features numéricas disponíveis
+                X_cluster = X.loc[cluster_mask].select_dtypes(include=['number']).fillna(0)
+            
+            if len(X_cluster) > 0:
+                # Fazer previsões
+                try:
+                    proba = model.predict_proba(X_cluster)
+                    
+                    # Armazenar resultados
+                    y_pred_proba[cluster_mask] = proba
+                except Exception as e:
+                    print(f"ERRO ao fazer previsões para o cluster {cluster_id_int}: {e}")
+                    # Em caso de erro, usar probabilidades default
+                    y_pred_proba[cluster_mask, 0] = 0.9  # classe negativa (majoritária)
+                    y_pred_proba[cluster_mask, 1] = 0.1  # classe positiva (minoritária)
+        
+        return y_pred_proba
+    
+    def predict(self, X):
+        proba = self.predict_proba(X)
+        return (proba[:, 1] >= self.threshold).astype(int)
 
 try:
     # Adicionar diretório raiz ao path para importar módulos do projeto
@@ -19,23 +154,8 @@ try:
     sys.path.insert(0, project_root)
     print(f"Diretório raiz adicionado: {project_root}")
     
-    # Verificar módulos
-    module_paths = {
-        "script2": os.path.join(project_root, "inference/modules/script2_module.py"),
-        "script3": os.path.join(project_root, "inference/modules/script3_module.py"),
-        "script4": os.path.join(project_root, "inference/modules/script4_module.py"),
-        "gmm_wrapper": os.path.join(project_root, "src/modeling/gmm_wrapper.py")
-    }
-    
-    for name, path in module_paths.items():
-        if os.path.exists(path):
-            print(f"Módulo {name} encontrado: {path}")
-        else:
-            print(f"AVISO: Módulo {name} não encontrado: {path}")
-    
     # Importações básicas
     import pandas as pd
-    import numpy as np
     import joblib
     from datetime import datetime
     import argparse
@@ -55,15 +175,6 @@ try:
         nltk.download('punkt')
         nltk.download('stopwords')
         nltk.download('wordnet')
-
-    # Importar a classe GMM_Wrapper do módulo oficial
-    try:
-        from src.modeling.gmm_wrapper import GMM_Wrapper
-        print("Módulo GMM_Wrapper importado com sucesso do caminho oficial")
-    except Exception as e:
-        print(f"ERRO AO IMPORTAR GMM_Wrapper do módulo src.modeling: {str(e)}")
-        print(traceback.format_exc())
-        sys.exit(1)
 
     # Importar módulos da pipeline com melhor tratamento de erros
     try:
@@ -91,89 +202,67 @@ try:
     except Exception as e:
         print(f"AVISO: Não foi possível importar script4_module: {str(e)}")
     
-    # Função para aplicar GMM e fazer predição
-    def apply_gmm_and_predict(df, params_dir):
+    def apply_gmm_script11_style(df, params_dir=None):
         """
-        Aplica o modelo GMM calibrado para fazer predições.
-        Usa o mesmo modelo calibrado que foi avaliado no script 11.
+        Aplica o modelo GMM seguindo EXATAMENTE a implementação do script 11_final_evaluation.py.
+        Copia diretamente o código da função evaluate_gmm_model() com mínimas adaptações.
         
         Args:
             df: DataFrame com features processadas
-            params_dir: Diretório com os parâmetros do modelo
+            params_dir: Parâmetro mantido por compatibilidade, mas não usado aqui
             
         Returns:
             DataFrame com predições adicionadas
         """
-        print("\n=== Aplicando GMM calibrado e fazendo predição ===")
+        print("\n=== Aplicando GMM no estilo do script 11 ===")
         print(f"Processando {len(df)} amostras...")
         
         # Copiar o DataFrame para não modificar o original
         result_df = df.copy()
         
         try:
-            # Caminhos para o modelo calibrado (usando o mesmo do script 11)
-            model_paths = [
-                os.path.join(project_root, "models/calibrated/gmm_calibrated_20250518_152543/gmm_calibrated.joblib"),
-                os.path.join(params_dir, "gmm_calibrated.joblib"),
-                os.path.join(params_dir, "models/gmm_calibrated.joblib")
-            ]
+            # ====== INÍCIO DO CÓDIGO COPIADO DO SCRIPT 11 ======
+            # Caminho para o modelo calibrado (script 11)
+            GMM_CALIB_DIR = "/Users/ramonmoreira/desktop/smart_ads/models/calibrated/gmm_calibrated_20250518_152543"
+            model_path = os.path.join(GMM_CALIB_DIR, "gmm_calibrated.joblib")
+            threshold_path = os.path.join(GMM_CALIB_DIR, "threshold.txt")
             
-            # Encontrar o primeiro caminho de modelo que existe
-            model_path = None
-            for path in model_paths:
-                if os.path.exists(path):
-                    model_path = path
-                    break
-            
-            if not model_path:
-                raise FileNotFoundError("Modelo GMM calibrado não encontrado em nenhum dos locais esperados")
-            
-            # Caminhos para o threshold
-            threshold_paths = [
-                os.path.join(os.path.dirname(model_path), "threshold.txt"),
-                os.path.join(params_dir, "threshold.txt")
-            ]
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"Modelo não encontrado: {model_path}")
             
             # Carregar threshold
-            threshold = 0.1  # Valor padrão
-            for path in threshold_paths:
-                if os.path.exists(path):
-                    try:
-                        with open(path, 'r') as f:
-                            threshold = float(f.read().strip())
-                        break
-                    except Exception as e:
-                        print(f"AVISO: Erro ao ler threshold de {path}: {e}")
+            if os.path.exists(threshold_path):
+                with open(threshold_path, 'r') as f:
+                    gmm_threshold = float(f.read().strip())
+                print(f"Threshold carregado: {gmm_threshold}")
+            else:
+                gmm_threshold = 0.1
+                print(f"Arquivo de threshold não encontrado. Usando valor padrão: {gmm_threshold}")
             
-            print(f"Carregando modelo calibrado de: {model_path}")
-            print(f"Usando threshold: {threshold}")
+            print(f"Carregando modelo GMM calibrado de: {model_path}")
+            gmm_model = joblib.load(model_path)
             
-            # Carregar o modelo calibrado
-            calibrated_model = joblib.load(model_path)
+            # Separar features e target como no script 11
+            # Mesma operação exata do script 11
+            X_gmm_test = result_df.copy()
             
-            # Detalhes do modelo para debug
-            print(f"Tipo de modelo carregado: {type(calibrated_model)}")
-            if hasattr(calibrated_model, 'base_estimator'):
-                print(f"Base estimator: {type(calibrated_model.base_estimator)}")
-            if hasattr(calibrated_model, 'calibrated_classifiers_'):
-                print(f"Número de calibradores: {len(calibrated_model.calibrated_classifiers_)}")
+            # Preservar o email ou outro identificador se existir
+            has_email = 'email' in X_gmm_test.columns
+            has_email_norm = 'email_norm' in X_gmm_test.columns
             
-            # Fazer predições
-            print("Fazendo predições...")
-            start_time = datetime.now()
+            print(f"Gerando probabilidades para {len(X_gmm_test)} instâncias...")
             
-            # Obter probabilidades
-            probabilities = calibrated_model.predict_proba(df)[:, 1]
+            # *** EXATAMENTE A MESMA CHAMADA DO SCRIPT 11 ***
+            gmm_probs = gmm_model.predict_proba(X_gmm_test)[:, 1]
+            gmm_preds = (gmm_probs >= gmm_threshold).astype(int)
+            # ====== FIM DO CÓDIGO COPIADO DO SCRIPT 11 ======
             
-            # Aplicar threshold para classes
-            predictions = (probabilities >= threshold).astype(int)
-            
-            # Adicionar ao DataFrame
-            result_df['probability'] = probabilities
-            result_df['prediction'] = predictions
+            # Adicionar resultados ao DataFrame
+            result_df['probability'] = gmm_probs
+            result_df['prediction'] = gmm_preds
             
             # Calcular estatísticas
-            prediction_counts = dict(zip(*np.unique(predictions, return_counts=True)))
+            prediction_counts = dict(zip(*np.unique(gmm_preds, return_counts=True)))
             print(f"  Distribuição de predições: {prediction_counts}")
             
             if 1 in prediction_counts:
@@ -181,8 +270,7 @@ try:
                 print(f"  Taxa de positivos: {positive_rate:.4f} ({prediction_counts.get(1, 0)} de {len(df)})")
             
             # Tempo de processamento
-            elapsed_time = (datetime.now() - start_time).total_seconds()
-            print(f"Predições concluídas em {elapsed_time:.2f} segundos.")
+            print(f"Predições concluídas.")
             
         except Exception as e:
             print(f"  ERRO durante predição: {e}")
@@ -215,7 +303,7 @@ try:
         # Etapa 1: Pré-processamento básico (script 2)
         if until_step >= 1:
             print("\n--- Etapa 1: Pré-processamento básico ---")
-            params_path = os.path.join(params_dir, "02_params.joblib")
+            params_path = os.path.join(params_dir, "02_params.joblib")  # Corrigido nome do arquivo
             if not os.path.exists(params_path):
                 print(f"ERRO: Arquivo de parâmetros não encontrado: {params_path}")
                 sys.exit(1)
@@ -270,12 +358,12 @@ try:
                 print(traceback.format_exc())
                 # Continuar com o último resultado válido
         
-        # Etapa 4: Aplicação de GMM e predição
+        # Etapa 4: Aplicação de GMM com código exato do script 11
         step4_complete = False
         if until_step >= 4:
-            print("\n--- Etapa 4: Aplicação de GMM e predição ---")
+            print("\n--- Etapa 4: Aplicação de GMM (estilo script 11) ---")
             try:
-                latest_result = apply_gmm_and_predict(latest_result, params_dir)
+                latest_result = apply_gmm_script11_style(latest_result, params_dir)
                 step4_complete = True
             except Exception as e:
                 print(f"ERRO durante a etapa 4: {str(e)}")
@@ -303,7 +391,7 @@ try:
     
     def main():
         """Função principal."""
-        parser = argparse.ArgumentParser(description="Pipeline completa de inferência")
+        parser = argparse.ArgumentParser(description="Pipeline completa de inferência (estilo script 11)")
         parser.add_argument("--input", type=str, default="/Users/ramonmoreira/desktop/smart_ads/data/01_split/test.csv",
                           help="Caminho para dados de entrada")
         parser.add_argument("--output", type=str, help="Caminho para salvar resultado")
@@ -324,7 +412,7 @@ try:
             if args.until_step < 4:
                 args.output = os.path.join(output_dir, f"inference_step{args.until_step}_{timestamp}.csv")
             else:
-                args.output = os.path.join(output_dir, f"predictions_{timestamp}.csv")
+                args.output = os.path.join(output_dir, f"predictions_script11_style_{timestamp}.csv")
         
         # Executar pipeline
         run_full_pipeline(
