@@ -22,7 +22,7 @@ sys.path.append(project_root)
 
 # Caminhos absolutos para o GMM
 BASE_DIR = "/Users/ramonmoreira/desktop/smart_ads"
-DATA_DIR = "/Users/ramonmoreira/desktop/smart_ads/data/02_3_processed_text_code6"
+DATA_DIR = "/Users/ramonmoreira/desktop/smart_ads/data/04_feature_engineering_2"
 MODELS_DIR = "/Users/ramonmoreira/desktop/smart_ads/models/artifacts/gmm_optimized"
 VALIDATION_PATH = os.path.join(DATA_DIR, "validation.csv")
 TEST_PATH = os.path.join(DATA_DIR, "test.csv")

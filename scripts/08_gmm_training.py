@@ -26,10 +26,10 @@ from src.evaluation.mlflow_utils import setup_mlflow_tracking, find_optimal_thre
 # Configuração centralizada
 CONFIG = {
     'base_dir': os.path.abspath(os.path.dirname(os.path.dirname(__file__))),
-    'data_dir': os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "data/02_3_processed"),
-    'mlflow_dir': os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "mlflow"),
+    'data_dir': os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "data/04_feature_engineering_2"),  # Atualizado para usar o novo dataset
+    'mlflow_dir': os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "models/mlflow"),  # Alterado para models/mlflow
     'artifact_dir': os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "models/artifacts"),
-    'experiment_name': "smart_ads_gmm_optimized",
+    'experiment_name': "smart_ads_gmm_optimized_full",  # Nome atualizado para refletir o conjunto de dados completo
     'model_params': {
         'max_depth': None,
         'n_estimators': 200,
