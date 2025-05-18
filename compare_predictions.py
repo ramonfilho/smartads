@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
 
 # Caminhos para os arquivos
-PIPELINE_PREDICTIONS_PATH = "/Users/ramonmoreira/desktop/smart_ads/inference/output/predictions_20250517_150650.csv"
+PIPELINE_PREDICTIONS_PATH = "/Users/ramonmoreira/desktop/smart_ads/inference/output/predictions_20250517_202046.csv"
 REFERENCE_PREDICTIONS_PATH = "/Users/ramonmoreira/desktop/smart_ads/reports/calibration_validation_two_models/20250514_084500/gmm_test_results.csv"
 
 def load_predictions(pipeline_path, reference_path):
