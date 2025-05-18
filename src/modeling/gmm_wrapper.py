@@ -1,9 +1,7 @@
-#!/usr/bin/env python
-"""
-Módulo para definir a classe GMM_Wrapper usada tanto no treinamento quanto na inferência.
-"""
+# Arquivo: src/models/gmm_wrapper.py
 
 import numpy as np
+import pandas as pd
 
 class GMM_Wrapper:
     """
@@ -41,12 +39,17 @@ class GMM_Wrapper:
             # Garantir que temos exatamente as features esperadas pelo scaler
             scaler_features = self.scaler_model.feature_names_in_
             
-            # Remover features extras e adicionar as que faltam
-            features_to_remove = [col for col in X_numeric.columns if col not in scaler_features]
-            X_numeric = X_numeric.drop(columns=features_to_remove, errors='ignore')
+            # Identificar features em X_numeric que não estão no scaler
+            unseen_features = [col for col in X_numeric.columns if col not in scaler_features]
+            if unseen_features:
+                # print(f"Removendo {len(unseen_features)} features não vistas durante treinamento")
+                X_numeric = X_numeric.drop(columns=unseen_features, errors='ignore')
             
-            for col in scaler_features:
-                if col not in X_numeric.columns:
+            # Identificar features que faltam em X_numeric mas estão no scaler
+            missing_features = [col for col in scaler_features if col not in X_numeric.columns]
+            if missing_features:
+                # print(f"Adicionando {len(missing_features)} features ausentes vistas durante treinamento")
+                for col in missing_features:
                     X_numeric[col] = 0.0
             
             # Garantir a ordem correta das colunas

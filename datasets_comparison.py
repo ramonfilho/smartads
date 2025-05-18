@@ -16,97 +16,33 @@ PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
 
 # Diretórios a serem comparados
 DIRS = [
-    os.path.join(PROJECT_ROOT, "data/02_3_processed"),
-    os.path.join(PROJECT_ROOT, "inference/output")
+    os.path.join(PROJECT_ROOT, "data/01_split"),
+    os.path.join(PROJECT_ROOT, "data/02_processed")
 ]
 
-# Nome amigável para cada diretório
-DIR_NAMES = {
-    "data/02_3_processed": "treino",
-    "inference/output": "inferência"
-}
-
-def export_feature_names(datasets_by_dir, output_dir=None):
+def get_dir_identifier(dir_path):
     """
-    Exporta os nomes das features de um dataset de cada diretório para um arquivo CSV.
+    Cria um identificador legível para o diretório baseado no caminho relativo.
     
     Args:
-        datasets_by_dir: Dicionário com conjuntos de dados organizados por diretório
-        output_dir: Diretório de saída para o arquivo (opcional)
+        dir_path: Caminho do diretório
+        
+    Returns:
+        String identificadora do diretório
     """
-    if output_dir is None:
-        output_dir = os.path.join(PROJECT_ROOT, "reports")
+    # Obter o caminho relativo em relação ao PROJECT_ROOT
+    try:
+        rel_path = os.path.relpath(dir_path, PROJECT_ROOT)
+        # Se não tiver PROJECT_ROOT no caminho, use apenas os dois últimos componentes
+        if rel_path.startswith('..'):
+            components = dir_path.rstrip('/').split('/')
+            rel_path = '/'.join(components[-2:])
+    except ValueError:
+        # Em caso de problemas com caminhos em diferentes dispositivos
+        components = dir_path.rstrip('/').split('/')
+        rel_path = '/'.join(components[-2:])
     
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Timestamp para o nome do arquivo
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = os.path.join(output_dir, f"feature_names_{timestamp}.csv")
-    
-    print(f"\nExportando nomes de features para: {output_file}")
-    
-    # Coletar features de um dataset de cada diretório (preferencialmente 'train')
-    feature_dict = {}
-    
-    # Variável para armazenar as features do treino para o arquivo 03_train_columns.csv
-    train_features = None
-    
-    for dir_path, datasets in datasets_by_dir.items():
-        dir_name = os.path.basename(os.path.dirname(dir_path)) + "/" + os.path.basename(dir_path)
-        friendly_name = DIR_NAMES.get(os.path.relpath(dir_path, PROJECT_ROOT), dir_name)
-        
-        # Selecionar preferencialmente o dataset de treino, ou o primeiro disponível
-        dataset_name = None
-        if "train" in datasets:
-            dataset_name = "train"
-        elif len(datasets) > 0:
-            dataset_name = list(datasets.keys())[0]
-        
-        if dataset_name:
-            feature_names = list(datasets[dataset_name].columns)
-            feature_dict[friendly_name] = feature_names
-            print(f"  Coletadas {len(feature_names)} features do dataset '{dataset_name}' em {friendly_name}")
-            
-            # Se for o diretório de treino, salvar suas features
-            if 'treino' in friendly_name.lower() or 'train' in friendly_name.lower() or '02_3_processed' in dir_path:
-                train_features = feature_names
-                print(f"  Marcado como conjunto de treino para uso no módulo 4")
-    
-    # Verificar se temos algum dado para exportar
-    if not feature_dict:
-        print("  Nenhuma feature encontrada para exportar!")
-        return None
-    
-    # Determinar o número máximo de features para criar o DataFrame
-    max_features = max(len(features) for features in feature_dict.values())
-    
-    # Criar um DataFrame com todas as features
-    export_df = pd.DataFrame(index=range(max_features))
-    
-    # Preencher o DataFrame com os nomes das features
-    for dir_name, features in feature_dict.items():
-        # Preencher a coluna com os nomes das features, deixando NaN para índices além do comprimento
-        export_df[dir_name] = pd.Series(features)
-    
-    # Exportar para CSV
-    export_df.to_csv(output_file, index=False)
-    print(f"  Arquivo de comparação de features exportado com sucesso!")
-    
-    # Salvar arquivo específico para o módulo 4 com as colunas do treino
-    if train_features:
-        # Determinar qual arquivo salvar com base no diretório
-        module_number = "03"  # Valor padrão
-        
-        # Se o diretório for 02_3_processed, estamos no módulo 4
-        if any("02_3_processed" in dir_path for dir_path in datasets_by_dir):
-            module_number = "04"
-            print(f"  Detectado diretório 02_3_processed - usando módulo 4")
-        
-        train_cols_file = os.path.join(output_dir, f"{module_number}_train_columns.csv")
-        pd.DataFrame({'column_name': train_features}).to_csv(train_cols_file, index=False)
-        print(f"  Arquivo de colunas do treino salvo em: {train_cols_file}")
-    
-    return output_file
+    return rel_path
 
 def load_datasets(directory):
     """
@@ -119,6 +55,7 @@ def load_datasets(directory):
         Dict com datasets carregados ou None se não encontrados
     """
     datasets = {}
+    dir_id = get_dir_identifier(directory)
     
     # Primeiro, tenta carregar os arquivos padrão
     standard_files = ["train.csv", "validation.csv", "test.csv"]
@@ -127,7 +64,7 @@ def load_datasets(directory):
         if os.path.exists(file_path):
             try:
                 datasets[file_name.split('.')[0]] = pd.read_csv(file_path)
-                print(f"  Carregado {file_name} de {directory}")
+                print(f"  Carregado {file_name} de {dir_id}")
             except Exception as e:
                 print(f"  ERRO ao carregar {file_path}: {e}")
         else:
@@ -135,7 +72,7 @@ def load_datasets(directory):
     
     # Se não encontrou arquivos padrão, procura por arquivos .csv mais recentes
     if not datasets and os.path.exists(directory):
-        print(f"  Procurando por arquivos CSV alternativos em {directory}...")
+        print(f"  Procurando por arquivos CSV alternativos em {dir_id}...")
         
         csv_files = [f for f in os.listdir(directory) if f.endswith('.csv')]
         if csv_files:
@@ -162,7 +99,7 @@ def load_datasets(directory):
                 if dataset_type not in datasets:
                     try:
                         datasets[dataset_type] = pd.read_csv(file_path)
-                        print(f"  Carregado {file_name} como '{dataset_type}' de {directory}")
+                        print(f"  Carregado {file_name} como '{dataset_type}' de {dir_id}")
                     except Exception as e:
                         print(f"  ERRO ao carregar {file_path}: {e}")
     
@@ -193,8 +130,8 @@ def analyze_dataset(df):
     top_missing = top_missing[top_missing > 0].sort_values(ascending=False)
     top_missing_dict = {}
     
-    # Corrigido o problema com [:5]
-    for col, count in list(top_missing.items())[:5]:  # Top 5 colunas com mais valores ausentes
+    # Top 5 colunas com mais valores ausentes
+    for col, count in list(top_missing.items())[:5]:
         top_missing_dict[col] = {
             'count': count,
             'pct': (count / df.shape[0]) * 100
@@ -248,15 +185,16 @@ def compare_datasets(dirs=DIRS):
     
     # Verificar existência dos diretórios
     for dir_path in dirs:
-        print(f"Verificando diretório: {dir_path}")
+        dir_id = get_dir_identifier(dir_path)
+        print(f"Verificando diretório: {dir_id}")
         if not os.path.exists(dir_path):
             print(f"  AVISO: Diretório {dir_path} não encontrado!")
     
     # Carregar datasets de cada diretório
     all_datasets = {}
     for dir_path in dirs:
-        dir_name = os.path.basename(os.path.dirname(dir_path)) + "/" + os.path.basename(dir_path)
-        print(f"\nCarregando datasets de {dir_name}...")
+        dir_id = get_dir_identifier(dir_path)
+        print(f"\nCarregando datasets de {dir_id}...")
         datasets = load_datasets(dir_path)
         if datasets:
             all_datasets[dir_path] = datasets
@@ -282,11 +220,10 @@ def compare_datasets(dirs=DIRS):
         
         # Analisar cada dataset individualmente
         for dir_path in dirs_with_dataset:
-            dir_name = os.path.basename(os.path.dirname(dir_path)) + "/" + os.path.basename(dir_path)
-            friendly_name = DIR_NAMES.get(os.path.relpath(dir_path, PROJECT_ROOT), dir_name)
+            dir_id = get_dir_identifier(dir_path)
             
             df = all_datasets[dir_path][dataset_type]
-            print(f"  Analisando {friendly_name} ({df.shape[0]} linhas, {df.shape[1]} colunas)")
+            print(f"  Analisando {dir_id} ({df.shape[0]} linhas, {df.shape[1]} colunas)")
             
             comparison[dataset_type][dir_path] = analyze_dataset(df)
         
@@ -295,32 +232,29 @@ def compare_datasets(dirs=DIRS):
             column_comparisons = []
             for i, dir1 in enumerate(dirs_with_dataset[:-1]):
                 for dir2 in dirs_with_dataset[i+1:]:
-                    dir1_name = os.path.basename(os.path.dirname(dir1)) + "/" + os.path.basename(dir1)
-                    dir2_name = os.path.basename(os.path.dirname(dir2)) + "/" + os.path.basename(dir2)
-                    
-                    friendly_name1 = DIR_NAMES.get(os.path.relpath(dir1, PROJECT_ROOT), dir1_name)
-                    friendly_name2 = DIR_NAMES.get(os.path.relpath(dir2, PROJECT_ROOT), dir2_name)
+                    dir1_id = get_dir_identifier(dir1)
+                    dir2_id = get_dir_identifier(dir2)
                     
                     cols1 = set(all_datasets[dir1][dataset_type].columns)
                     cols2 = set(all_datasets[dir2][dataset_type].columns)
                     
-                    print(f"\n  Comparando colunas entre {friendly_name1} e {friendly_name2}:")
-                    print(f"    Colunas exclusivas em {friendly_name1}: {len(cols1 - cols2)}")
-                    print(f"    Colunas exclusivas em {friendly_name2}: {len(cols2 - cols1)}")
+                    print(f"\n  Comparando colunas entre {dir1_id} e {dir2_id}:")
+                    print(f"    Colunas exclusivas em {dir1_id}: {len(cols1 - cols2)}")
+                    print(f"    Colunas exclusivas em {dir2_id}: {len(cols2 - cols1)}")
                     print(f"    Colunas em comum: {len(cols1 & cols2)}")
                     
                     # Adicionar esta comparação nos resultados
                     column_comparisons.append({
-                        "dir1": friendly_name1,
-                        "dir2": friendly_name2,
-                        f"{friendly_name1}_only": list(cols1 - cols2),
-                        f"{friendly_name2}_only": list(cols2 - cols1),
+                        "dir1": dir1_id,
+                        "dir2": dir2_id,
+                        f"{dir1_id}_only": list(cols1 - cols2),
+                        f"{dir2_id}_only": list(cols2 - cols1),
                         "common": len(cols1 & cols2)
                     })
             
             if column_comparisons:
                 comparison[f"{dataset_type}_column_comparison"] = column_comparisons
-    export_feature_names(all_datasets)
+
     return comparison
 
 def print_comparison_report(comparison):
@@ -341,10 +275,9 @@ def print_comparison_report(comparison):
         print(f"\n----- CONJUNTO DE {dataset_type.upper()} -----\n")
         
         for dir_path, stats in comparison[dataset_type].items():
-            dir_name = os.path.basename(os.path.dirname(dir_path)) + "/" + os.path.basename(dir_path)
-            friendly_name = DIR_NAMES.get(os.path.relpath(dir_path, PROJECT_ROOT), dir_name)
+            dir_id = get_dir_identifier(dir_path)
             
-            print(f"Dataset: {friendly_name}")
+            print(f"Dataset: {dir_id}")
             print(f"  Dimensões: {stats['shape'][0]} linhas, {stats['shape'][1]} colunas")
             
             # Tipos de dados
@@ -430,13 +363,19 @@ def main():
     """Função principal"""
     parser = argparse.ArgumentParser(description="Comparar datasets entre diferentes versões de processamento.")
     
-    parser.add_argument("--output", type=str, 
-                        help="Caminho para salvar o relatório (opcional)")
+    parser.add_argument("--dirs", nargs='+', type=str, help="Lista de diretórios para comparação")
+    parser.add_argument("--output", type=str, help="Caminho para salvar o relatório (opcional)")
     
     args = parser.parse_args()
     
+    # Usar diretórios passados como argumentos ou padrão
+    dirs_to_use = args.dirs if args.dirs else DIRS
+    
+    # Usar caminhos absolutos
+    dirs_to_use = [os.path.join(PROJECT_ROOT, d) if not os.path.isabs(d) else d for d in dirs_to_use]
+    
     # Executar comparação
-    comparison = compare_datasets()
+    comparison = compare_datasets(dirs_to_use)
     
     if comparison:
         # Imprimir relatório no console

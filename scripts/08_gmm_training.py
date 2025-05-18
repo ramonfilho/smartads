@@ -17,13 +17,16 @@ from datetime import datetime
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, project_root)
 
+# Importar a classe GMM_Wrapper do módulo compartilhado
+from src.modeling.gmm_wrapper import GMM_Wrapper
+
 # Importar funções de avaliação existentes
 from src.evaluation.mlflow_utils import setup_mlflow_tracking, find_optimal_threshold
 
 # Configuração centralizada
 CONFIG = {
     'base_dir': os.path.abspath(os.path.dirname(os.path.dirname(__file__))),
-    'data_dir': os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "data/02_3_processed_text_code6"),
+    'data_dir': os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "data/02_3_processed"),
     'mlflow_dir': os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "mlflow"),
     'artifact_dir': os.path.join(os.path.abspath(os.path.dirname(os.path.dirname(__file__))), "models/artifacts"),
     'experiment_name': "smart_ads_gmm_optimized",
@@ -492,8 +495,29 @@ def run_gmm_clustering():
     if cluster_models:
         results = evaluate_ensemble(X_val, y_val, val_labels, cluster_models, experiment_id, gmm_dir)
         
-        # Salvar modelo GMM
+        # Criar pipeline para o GMM_Wrapper
+        pipeline = {
+            'pca_model': pca_model,
+            'gmm_model': gmm,
+            'scaler_model': scaler,
+            'cluster_models': {model["cluster_id"]: {"model": model["model"], "threshold": model["threshold"]} 
+                              for model in cluster_models},
+            'n_clusters': CONFIG['gmm_params']['n_components'],
+            'threshold': results['threshold']
+        }
+        
+        # Criar instância do GMM_Wrapper
+        gmm_wrapper = GMM_Wrapper(pipeline)
+        
+        # Salvar o wrapper usando joblib
+        wrapper_path = os.path.join(gmm_dir, 'gmm_wrapper.joblib')
+        joblib.dump(gmm_wrapper, wrapper_path)
+        print(f"GMM_Wrapper salvo em: {wrapper_path}")
+        
+        # Salvar componentes individuais para compatibilidade
         joblib.dump(gmm, os.path.join(gmm_dir, 'gmm_model.joblib'))
+        joblib.dump(pca_model, os.path.join(gmm_dir, 'pca_model.joblib'))
+        joblib.dump(scaler, os.path.join(gmm_dir, 'scaler_model.joblib'))
         
         # Salvar estatísticas dos clusters
         train_stats.to_json(os.path.join(gmm_dir, 'train_cluster_stats.json'))
@@ -501,10 +525,6 @@ def run_gmm_clustering():
     else:
         print("Nenhum modelo de cluster criado. Não é possível avaliar o ensemble.")
         results = None
-    
-    # Salvar componentes comuns
-    joblib.dump(pca_model, os.path.join(gmm_dir, 'pca_model.joblib'))
-    joblib.dump(scaler, os.path.join(gmm_dir, 'scaler_model.joblib'))
     
     # Baseline para comparação
     baseline_precision = 0.94

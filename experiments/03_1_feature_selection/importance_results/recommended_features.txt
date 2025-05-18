@@ -1,0 +1,217 @@
+age_x_current_salary_encoded
+UTM_SOURCE_freq
+age_x_desired_salary_encoded
+current_salary_encoded_country_deviation
+Déjame un mensaje_length
+country_freq
+country_x_current_salary_encoded
+country_x_age_encoded
+UTM_CONTENT_freq
+Déjame un mensaje_avg_word_length
+hour_x_current_salary_encoded
+desired_salary_encoded_country_deviation
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_length
+profession_freq
+time_known_encoded
+age_encoded_country_deviation
+UTM_MEDIUM_freq
+UTM_CAMPAING_freq
+age_x_hour
+name_length
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_avg_word_length
+month_x_country_encoded
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_avg_word_length
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_has_any_high_conv_term
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_length
+hour_country_deviation
+country_encoded
+month_x_current_salary_encoded
+month_x_desired_salary_encoded
+Déjame un mensaje_tfidf_gracias
+country_x_hour
+day_of_week_country_deviation
+hour_x_desired_salary_encoded
+current_salary_encoded_per_age
+qualidade_numerica
+day_of_week_x_current_salary_encoded
+hour_sin
+country_x_desired_salary_encoded
+salary_ratio
+desired_salary_encoded_per_age
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_fluidez
+desired_salary_encoded
+hour_cos
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_motiv_work_norm
+country_x_day_of_week
+age_x_day_of_week
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_motiv_improvement_norm
+Déjame un mensaje_motiv_communication_norm
+UTM_TERM_freq
+day_sin
+has_gclid
+Déjame un mensaje_tfidf_aprender
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_entender
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_aprender
+Déjame un mensaje_has_any_high_conv_term
+Déjame un mensaje_tfidf_espero
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_trabajo
+Déjame un mensaje_motiv_education_norm
+Déjame un mensaje_tfidf_inglés
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_motiv_communication_norm
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_hablan
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_motiv_education_norm
+Déjame un mensaje_tfidf_agradezco
+availability_encoded
+Déjame un mensaje_tfidf_quiero
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_aprendizaje
+Déjame un mensaje_has_any_low_conv_term
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_vocabulario
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_muchas
+UTM_CAMPAIGN (VINI)_freq
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_motiv_travel_norm
+Déjame un mensaje_tfidf_hola
+Déjame un mensaje_tfidf_idioma
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_fluido
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_avg_word_length
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_motiv_opportunity_norm
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_hablar
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_poder
+Déjame un mensaje_motiv_opportunity_norm
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_has_any_low_conv_term
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_has_any_high_conv_term
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_has_any_low_conv_term
+UTM_CAMPAIGN2_freq
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_oportunidades
+day_cos
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_inglés
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_pueda
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_conocer
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_aprender inglés
+Déjame un mensaje_tfidf_saludos
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_motiv_communication_norm
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_mejor
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_empleo
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_técnicas
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_motiv_communication_norm
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_tfidf_fluidez
+Déjame un mensaje_tfidf_muchas gracias
+Déjame un mensaje_tfidf_hablar
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_ingles
+Déjame un mensaje_tfidf_quiero aprender
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_laboral
+Déjame un mensaje_tfidf_si
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_length
+utm_day_of_week_encoded
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_mejor
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_idioma
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_poder
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_oportunidades trabajo
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_inglés
+belief_work_encoded
+Déjame un mensaje_tfidf_aprender inglés
+Déjame un mensaje_tfidf_aprendizaje
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_método
+gender_encoded
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_mejores
+Déjame un mensaje_tfidf_espero poder
+Déjame un mensaje_motiv_improvement_norm
+Déjame un mensaje_tfidf_curso
+Déjame un mensaje_tfidf_clases
+utm_day_of_week
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_comunicarme
+Déjame un mensaje_tfidf_muchas
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_muchas oportunidades
+Déjame un mensaje_tfidf_espero aprender
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_tener
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_viajar
+period_morning
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_tener
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_idioma
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_tfidf_hablar
+Déjame un mensaje_tfidf_deseo
+Déjame un mensaje_tfidf_ayuda
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_tfidf_entender
+thu_morning
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_motiv_improvement_norm
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_laborales
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_has_any_high_conv_term
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_personal
+Déjame un mensaje_tfidf_ingles
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_num_low_conv_terms
+thu_night
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_sentiment
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_oportunidad
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_ingles
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_inglés fluido
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_motiv_improvement_norm
+Déjame un mensaje_tfidf_saber
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_mejorar
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_motiv_work
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_hablarlo
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_pronunciación
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_quiero
+fri_afternoon
+Déjame un mensaje_tfidf_trabajo
+Déjame un mensaje_tfidf_vida
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_vida
+Déjame un mensaje_motiv_work_norm
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_hablar
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_comunicación
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_oportunidades laborales
+Déjame un mensaje_tfidf_tiempo
+wed_afternoon
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_tfidf_aprender
+Déjame un mensaje_tfidf_método
+Déjame un mensaje_sentiment
+Déjame un mensaje_tfidf_poder aprender
+Déjame un mensaje_tfidf_poder
+Déjame un mensaje_tfidf_fluido
+profession_encoded
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_hablar inglés
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_tfidf_mejor
+Déjame un mensaje_tfidf_tener
+fri_morning
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_comunicarme
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_trabajar
+Déjame un mensaje_tfidf_entender
+Déjame un mensaje_tfidf_expectativas
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_entenderlo
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_personas
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_espero
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_mejor trabajo
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_has_exclamation
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_miedo
+wed_evening
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_si
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_motiv_communication
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_podré
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_básico
+Déjame un mensaje_tfidf_mejorar
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_unidos
+tue_morning
+Déjame un mensaje_tfidf_ver
+Déjame un mensaje_tfidf_bien
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_países
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_motiv_travel_norm
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_profesional
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_palabras
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_tfidf_inglés
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_motiv_education_norm
+Déjame un mensaje_tfidf_gustaría
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_escuchar
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_cómo
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_país
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_mundo
+Déjame un mensaje_tfidf_aprender ingles
+sun_afternoon
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_trabajos
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_conseguir
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_entender
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_tfidf_fluido
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_viajes
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_motiv_improvement
+Déjame un mensaje_has_exclamation
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_poder comunicarme
+Déjame un mensaje_tfidf_hablar inglés
+mon_evening
+wed_morning

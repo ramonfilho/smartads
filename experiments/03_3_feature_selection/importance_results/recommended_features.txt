@@ -1,0 +1,197 @@
+age_x_current_salary_encoded
+UTM_SOURCE_freq
+age_x_desired_salary_encoded
+current_salary_encoded_country_deviation
+country_x_current_salary_encoded
+country_freq
+UTM_CONTENT_freq
+country_x_age_encoded
+Déjame un mensaje_word_count
+hour_x_current_salary_encoded
+desired_salary_encoded_country_deviation
+profession_freq
+Cuando_hables_inglés_con_fluid_topic_1_prob
+age_encoded_country_deviation
+time_known_encoded
+Qué_esperas_aprender_en_la_Sem_topic_0_prob
+Déjame_un_mensaje_topic_2_prob
+Déjame un mensaje_avg_word_length
+age_x_hour
+name_length
+Déjame_un_mensaje_topic_1_prob
+UTM_MEDIUM_freq
+country_encoded
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_has_any_high_conv_term
+Cuando_hables_inglés_con_fluid_char_count
+Déjame_un_mensaje_topic_0_prob
+Déjame_un_mensaje_topic_4_prob
+UTM_CAMPAING_freq
+hour_country_deviation
+Qué_esperas_aprender_en_la_Sem_topic_4_prob
+month_x_current_salary_encoded
+Déjame_un_mensaje_topic_3_prob
+Cuando_hables_inglés_con_fluid_topic_3_prob
+month_x_desired_salary_encoded
+Cuando_hables_inglés_con_fluid_topic_2_prob
+Qué_esperas_aprender_en_la_Sem_topic_3_prob
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_avg_word_length
+Cuando_hables_inglés_con_fluid_topic_4_prob
+Cuando_hables_inglés_con_fluid_topic_0_prob
+Qué_esperas_aprender_en_la_Sem_topic_1_prob
+country_x_desired_salary_encoded
+Qué_esperas_aprender_en_la_Sem_topic_2_prob
+month_x_country_encoded
+country_x_hour
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_length
+day_of_week_country_deviation
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_avg_word_length
+current_salary_encoded_per_age
+day_of_week_x_current_salary_encoded
+desired_salary_encoded
+desired_salary_encoded_per_age
+salary_ratio
+hour_x_desired_salary_encoded
+déjame_un_mensaje_tfidf_en
+qualidade_numerica
+hour_sin
+day_sin
+country_x_day_of_week
+déjame_un_mensaje_tfidf_gracias
+hour_cos
+has_gclid
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_motiv_work_norm
+déjame_un_mensaje_tfidf_me
+déjame_un_mensaje_tfidf_estoy
+Qué_esperas_aprender_en_la_Sem_tfidf_hablan
+déjame_un_mensaje_tfidf_espero
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_fluidez
+professional_motivation_score
+age_x_day_of_week
+déjame_un_mensaje_tfidf_de
+déjame_un_mensaje_tfidf_que
+déjame_un_mensaje_tfidf_gracias por
+déjame_un_mensaje_tfidf_aprender
+déjame_un_mensaje_tfidf_la
+déjame_un_mensaje_tfidf_por
+Qué_esperas_aprender_en_la_Inm_topic_0_prob
+cuando_hables_inglés_con_fluid_tfidf_en
+Déjame un mensaje_has_any_high_conv_term
+déjame_un_mensaje_tfidf_mi
+UTM_TERM_freq
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_motiv_improvement_norm
+Qué_esperas_aprender_en_la_Sem_tfidf_aprender
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_motiv_education_norm
+Déjame un mensaje_motiv_communication_norm
+Déjame un mensaje_has_any_low_conv_term
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_has_any_low_conv_term
+availability_encoded
+cuando_hables_inglés_con_fluid_tfidf_un
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_motiv_communication_norm
+Qué_esperas_aprender_en_la_Inm_topic_2_prob
+déjame_un_mensaje_tfidf_inglés
+Qué_esperas_aprender_en_la_Sem_tfidf_técnicas
+cuando_hables_inglés_con_fluid_tfidf_trabajo
+Déjame un mensaje_motiv_opportunity_norm
+déjame_un_mensaje_tfidf_el
+cuando_hables_inglés_con_fluid_tfidf_oportunidades
+Déjame_un_mensaje_dominant_topic
+cuando_hables_inglés_con_fluid_tfidf_que
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_motiv_travel_norm
+déjame_un_mensaje_tfidf_tengo
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_has_any_high_conv_term
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_aprendizaje
+cuando_hables_inglés_con_fluid_tfidf_muchas
+déjame_un_mensaje_tfidf_con
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_has_any_low_conv_term
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_entender
+cuando_hables_inglés_con_fluid_tfidf_de
+déjame_un_mensaje_tfidf_es
+Qué_esperas_aprender_en_la_Sem_tfidf_vocabulario
+Cuando_hables_inglés_con_fluid_tfidf_mejor
+cuando_hables_inglés_con_fluid_tfidf_mi
+Qué_esperas_aprender_en_la_Sem_tfidf_inglés
+déjame_un_mensaje_tfidf_hola
+day_cos
+Déjame un mensaje_tfidf_agradezco
+déjame_un_mensaje_tfidf_tu
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_hablar
+cuando_hables_inglés_con_fluid_tfidf_empleo
+cuando_hables_inglés_con_fluid_tfidf_poder
+déjame_un_mensaje_sentiment_pos
+déjame_un_mensaje_tfidf_sea
+déjame_un_mensaje_tfidf_por la
+cuando_hables_inglés_con_fluid_career_term_score
+Déjame un mensaje_motiv_education_norm
+Qué_esperas_aprender_en_la_Inm_topic_4_prob
+Qué_esperas_aprender_en_la_Sem_tfidf_ingles
+cuando_hables_inglés_con_fluid_tfidf_todo
+déjame_un_mensaje_tfidf_para
+Déjame_un_mensaje_tfidf_idioma
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_fluido
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_motiv_communication_norm
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_poder
+déjame_un_mensaje_tfidf_no
+qué_esperas_aprender_en_la_tfidf_todo lo
+cuando_hables_inglés_con_fluid_tfidf_más
+Déjame un mensaje_tfidf_quiero
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_avg_word_length
+déjame_un_mensaje_sentiment_neg
+déjame_un_mensaje_tfidf_curso
+period_morning
+profession_encoded
+Qué_esperas_aprender_en_la_Inm_topic_3_prob
+UTM_CAMPAIGN2_freq
+cuando_hables_inglés_con_fluid_tfidf_con
+déjame_un_mensaje_tfidf_lo
+Déjame_un_mensaje_tfidf_poder
+déjame_un_mensaje_tfidf_muchas
+Déjame_un_mensaje_tfidf_clases
+Déjame_un_mensaje_tfidf_espero poder
+cuando_hables_inglés_con_fluid_tfidf_para
+Cuando_hables_inglés_con_fluid_tfidf_oportunidades trabajo
+¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?_has_any_high_conv_term
+belief_work_encoded
+gender_encoded
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_inglés
+déjame_un_mensaje_tfidf_más
+Déjame_un_mensaje_tfidf_saludos
+Qué_esperas_aprender_en_la_Inm_topic_1_prob
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_motiv_opportunity_norm
+Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_tfidf_idioma
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_comunicarme
+cuando_hables_inglés_con_fluid_tfidf_de trabajo
+Déjame un mensaje_tfidf_quiero aprender
+cuando_hables_inglés_con_fluid_tfidf_el
+cuando_hables_inglés_con_fluid_tfidf_lo
+Cuando_hables_inglés_con_fluid_dominant_topic
+cuando_hables_inglés_con_fluid_tfidf_comunicación
+cuando_hables_inglés_con_fluid_tfidf_oportunidad de
+cuando_hables_inglés_con_fluid_tfidf_laboral
+déjame_un_mensaje_tfidf_mucho
+cuando_hables_inglés_con_fluid_tfidf_trabajar
+cuando_hables_inglés_con_fluid_tfidf_en mi
+Cuando_hables_inglés_con_fluid_tfidf_viajar
+utm_day_of_week_encoded
+qué_esperas_aprender_en_la_tfidf_pueda
+thu_morning
+Qué_esperas_aprender_en_la_Sem_dominant_topic
+déjame_un_mensaje_tfidf_aprender inglés
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_mejor
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_num_low_conv_terms
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_motiv_improvement_norm
+qué_esperas_aprender_en_la_tfidf_más
+qué_esperas_aprender_en_la_tfidf_el
+cuando_hables_inglés_con_fluid_tfidf_personal
+déjame_un_mensaje_tfidf_este
+Déjame un mensaje_tfidf_hablar
+Déjame un mensaje_tfidf_si
+déjame_un_mensaje_tfidf_un
+Cuando_hables_inglés_con_fluid_tfidf_muchas oportunidades
+Qué_esperas_aprender_en_la_Sem_tfidf_hablarlo
+¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?_tfidf_aprender inglés
+Qué_esperas_aprender_en_la_Sem_tfidf_tener
+cuando_hables_inglés_con_fluid_tfidf_vida
+UTM_CAMPAIGN (VINI)_freq
+Déjame un mensaje_tfidf_método
+Déjame un mensaje_motiv_improvement_norm
+Déjame_un_mensaje_tfidf_muchas gracias
