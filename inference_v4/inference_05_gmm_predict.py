@@ -11,6 +11,13 @@ import numpy as np
 import pandas as pd
 import warnings
 
+# Adicionar o diretório raiz do projeto ao path para importar módulos do projeto
+project_root = "/Users/ramonmoreira/desktop/smart_ads"
+sys.path.append(project_root)
+
+# Importar a classe GMM_Wrapper para garantir que esteja disponível durante o carregamento
+from src.modeling.gmm_wrapper import GMM_Wrapper
+
 warnings.filterwarnings('ignore')
 
 # Caminhos para os modelos calibrados e auxiliares

@@ -24,10 +24,10 @@ project_root = "/Users/ramonmoreira/desktop/smart_ads"
 sys.path.insert(0, project_root)
 
 # Importar os scripts adaptados para inferência
-from src.inference import inference_02_preprocessing as step1
-from src.inference import inference_03_feature_engineering_1 as step2
-from src.inference import inference_04_feature_engineering_2 as step3
-from src.inference import inference_05_gmm_predict as step4
+from inference_v4 import inference_02_preprocessing as step1
+from inference_v4 import inference_03_feature_engineering_1 as step2
+from inference_v4 import inference_04_feature_engineering_2 as step3
+from inference_v4 import inference_05_gmm_predict as step4
 
 # Caminhos para parâmetros
 PARAMS_PATHS = {
