@@ -43,7 +43,7 @@ os.environ["OMP_NUM_THREADS"] = "8"  # Otimiza para MacBook M1
 PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
 INPUT_DIR_BASIC = os.path.join(PROJECT_ROOT, "data/02_processed") # Resultado do Script 02
 INPUT_DIR_TEXT = os.path.join(PROJECT_ROOT, "data/03_feature_engineering_1") # Resultado do Script 03
-OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/4_feature_engineering_2") # Saída deste script
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/04_feature_engineering_2_2") # Saída deste script
 PARAMS_DIR = os.path.join(PROJECT_ROOT, "src/preprocessing/04_params") # Parâmetros do Script 04
 
 # Criar diretórios se não existirem
@@ -207,8 +207,8 @@ def process_dataset_in_batches(basic_df, text_df, text_columns, dataset_name,
         if mode == "transform" and params.get('vectorizers'):
             tfidf_df, _ = enhance_tfidf_for_career_terms(
                 basic_batch, text_columns,
-                fit=False,  # CORRIGIDO: fit_mode -> fit
-                params=params['vectorizers']  # CORRIGIDO: vectorizers -> params
+                fit=False,
+                params=params['vectorizers']
             )
         else:
             # No modo fit por lotes, criamos um DataFrame vazio para placeholder
@@ -280,8 +280,20 @@ def process_dataset_in_batches(basic_df, text_df, text_columns, dataset_name,
         # 5. Ajuste global para TF-IDF - mais importante
         print("5. Ajuste global para TF-IDF de carreira...")
         _, params['vectorizers'] = enhance_tfidf_for_career_terms(
-            temp_df, text_columns, fit=True  # CORRIGIDO: fit_mode -> fit
+            temp_df, text_columns, fit=True
         )
+        
+        # ADICIONAR: Verificar e extrair termos de carreira dos vetorizadores 
+        # Esta é a parte crucial que estava faltando!
+        if 'vectorizers' in params and 'career_tfidf' in params['vectorizers']:
+            for col_key, vectorizer_info in params['vectorizers']['career_tfidf'].items():
+                if 'career_terms' in vectorizer_info:
+                    # Garantir que temos career_terms também em params['career']
+                    if 'career' not in params:
+                        params['career'] = {}
+                    if 'career_terms' not in params['career'] or not params['career'].get('career_terms'):
+                        params['career']['career_terms'] = vectorizer_info['career_terms']
+                        print(f"  Career terms extraídos do vetorizador para '{col_key}'")
         
         # Aplicar TF-IDF globalmente em todos os lotes
         print("6. Aplicando TF-IDF global em todos os lotes...")
@@ -298,8 +310,8 @@ def process_dataset_in_batches(basic_df, text_df, text_columns, dataset_name,
             # Aplicar TF-IDF
             tfidf_batch, _ = enhance_tfidf_for_career_terms(
                 basic_batch, text_columns,
-                fit=False,  # CORRIGIDO: fit_mode -> fit
-                params=params['vectorizers']  # CORRIGIDO: vectorizers -> params
+                fit=False,
+                params=params['vectorizers']
             )
             
             # Combinar com o lote existente
@@ -424,17 +436,176 @@ def main():
         if all_params:
             print("\n>>> SALVANDO PARÂMETROS <<<")
             try:
-                # Salvar parâmetros específicos do script
+                # MODIFICAÇÃO: Reestruturar os parâmetros para formato consistente
+                structured_params = {
+                    'professional_motivation': {
+                        'work_keywords': {}
+                    },
+                    'aspiration_sentiment': {
+                        'aspiration_phrases': []
+                    },
+                    'commitment': {
+                        'commitment_phrases': {}
+                    },
+                    'career': {
+                        'career_terms': {}
+                    },
+                    'vectorizers': {}
+                }
+                
+                # Examinar todos os parâmetros para debugging
+                print("Inspecionando chaves do dicionário all_params:")
+                for key in all_params.keys():
+                    print(f"  Chave: {key}")
+                    if isinstance(all_params[key], dict):
+                        print(f"    Subchaves: {list(all_params[key].keys())}")
+                
+                # Extrair parâmetros das chaves específicas
+                
+                # 1. work_keywords (extraindo da localização correta)
+                if 'work_keywords' in all_params:
+                    # Chave direta
+                    structured_params['professional_motivation']['work_keywords'] = all_params['work_keywords']
+                    print("  work_keywords encontrado diretamente na raiz dos parâmetros")
+                elif 'professional_motivation' in all_params and 'work_keywords' in all_params['professional_motivation']:
+                    # Subchave within professional_motivation
+                    structured_params['professional_motivation']['work_keywords'] = all_params['professional_motivation']['work_keywords']
+                    print("  work_keywords encontrado em professional_motivation")
+                else:
+                    # Busca recursiva em todas as subchaves
+                    found = False
+                    for key, value in all_params.items():
+                        if isinstance(value, dict) and 'work_keywords' in value:
+                            structured_params['professional_motivation']['work_keywords'] = value['work_keywords']
+                            print(f"  work_keywords encontrado em {key}")
+                            found = True
+                            break
+                    
+                    if not found:
+                        print("AVISO: Parâmetro 'work_keywords' não encontrado. Usando valores padrão.")
+                        structured_params['professional_motivation']['work_keywords'] = {
+                            'trabajo': 1.0, 'empleo': 1.0, 'carrera': 1.2, 'profesional': 1.2,
+                            'oportunidades': 1.0, 'mejor': 0.7, 'mejorar': 0.7
+                        }
+                
+                # 2. aspiration_phrases
+                if 'aspiration_phrases' in all_params:
+                    structured_params['aspiration_sentiment']['aspiration_phrases'] = all_params['aspiration_phrases']
+                    print("  aspiration_phrases encontrado diretamente na raiz dos parâmetros")
+                elif 'aspiration_sentiment' in all_params and 'aspiration_phrases' in all_params['aspiration_sentiment']:
+                    structured_params['aspiration_sentiment']['aspiration_phrases'] = all_params['aspiration_sentiment']['aspiration_phrases']
+                    print("  aspiration_phrases encontrado em aspiration_sentiment")
+                else:
+                    # Busca recursiva
+                    found = False
+                    for key, value in all_params.items():
+                        if isinstance(value, dict) and 'aspiration_phrases' in value:
+                            structured_params['aspiration_sentiment']['aspiration_phrases'] = value['aspiration_phrases']
+                            print(f"  aspiration_phrases encontrado em {key}")
+                            found = True
+                            break
+                    
+                    if not found:
+                        print("AVISO: Parâmetro 'aspiration_phrases' não encontrado. Usando valores padrão.")
+                        structured_params['aspiration_sentiment']['aspiration_phrases'] = [
+                            'quiero ser', 'espero ser', 'mi meta es', 'mi objetivo es',
+                            'en el futuro', 'me veo', 'me visualizo'
+                        ]
+                
+                # 3. commitment_phrases
+                if 'commitment_phrases' in all_params:
+                    structured_params['commitment']['commitment_phrases'] = all_params['commitment_phrases']
+                    print("  commitment_phrases encontrado diretamente na raiz dos parâmetros")
+                elif 'commitment' in all_params and 'commitment_phrases' in all_params['commitment']:
+                    structured_params['commitment']['commitment_phrases'] = all_params['commitment']['commitment_phrases']
+                    print("  commitment_phrases encontrado em commitment")
+                else:
+                    # Busca recursiva
+                    found = False
+                    for key, value in all_params.items():
+                        if isinstance(value, dict) and 'commitment_phrases' in value:
+                            structured_params['commitment']['commitment_phrases'] = value['commitment_phrases']
+                            print(f"  commitment_phrases encontrado em {key}")
+                            found = True
+                            break
+                    
+                    if not found:
+                        print("AVISO: Parâmetro 'commitment_phrases' não encontrado. Usando valores padrão.")
+                        structured_params['commitment']['commitment_phrases'] = {
+                            'estoy decidido': 2.0, 'me comprometo': 2.0, 'quiero aprender': 1.0
+                        }
+                
+                # 4. career_terms
+                if 'career_terms' in all_params:
+                    structured_params['career']['career_terms'] = all_params['career_terms']
+                    print("  career_terms encontrado diretamente na raiz dos parâmetros")
+                elif 'career' in all_params and 'career_terms' in all_params['career']:
+                    structured_params['career']['career_terms'] = all_params['career']['career_terms']
+                    print("  career_terms encontrado em career")
+                else:
+                    # Busca em vectorizers
+                    found = False
+                    if 'vectorizers' in all_params and 'career_tfidf' in all_params['vectorizers']:
+                        for col_key, vectorizer_info in all_params['vectorizers']['career_tfidf'].items():
+                            if isinstance(vectorizer_info, dict) and 'career_terms' in vectorizer_info:
+                                structured_params['career']['career_terms'] = vectorizer_info['career_terms']
+                                print(f"  career_terms encontrado em vectorizers > career_tfidf > {col_key}")
+                                found = True
+                                break
+                    
+                    # Busca recursiva geral
+                    if not found:
+                        for key, value in all_params.items():
+                            if isinstance(value, dict) and 'career_terms' in value:
+                                structured_params['career']['career_terms'] = value['career_terms']
+                                print(f"  career_terms encontrado em {key}")
+                                found = True
+                                break
+                    
+                    if not found:
+                        print("AVISO: Parâmetro 'career_terms' não encontrado. Usando valores padrão.")
+                        structured_params['career']['career_terms'] = {
+                            'crecimiento profesional': 2.0, 'desarrollo profesional': 2.0,
+                            'oportunidades laborales': 2.0, 'mejor salario': 1.8
+                        }
+                
+                # 5. vectorizers
+                if 'vectorizers' in all_params:
+                    structured_params['vectorizers'] = all_params['vectorizers']
+                    print("  vectorizers encontrado na raiz dos parâmetros")
+                elif 'career_tfidf' in all_params:
+                    structured_params['vectorizers']['career_tfidf'] = all_params['career_tfidf']
+                    print("  vectorizers extraído de career_tfidf na raiz dos parâmetros")
+                else:
+                    print("AVISO: Nenhum vectorizer encontrado nos parâmetros.")
+                
+                # Verificar quais parâmetros estão faltando
+                missing_params = []
+                if not structured_params['professional_motivation']['work_keywords']:
+                    missing_params.append('work_keywords')
+                if not structured_params['aspiration_sentiment']['aspiration_phrases']:
+                    missing_params.append('aspiration_phrases')
+                if not structured_params['commitment']['commitment_phrases']:
+                    missing_params.append('commitment_phrases')
+                if not structured_params['career']['career_terms']:
+                    missing_params.append('career_terms')
+                if not structured_params['vectorizers']:
+                    missing_params.append('vectorizers')
+                
+                # Salvar parâmetros estruturados específicos do script
                 script_params_path = os.path.join(PARAMS_DIR, "04_params.joblib")
-                joblib.dump(all_params, script_params_path)
+                joblib.dump(structured_params, script_params_path)
                 print(f"✓ Parâmetros do Script 04 salvos em: {script_params_path}")
+                
+                if missing_params:
+                    print(f"AVISO: Alguns parâmetros não foram encontrados e foram substituídos por valores padrão: {missing_params}")
                 
                 # Tentar atualizar arquivo de parâmetros global
                 all_params_path = os.path.join(PARAMS_DIR, "all_preprocessing_params.joblib")
                 if os.path.exists(all_params_path):
                     try:
                         global_params = joblib.load(all_params_path)
-                        global_params['script04_features'] = all_params
+                        global_params['script04_features'] = structured_params
                         
                         # Salvar versão atualizada
                         updated_params_path = os.path.join(PARAMS_DIR, "all_preprocessing_params_updated.joblib")
@@ -445,6 +616,8 @@ def main():
                         print(f"AVISO: Não foi possível atualizar parâmetros globais: {e}")
             except Exception as e:
                 print(f"ERRO ao salvar parâmetros: {e}")
+                import traceback
+                traceback.print_exc()
         
         print("\n=== PROCESSAMENTO CONCLUÍDO COM SUCESSO ===")
         
