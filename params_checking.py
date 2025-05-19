@@ -10,6 +10,20 @@ import joblib
 import warnings
 import numpy as np
 from datetime import datetime
+import sys
+
+# Adicionar o diretório raiz do projeto ao path para importar módulos do projeto
+project_root = "/Users/ramonmoreira/desktop/smart_ads"
+sys.path.append(project_root)
+
+# Importar a classe GMM_Wrapper para garantir que esteja disponível durante o carregamento
+try:
+    from src.modeling.gmm_wrapper import GMM_Wrapper
+    print("Classe GMM_Wrapper importada com sucesso de src.modeling.gmm_wrapper")
+except ImportError as e:
+    print(f"AVISO: Não foi possível importar GMM_Wrapper: {e}")
+    # Não definiremos uma versão básica aqui, pois queremos verificar realmente se a
+    # classe correta está disponível e funcional
 
 warnings.filterwarnings('ignore')
 
@@ -25,7 +39,6 @@ PARAMS_PATHS = {
 # Caminhos para os modelos GMM
 GMM_PATHS = {
     'original': {
-        'gmm_wrapper': os.path.join(PROJECT_ROOT, "models/artifacts/gmm_optimized/gmm_wrapper.joblib"),
         'pca_model': os.path.join(PROJECT_ROOT, "models/artifacts/gmm_optimized/pca_model.joblib"),
         'scaler_model': os.path.join(PROJECT_ROOT, "models/artifacts/gmm_optimized/scaler_model.joblib"),
         'gmm_model': os.path.join(PROJECT_ROOT, "models/artifacts/gmm_optimized/gmm_model.joblib"),
@@ -33,8 +46,7 @@ GMM_PATHS = {
             os.path.join(PROJECT_ROOT, "models/artifacts/gmm_optimized/cluster_0_model.joblib"),
             os.path.join(PROJECT_ROOT, "models/artifacts/gmm_optimized/cluster_1_model.joblib"),
             os.path.join(PROJECT_ROOT, "models/artifacts/gmm_optimized/cluster_2_model.joblib")
-        ],
-        'evaluation_results': os.path.join(PROJECT_ROOT, "models/artifacts/gmm_optimized/evaluation_results.json")
+        ]
     },
     'calibrated': {
         'gmm_calibrated': os.path.join(PROJECT_ROOT, "models/calibrated/gmm_calibrated_20250518_152543/gmm_calibrated.joblib"),
@@ -177,8 +189,12 @@ def check_gmm_models():
     print("=" * 80)
     
     # Verificar GMM original
-    print("\nVerificando GMM original:")
+    print("\nVerificando GMM original (componentes individuais do modelo):")
     original_valid = True
+    
+    # Componentes críticos para inferência
+    critical_components = ['pca_model', 'scaler_model', 'gmm_model']
+    cluster_valid = True
     
     for component, path in GMM_PATHS['original'].items():
         if component == 'cluster_models':
@@ -186,15 +202,20 @@ def check_gmm_models():
             for i, cluster_path in enumerate(path):
                 exists, valid, message = check_param_file(f"cluster_{i}_model", cluster_path)
                 if not exists or not valid:
-                    original_valid = False
+                    cluster_valid = False
         else:
             # Verificar outros componentes
             exists, valid, message = check_param_file(component, path)
-            if not exists or not valid:
+            if not exists or not valid and component in critical_components:
                 original_valid = False
     
-    # Verificar GMM calibrado
-    print("\nVerificando GMM calibrado:")
+    if not cluster_valid:
+        print("\nAVISO: Alguns modelos de cluster do GMM original estão ausentes ou inválidos.")
+        print("Isso pode afetar a qualidade das previsões, mas não impede a execução.")
+        # Não falhar completamente se apenas alguns clusters estiverem inválidos
+    
+    # Verificar GMM calibrado (este é o que realmente usamos para inferência)
+    print("\nVerificando GMM calibrado (modelo para inferência):")
     calibrated_valid = True
     
     for component, path in GMM_PATHS['calibrated'].items():
@@ -202,11 +223,11 @@ def check_gmm_models():
         if not exists or not valid:
             calibrated_valid = False
     
-    # Verificar se o modelo GMM calibrado é realmente uma instância de CalibratedClassifierCV
+    # Verificar se o modelo GMM calibrado é utilizável
     if calibrated_valid:
         try:
             model_path = GMM_PATHS['calibrated']['gmm_calibrated']
-            print(f"Verificando tipo do modelo calibrado... ", end="")
+            print(f"Tentando carregar o modelo calibrado para verificação... ", end="")
             model = joblib.load(model_path)
             
             # Verificar se tem os métodos necessários
@@ -225,13 +246,13 @@ def check_gmm_models():
                 print(f"AVISO: Modelo não tem APIs necessárias (predict: {has_predict}, predict_proba: {has_predict_proba})")
                 calibrated_valid = False
         except Exception as e:
-            print(f"ERRO ao verificar tipo do modelo calibrado: {e}")
+            print(f"ERRO ao carregar o modelo calibrado: {e}")
             calibrated_valid = False
     
     # Resumo
     print("\nResumo dos modelos GMM:")
-    print(f"- GMM original: {'✓ Disponível' if original_valid else '✗ Indisponível ou inválido'}")
-    print(f"- GMM calibrado: {'✓ Disponível' if calibrated_valid else '✗ Indisponível ou inválido'}")
+    print(f"- GMM original (componentes): {'✓ Disponível' if original_valid else '✗ Alguns componentes indisponíveis'}")
+    print(f"- GMM calibrado (para inferência): {'✓ Disponível' if calibrated_valid else '✗ Indisponível ou inválido'}")
     
     return original_valid, calibrated_valid
 
@@ -243,7 +264,7 @@ def main():
     print("=" * 80)
     
     # Resultados
-    all_params_valid = True
+    preprocessing_params_valid = True
     results = {}
     
     # Verificar cada arquivo de parâmetros de pré-processamento
@@ -261,15 +282,15 @@ def main():
         }
         
         if not exists or not valid:
-            all_params_valid = False
+            preprocessing_params_valid = False
         
         print("-" * 80)
     
     # Verificar modelos GMM
     original_valid, calibrated_valid = check_gmm_models()
     
-    if not original_valid and not calibrated_valid:
-        all_params_valid = False
+    # Considerar válido se pelo menos um dos modelos GMM estiver disponível
+    model_valid = calibrated_valid  # Priorizar o modelo calibrado para inferência
     
     # Resumo final
     print("\nRESUMO DA VERIFICAÇÃO DE PARÂMETROS DE PRÉ-PROCESSAMENTO:")
@@ -278,32 +299,33 @@ def main():
         print(f"{param_name}: {status} - {result['message']}")
     
     print("\nRESUMO DA VERIFICAÇÃO DE MODELOS GMM:")
-    print(f"GMM original: {'✓ OK' if original_valid else '✗ FALHA'}")
-    print(f"GMM calibrado: {'✓ OK' if calibrated_valid else '✗ FALHA'}")
+    print(f"GMM original (componentes): {'✓ OK' if original_valid else '✗ FALHA'}")
+    print(f"GMM calibrado (para inferência): {'✓ OK' if calibrated_valid else '✗ FALHA'}")
     
-    # Verificar se todos os parâmetros estão disponíveis
-    if all_params_valid and (original_valid or calibrated_valid):
+    # Verificar se os parâmetros essenciais estão disponíveis
+    if preprocessing_params_valid and calibrated_valid:
         print("\n✅ TODOS OS PARÂMETROS NECESSÁRIOS ESTÃO DISPONÍVEIS E VÁLIDOS!")
-        
-        # Recomendar uso do modelo calibrado se disponível
-        if calibrated_valid:
-            print("\nRecomendação: Use o modelo GMM calibrado para previsões mais precisas.")
-        elif original_valid:
-            print("\nRecomendação: Apenas o modelo GMM original está disponível. Use-o para previsões.")
+        print("\nA pipeline de inferência pode ser executada com o modelo GMM calibrado.")
         
         print("\nCaminhos a serem usados pela pipeline:")
         for param_name, path in PARAMS_PATHS.items():
             print(f"- {param_name}: {path}")
         
-        if calibrated_valid:
-            print("\nModelo GMM calibrado:")
-            for component, path in GMM_PATHS['calibrated'].items():
-                print(f"- {component}: {path}")
+        print("\nModelo GMM calibrado:")
+        for component, path in GMM_PATHS['calibrated'].items():
+            print(f"- {component}: {path}")
     else:
         print("\n❌ ATENÇÃO: ALGUNS PARÂMETROS ESTÃO AUSENTES OU INVÁLIDOS!")
-        print("Resolva os problemas acima antes de executar a pipeline de inferência.")
+        
+        if not preprocessing_params_valid:
+            print("- Problemas nos parâmetros de pré-processamento: verifique as mensagens acima.")
+        
+        if not calibrated_valid:
+            print("- Problemas no modelo GMM calibrado: verifique as mensagens acima.")
+        
+        print("\nResolva os problemas acima antes de executar a pipeline de inferência.")
     
-    return all_params_valid and (original_valid or calibrated_valid)
+    return preprocessing_params_valid and calibrated_valid
 
 if __name__ == "__main__":
     main()
