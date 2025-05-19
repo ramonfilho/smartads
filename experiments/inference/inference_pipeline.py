@@ -37,9 +37,9 @@ os.makedirs(REPORTS_DIR, exist_ok=True)
 
 # Importar módulos da pipeline
 try:
-    from inference.modules.script2_module import apply_script2_transformations
-    from inference.modules.script3_module import apply_script3_transformations
-    from inference.modules.script4_module import apply_script4_transformations
+    from inference_v3.modules.script2_module import apply_script2_transformations
+    from inference_v3.modules.script3_module import apply_script3_transformations
+    from inference_v3.modules.script4_module import apply_script4_transformations
     from src.modeling.gmm_wrapper import GMM_Wrapper
 except Exception as e:
     print(f"ERRO AO IMPORTAR MÓDULOS: {str(e)}")

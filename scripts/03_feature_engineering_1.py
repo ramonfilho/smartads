@@ -26,6 +26,12 @@ PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
 INPUT_DIR = os.path.join(PROJECT_ROOT, "data/01_split")
 PROCESSED_DIR = os.path.join(PROJECT_ROOT, "data/02_processed")
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/03_feature_engineering_1")
+PARAMS_DIR = os.path.join(PROJECT_ROOT, "src/preprocessing/03_params")  # Nova pasta para parâmetros
+
+# Garantir que ambos os diretórios existam
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(PARAMS_DIR, exist_ok=True)  # Criar pasta de parâmetros
+
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Baixar recursos NLTK essenciais
@@ -550,11 +556,11 @@ def main():
     # Salvar modelos para uso na pipeline de inferência
     os.makedirs(os.path.join(OUTPUT_DIR, "models"), exist_ok=True)
     import joblib
-    joblib.dump(tfidf_vectorizers, os.path.join(OUTPUT_DIR, "models", "03_tfidf_vectorizers.joblib"))
-    joblib.dump(lda_models, os.path.join(OUTPUT_DIR, "models", "03_lda_models.joblib"))
+    joblib.dump(tfidf_vectorizers, os.path.join(PARAMS_DIR, "03_tfidf_vectorizers.joblib"))
+    joblib.dump(lda_models, os.path.join(PARAMS_DIR, "03_lda_models.joblib"))
     
     print("\n=== Processamento de NLP concluído! ===")
-    print(f"Modelos salvos em: {os.path.join(OUTPUT_DIR, 'models')}")
+    print(f"Modelos salvos em: {PARAMS_DIR}")
     print(f"Dados processados salvos em: {OUTPUT_DIR}")
 
 if __name__ == "__main__":
