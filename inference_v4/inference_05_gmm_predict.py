@@ -15,14 +15,13 @@ import warnings
 project_root = "/Users/ramonmoreira/desktop/smart_ads"
 sys.path.append(project_root)
 
-# Importar a classe GMM_Wrapper para garantir que esteja disponível durante o carregamento
-from src.modeling.gmm_wrapper import GMM_Wrapper
+# A classe GMM_Wrapper não é mais necessária para o modelo portável
 
 warnings.filterwarnings('ignore')
 
 # Caminhos para os modelos calibrados e auxiliares
-CALIBRATED_MODEL_DIR = "/Users/ramonmoreira/desktop/smart_ads/models/calibrated/gmm_calibrated_20250518_152543"
-CALIBRATED_MODEL_PATH = os.path.join(CALIBRATED_MODEL_DIR, "gmm_calibrated.joblib")
+CALIBRATED_MODEL_DIR = "/Users/ramonmoreira/desktop/smart_ads/models/calibrated/gmm_portable"
+CALIBRATED_MODEL_PATH = os.path.join(CALIBRATED_MODEL_DIR, "gmm_portable.joblib")
 THRESHOLD_PATH = os.path.join(CALIBRATED_MODEL_DIR, "threshold.txt")
 
 # Componentes auxiliares ainda são necessários
