@@ -20,8 +20,8 @@ sys.path.append(project_root)
 warnings.filterwarnings('ignore')
 
 # Caminhos para os modelos calibrados e auxiliares
-CALIBRATED_MODEL_DIR = "/Users/ramonmoreira/desktop/smart_ads/models/calibrated/gmm_portable"
-CALIBRATED_MODEL_PATH = os.path.join(CALIBRATED_MODEL_DIR, "gmm_portable.joblib")
+CALIBRATED_MODEL_DIR = "/Users/ramonmoreira/desktop/smart_ads/models/calibrated/gmm_calibrated_20250518_152543"
+CALIBRATED_MODEL_PATH = os.path.join(CALIBRATED_MODEL_DIR, "gmm_calibrated.joblib")
 THRESHOLD_PATH = os.path.join(CALIBRATED_MODEL_DIR, "threshold.txt")
 
 # Componentes auxiliares ainda são necessários

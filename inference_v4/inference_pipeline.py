@@ -23,6 +23,12 @@ warnings.filterwarnings('ignore')
 project_root = "/Users/ramonmoreira/desktop/smart_ads"
 sys.path.insert(0, project_root)
 
+# Importar a classe GMM_Wrapper para garantir que esteja disponível durante o carregamento
+# No início do arquivo inference_pipeline.py, após os imports
+from src.modeling.gmm_wrapper import GMM_Wrapper
+import builtins
+builtins.GMM_Wrapper = GMM_Wrapper  # Adicionar ao namespace global para desserialização
+
 # Importar os scripts adaptados para inferência
 from inference_v4 import inference_02_preprocessing as step1
 from inference_v4 import inference_03_feature_engineering_1 as step2
