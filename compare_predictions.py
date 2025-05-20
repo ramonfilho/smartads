@@ -11,8 +11,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
 
-# Caminhos para os arquivos
-PIPELINE_PREDICTIONS_PATH = "/Users/ramonmoreira/desktop/smart_ads/inference/output/predictions_script11_style_20250518_172650.csv"
+# Caminhos atualizados para os arquivos
+PIPELINE_PREDICTIONS_PATH = "/Users/ramonmoreira/desktop/smart_ads/inference_v4/output/predictions.csv"
 REFERENCE_PREDICTIONS_PATH = "/Users/ramonmoreira/desktop/smart_ads/reports/calibration_validation_two_models/20250518_153608/gmm_test_results.csv"
 
 def load_predictions(pipeline_path, reference_path):
@@ -26,22 +26,41 @@ def load_predictions(pipeline_path, reference_path):
         if not os.path.exists(path):
             raise FileNotFoundError(f"Arquivo de predições {name} não encontrado: {path}")
     
-    # Carregar arquivos com apenas as colunas necessárias
-    # Para a pipeline, carregar apenas algumas colunas para economizar memória
-    pipeline_columns = ['email', 'prediction', 'probability']
+    # Carregar arquivo de pipeline
+    # Usando colunas mínimas necessárias para economizar memória
+    pipeline_columns = ['email', 'email_norm', 'prediction_probability', 'prediction_class']
     try:
         pipeline_df = pd.read_csv(pipeline_path, usecols=lambda x: x in pipeline_columns)
+        
+        # Renomear colunas para o padrão esperado pelo resto do script
+        rename_map = {}
+        if 'prediction_probability' in pipeline_df.columns and 'probability' not in pipeline_df.columns:
+            rename_map['prediction_probability'] = 'probability'
+        if 'prediction_class' in pipeline_df.columns and 'prediction' not in pipeline_df.columns:
+            rename_map['prediction_class'] = 'prediction'
+        
+        if rename_map:
+            pipeline_df = pipeline_df.rename(columns=rename_map)
+            print(f"Colunas renomeadas: {rename_map}")
+            
     except ValueError:
         print("Aviso: Não encontrou colunas específicas, carregando todas as colunas")
         pipeline_df = pd.read_csv(pipeline_path)
+        
+        # Tentar identificar e renomear colunas de predição
+        if 'prediction_probability' in pipeline_df.columns:
+            pipeline_df = pipeline_df.rename(columns={'prediction_probability': 'probability'})
+        if 'prediction_class' in pipeline_df.columns:
+            pipeline_df = pipeline_df.rename(columns={'prediction_class': 'prediction'})
+        
+        # Verificar se temos email ou email_norm
         if 'email' not in pipeline_df.columns:
-            # Tentar encontrar uma coluna de email com nome diferente
             email_cols = [col for col in pipeline_df.columns if 'email' in col.lower()]
             if email_cols:
                 pipeline_df = pipeline_df.rename(columns={email_cols[0]: 'email'})
                 print(f"Renomeando coluna {email_cols[0]} para 'email'")
     
-    # Para a referência, carregar todas as colunas pois normalmente tem poucas
+    # Carregar arquivo de referência
     reference_df = pd.read_csv(reference_path)
     
     print(f"Predições da pipeline: {pipeline_df.shape}")
@@ -52,6 +71,18 @@ def load_predictions(pipeline_path, reference_path):
         if 'prediction' not in df.columns or 'probability' not in df.columns:
             print(f"AVISO: Arquivo {name} não tem colunas 'prediction' e/ou 'probability'")
             print(f"Colunas disponíveis: {df.columns.tolist()}")
+            
+            # Tentar detectar colunas alternativas
+            pred_cols = [col for col in df.columns if 'prediction' in col.lower() or 'class' in col.lower()]
+            prob_cols = [col for col in df.columns if 'prob' in col.lower()]
+            
+            if pred_cols and 'prediction' not in df.columns:
+                df.rename(columns={pred_cols[0]: 'prediction'}, inplace=True)
+                print(f"Usando {pred_cols[0]} como coluna de predição")
+                
+            if prob_cols and 'probability' not in df.columns:
+                df.rename(columns={prob_cols[0]: 'probability'}, inplace=True)
+                print(f"Usando {prob_cols[0]} como coluna de probabilidade")
     
     return pipeline_df, reference_df
 
@@ -115,6 +146,11 @@ def align_predictions(pipeline_df, reference_df):
             suffixes=('_pipeline', '_reference')
         )
         
+        # Se "true" estiver disponível, incluir também
+        if 'true' in reference_filtered.columns:
+            true_df = reference_filtered[[common_id, 'true']].drop_duplicates(subset=[common_id])
+            merged_df = pd.merge(merged_df, true_df, on=common_id, how='left')
+        
         # Verificar se o tamanho do merge faz sentido
         expected_size = min(len(pipeline_filtered), len(reference_filtered))
         if len(merged_df) > expected_size * 1.1:  # 10% de margem
@@ -143,6 +179,10 @@ def create_aligned_df_by_index(pipeline_df, reference_df, min_rows):
         'prediction_reference': reference_df['prediction'].iloc[:min_rows].values,
         'probability_reference': reference_df['probability'].iloc[:min_rows].values
     })
+    
+    # Adicionar "true" se disponível
+    if 'true' in reference_df.columns:
+        merged_df['true'] = reference_df['true'].iloc[:min_rows].values
     
     print(f"Dados alinhados por índice: {merged_df.shape}")
     return merged_df
@@ -206,7 +246,7 @@ def evaluate_predictions(comparison_df, reference_df):
     """
     Avalia as predições contra valores reais, se disponíveis.
     """
-    if 'true' not in reference_df.columns:
+    if 'true' not in reference_df.columns and 'true' not in comparison_df.columns:
         print("\nAviso: Valores reais ('true') não encontrados no arquivo de referência")
         return
     
@@ -221,30 +261,33 @@ def evaluate_predictions(comparison_df, reference_df):
         else:
             comparison_sample = comparison_df
         
-        # Obter os valores reais correspondentes
-        if 'email' in comparison_sample.columns and 'email' in reference_df.columns and 'true' in reference_df.columns:
-            # Usando email como chave para obter valores reais
-            ref_subset = reference_df[['email', 'true']].drop_duplicates(subset=['email'])
-            comparison_sample = pd.merge(
-                comparison_sample,
-                ref_subset,
-                on='email',
-                how='left'
-            )
-        else:
-            # Tentativa alternativa - usar índices se possível
-            print("Não foi possível juntar diretamente com valores reais, usando método alternativo.")
-            # Verificar se temos 'true' nos dados alinhados
-            if 'true' in comparison_sample.columns:
-                print("Valores 'true' já estão presentes nos dados alinhados.")
+        # Se já temos 'true' no DataFrame de comparação, usá-lo diretamente
+        if 'true' in comparison_sample.columns:
+            print("Usando valores 'true' já presentes nos dados alinhados.")
+        # Caso contrário, tentar obter de reference_df
+        elif 'true' in reference_df.columns:
+            # Tentar juntar usando identificador comum se disponível
+            if 'email' in comparison_sample.columns and 'email' in reference_df.columns:
+                # Usando email como chave para obter valores reais
+                ref_subset = reference_df[['email', 'true']].drop_duplicates(subset=['email'])
+                comparison_sample = pd.merge(
+                    comparison_sample,
+                    ref_subset,
+                    on='email',
+                    how='left'
+                )
+            # Tentar usar índices como alternativa
             else:
-                # Tentar pegar valores 'true' do DataFrame de referência
                 try:
                     comparison_sample['true'] = reference_df['true'].iloc[:len(comparison_sample)].values
-                    print("Valores 'true' adicionados aos dados.")
-                except:
-                    print("Não foi possível adicionar valores 'true'. Pulando avaliação.")
+                    print("Valores 'true' adicionados usando índices.")
+                except Exception as e:
+                    print(f"Erro ao adicionar valores 'true': {e}")
+                    print("Pulando avaliação contra valores reais.")
                     return
+        else:
+            print("Valores 'true' não encontrados. Pulando avaliação contra valores reais.")
+            return
         
         # Verificar se temos true em comparison_sample
         if 'true' not in comparison_sample.columns:
