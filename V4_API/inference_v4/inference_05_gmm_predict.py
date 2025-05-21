@@ -1,3 +1,4 @@
+# V4_API/inference_v4/inference_05_gmm_predict.py
 #!/usr/bin/env python
 """
 Script adaptado para inferência com o modelo GMM calibrado.
