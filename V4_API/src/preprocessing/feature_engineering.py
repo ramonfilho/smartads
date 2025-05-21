@@ -3,38 +3,27 @@ import numpy as np
 from sklearn.preprocessing import LabelEncoder
 from datetime import datetime
 
-def create_identity_features(df, fit=True, params=None):
-    """Cria features baseadas nos campos de identidade do usuário.
-    
-    Args:
-        df: DataFrame pandas
-        fit: Se True, realiza processo de fit, caso contrário utiliza params
-        params: Dicionário com parâmetros aprendidos na fase de fit
-        
-    Returns:
-        DataFrame com features adicionadas
-        Dicionário com parâmetros atualizados
+def create_identity_features(df, fit=False, params=None):
     """
-    # Inicializar parâmetros
+    Cria features relacionadas à identidade do usuário (telefone válido, email validado, etc.)
+    """
+    df_result = df.copy()
+    
+    # Se não existir um dicionário de parâmetros, criar um novo
     if params is None:
         params = {}
     
-    # Cria uma cópia para não modificar o original
-    df_result = df.copy()
-    
-    # Feature de comprimento do nome
-    if '¿Cómo te llamas?' in df_result.columns:
-        df_result['name_length'] = df_result['¿Cómo te llamas?'].str.len()
-        df_result['name_word_count'] = df_result['¿Cómo te llamas?'].str.split().str.len()
-    
-    # Feature de validade do telefone
+    # Garantir que a coluna de telefone seja string antes de aplicar operações de string
     if '¿Cual es tu telefono?' in df_result.columns:
+        # Converter NaN/None para string vazia primeiro
+        df_result['¿Cual es tu telefono?'] = df_result['¿Cual es tu telefono?'].fillna('')
+        # Converter todos os valores para string
+        df_result['¿Cual es tu telefono?'] = df_result['¿Cual es tu telefono?'].astype(str)
+        # Agora aplicar a operação de string com segurança
         df_result['valid_phone'] = df_result['¿Cual es tu telefono?'].str.replace(r'\D', '', regex=True).str.len() >= 8
-    
-    # Feature de presença de instagram
-    if '¿Cuál es tu instagram?' in df_result.columns:
-        df_result['has_instagram'] = df_result['¿Cuál es tu instagram?'].notna() & (df_result['¿Cuál es tu instagram?'] != '')
-    
+    else:
+        df_result['valid_phone'] = False
+        
     return df_result, params
 
 def create_temporal_features(df, fit=True, params=None):

@@ -1,4 +1,4 @@
-# V4_API/app.py
+# V4_API/app.py (início do arquivo atualizado)
 import os
 import sys
 import pandas as pd
@@ -15,10 +15,23 @@ from datetime import datetime
 project_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, project_root)
 
-# Importar a classe GMM_Wrapper para garantir que esteja disponível durante o carregamento
-from src.modeling.gmm_wrapper import GMM_Wrapper
-import builtins
-builtins.GMM_Wrapper = GMM_Wrapper  # Adicionar ao namespace global para desserialização
+# ===== SOLUÇÃO PARA O PROBLEMA DE DESSERIALIZAÇÃO =====
+# Importar a classe GMM_Wrapper diretamente 
+try:
+    from src.modeling.gmm_wrapper import GMM_Wrapper
+    
+    # Registrar a classe no módulo __main__ (contexto do gunicorn)
+    sys.modules['__main__'].GMM_Wrapper = GMM_Wrapper
+    
+    # Também registrar no builtins por segurança
+    import builtins
+    builtins.GMM_Wrapper = GMM_Wrapper
+    
+    print("🔧 GMM_Wrapper registrado no módulo __main__ e builtins")
+except ImportError as e:
+    print(f"❌ ERRO ao importar GMM_Wrapper: {e}")
+    # Não interromper a inicialização do app, mas registrar o erro
+# ============================================================
 
 # Importar a pipeline de inferência
 from inference_v4.inference_pipeline import process_inference, load_parameters
