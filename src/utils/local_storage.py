@@ -222,7 +222,7 @@ def connect_to_gcs(bucket_name):
         Objeto LocalBucket
     """
     # CORREÇÃO: Usar o caminho correto para os dados
-    base_path = "/Users/ramonmoreira/Desktop/smart_ads/data/raw_data"
+    base_path = "/Users/ramonmoreira/Desktop/smart_ads/data/00_raw_data"
     print(f"Conectando ao armazenamento local em: {os.path.abspath(base_path)}")
     return LocalBucket(base_path)
 
@@ -258,6 +258,7 @@ def extract_launch_id(filename):
         r'L(\d+)[_\s\-]',  # L16_, L16-, L16 
         r'[_\s\-]L(\d+)',  # _L16, -L16, L16
         r'L(\d+)\.csv',    # L16.csv
+        r'L(\d+)\.xlsx',   # L16.xlsx (ADICIONADO)
         r'L(\d+)\.xls',    # L16.xls
         r'L(\d+)$'         # termina com L16
     ]
@@ -271,6 +272,79 @@ def extract_launch_id(filename):
     return None
 
 
+def prioritize_file_format(file_paths):
+    """
+    Quando há múltiplos arquivos do mesmo tipo/lançamento, prioriza por formato:
+    - Para UTMs: .csv > .xlsx > .xls (CSV é mais confiável para UTMs)
+    - Para outros: .xlsx > .xls > .csv (Excel é mais confiável)
+    
+    Args:
+        file_paths: Lista de caminhos de arquivos
+        
+    Returns:
+        Lista de arquivos filtrada (um por tipo/lançamento)
+    """
+    # Agrupar por tipo e lançamento
+    grouped = {}
+    
+    for file_path in file_paths:
+        launch_id = extract_launch_id(file_path)
+        file_type = None
+        
+        # Determinar tipo
+        if any(keyword in file_path.lower() for keyword in ['pesquisa', 'survey', 'respuestas']):
+            file_type = 'survey'
+        elif any(keyword in file_path.lower() for keyword in ['comprador', 'mario']):
+            file_type = 'buyer'
+        elif any(keyword in file_path.lower() for keyword in ['utm']):
+            file_type = 'utm'
+            
+        if file_type and launch_id:
+            key = f"{file_type}_{launch_id}"
+            if key not in grouped:
+                grouped[key] = []
+            grouped[key].append(file_path)
+    
+    # Selecionar melhor arquivo de cada grupo
+    selected_files = []
+    for key, files in grouped.items():
+        if len(files) == 1:
+            selected_files.append(files[0])
+        else:
+            # Separar por extensão
+            xlsx_files = [f for f in files if f.endswith('.xlsx')]
+            xls_files = [f for f in files if f.endswith('.xls')]
+            csv_files = [f for f in files if f.endswith('.csv')]
+            
+            # Determinar tipo do arquivo para aplicar priorização correta
+            file_type = key.split('_')[0]
+            
+            if file_type == 'utm':
+                # Para UTMs: priorizar CSV > XLSX > XLS
+                if csv_files:
+                    selected_files.append(csv_files[0])
+                    print(f"  Priorizando .csv para {key}: {os.path.basename(csv_files[0])}")
+                elif xlsx_files:
+                    selected_files.append(xlsx_files[0])
+                    print(f"  Priorizando .xlsx para {key}: {os.path.basename(xlsx_files[0])}")
+                elif xls_files:
+                    selected_files.append(xls_files[0])
+                    print(f"  Priorizando .xls para {key}: {os.path.basename(xls_files[0])}")
+            else:
+                # Para outros tipos: priorizar XLSX > XLS > CSV
+                if xlsx_files:
+                    selected_files.append(xlsx_files[0])
+                    print(f"  Priorizando .xlsx para {key}: {os.path.basename(xlsx_files[0])}")
+                elif xls_files:
+                    selected_files.append(xls_files[0])
+                    print(f"  Priorizando .xls para {key}: {os.path.basename(xls_files[0])}")
+                elif csv_files:
+                    selected_files.append(csv_files[0])
+                    print(f"  Priorizando .csv para {key}: {os.path.basename(csv_files[0])}")
+    
+    return selected_files
+
+
 def categorize_files(file_paths):
     """
     Categoriza arquivos por tipo e lançamento.
@@ -281,15 +355,19 @@ def categorize_files(file_paths):
     Returns:
         Tuple com listas de categorias e dicionário por lançamento
     """
+    # NOVA FUNCIONALIDADE: Priorizar formatos para evitar duplicatas
+    file_paths = prioritize_file_format(file_paths)
+    print(f"Após priorização: {len(file_paths)} arquivos únicos")
+    
     survey_files = []
     buyer_files = []
     utm_files = []
-    # Criar dicionário para lançamentos de L16 a L21
-    all_files_by_launch = {f"L{i}": [] for i in range(16, 22)}
+    # CORREÇÃO: Incluir L22
+    all_files_by_launch = {f"L{i}": [] for i in range(16, 23)}  # Agora vai até L22
     
     for file_path in file_paths:
         # Determinar o tipo de arquivo
-        if any(keyword in file_path.lower() for keyword in ['pesquisa', 'survey', 'respuestas', 'ayudame']):
+        if any(keyword in file_path.lower() for keyword in ['pesquisa', 'survey', 'respuestas']):
             survey_files.append(file_path)
         elif any(keyword in file_path.lower() for keyword in ['comprador', 'mario']):
             buyer_files.append(file_path)

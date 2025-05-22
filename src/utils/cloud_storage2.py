@@ -4,7 +4,7 @@ Este módulo permite que o código que importa de cloud_storage.py continue func
 """
 
 # Importar e expor funções do local_storage.py
-from .local_storage import (
+from ..preprocessing.local_storage import (
     connect_to_gcs,
     list_files_by_extension,
     categorize_files,

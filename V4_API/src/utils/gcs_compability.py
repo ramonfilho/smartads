@@ -6,7 +6,7 @@ Este módulo permite que o código escrito para GCS funcione com arquivos locais
 import os
 import pandas as pd
 import re
-from src.utils.local_storage import list_files_by_extension as list_local_files
+from src.preprocessing.local_storage import list_files_by_extension as list_local_files
 
 class LocalBucket:
     """Classe que emula um bucket do GCS usando armazenamento local."""

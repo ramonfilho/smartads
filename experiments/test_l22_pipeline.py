@@ -23,7 +23,7 @@ import builtins
 builtins.GMM_Wrapper = GMM_Wrapper  # Esta linha é crucial para o carregamento do modelo
 
 # Importar módulos necessários
-from src.utils.local_storage import (
+from src.preprocessing.local_storage import (
     connect_to_gcs, load_csv_or_excel, load_csv_with_auto_delimiter
 )
 from src.preprocessing.email_processing import normalize_emails_in_dataframe
