@@ -356,7 +356,8 @@ def apply(df, params=None):
         print("Parâmetros não fornecidos. Carregando modelos do disco...")
         try:
             # Definir caminhos apenas quando necessário
-            models_dir = "/Users/ramonmoreira/desktop/smart_ads/data/03_feature_engineering_1/models"
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            models_dir = os.path.join(project_root, "src/preprocessing/03_params")
             tfidf_path = os.path.join(models_dir, "03_tfidf_vectorizers.joblib")
             lda_path = os.path.join(models_dir, "03_lda_models.joblib")
             

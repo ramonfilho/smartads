@@ -172,7 +172,8 @@ def apply(df, params=None):
     """
     # Carregar parâmetros se não fornecidos
     if params is None:
-        params_path = "/Users/ramonmoreira/desktop/smart_ads/src/preprocessing/02_params/02_params.joblib"
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        params_path = os.path.join(project_root, "src/preprocessing/02_params/02_params.joblib")
         print(f"Carregando parâmetros de: {params_path}")
         try:
             params = joblib.load(params_path)

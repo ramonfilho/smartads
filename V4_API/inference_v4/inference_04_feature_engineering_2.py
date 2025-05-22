@@ -198,7 +198,8 @@ def apply(df, params=None):
     if params is None:
         print("Parâmetros não fornecidos. Carregando do disco...")
         try:
-            params_path = "/Users/ramonmoreira/desktop/smart_ads/src/preprocessing/04_params/04_params.joblib"
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            params_path = os.path.join(project_root, "src/preprocessing/04_params/04_params.joblib")
             print(f"Carregando parâmetros de: {params_path}")
             params = joblib.load(params_path)
         except Exception as e:
