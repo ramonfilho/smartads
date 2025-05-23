@@ -49,10 +49,10 @@ def merge_datasets(surveys_df, utm_df, buyers_df):
     Args:
         surveys_df: DataFrame com respostas da pesquisa e target
         utm_df: DataFrame com dados de UTM
-        buyers_df: DataFrame com dados de compradores (IGNORADO para evitar vazamento)
+        buyers_df: DataFrame com dados de compradores
         
     Returns:
-        DataFrame combinado (sem features de compradores)
+        DataFrame combinado
     """
     print("Merging datasets...")
     
@@ -73,7 +73,7 @@ def merge_datasets(surveys_df, utm_df, buyers_df):
                 from ..preprocessing.email_processing import normalize_email
                 result_df['email_norm'] = result_df['email'].apply(normalize_email)
                 
-            # Marcar compradores se possível (mas não adicionar suas features)
+            # Marcar compradores se possível
             if not buyers_df.empty and 'email_norm' in buyers_df.columns:
                 buyer_emails = set(buyers_df['email_norm'].dropna())
                 if 'email_norm' in result_df.columns:
@@ -81,14 +81,11 @@ def merge_datasets(surveys_df, utm_df, buyers_df):
                         lambda email: 1 if email in buyer_emails else 0
                     )
         
-        # Se temos apenas dados de compradores, criar dataset mínimo
+        # Se temos apenas dados de compradores, usar esses
         elif not buyers_df.empty:
-            print("Using buyer data as minimal base")
-            result_df = pd.DataFrame({
-                'email': buyers_df['email'].iloc[:0] if 'email' in buyers_df.columns else [],
-                'email_norm': buyers_df['email_norm'].iloc[:0] if 'email_norm' in buyers_df.columns else [],
-                'target': []
-            })
+            print("Using buyer data as base")
+            result_df = buyers_df.copy()
+            result_df['target'] = 1  # Todos os registros são compradores
         
         # Se não temos nada, criar DataFrame vazio
         else:
@@ -117,12 +114,31 @@ def merge_datasets(surveys_df, utm_df, buyers_df):
         merged_df = surveys_df.copy()
         print("No UTM data available or missing email column")
     
-    # NÃO mesclar dados de compradores para evitar vazamento de dados na inferência
-    # Os dados de compradores são usados apenas para criar a variável target
-    print("Buyer data not merged to maintain train-inference compatibility")
+    # Mesclar com dados de compradores, se disponíveis
+    if not buyers_df.empty and 'email_norm' in buyers_df.columns:
+        # Selecionar colunas úteis de compradores para não duplicar colunas desnecessárias
+        buyer_cols = ['email_norm']
+        for col in buyers_df.columns:
+            if col not in merged_df.columns and col != 'email_norm':
+                buyer_cols.append(col)
+        
+        buyers_subset = buyers_df[buyer_cols].copy()
+        
+        # Realizar a mesclagem
+        final_df = pd.merge(
+            merged_df,
+            buyers_subset,
+            on='email_norm',
+            how='left',
+            suffixes=('', '_buyer')
+        )
+        print(f"Merged with buyer data: {final_df.shape[0]} rows, {final_df.shape[1]} columns")
+    else:
+        final_df = merged_df.copy()
+        print("No buyer data available or missing email_norm column")
     
-    print(f"Final merged dataset: {merged_df.shape[0]} rows, {merged_df.shape[1]} columns")
-    return merged_df
+    print(f"Final merged dataset: {final_df.shape[0]} rows, {final_df.shape[1]} columns")
+    return final_df
 
 def split_data(df, output_dir, test_size=0.3, val_size=0.5, stratify=True, random_state=42):
     """

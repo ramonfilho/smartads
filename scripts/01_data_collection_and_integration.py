@@ -20,7 +20,6 @@ from src.utils.local_storage import (
 from src.preprocessing.email_processing import normalize_emails_in_dataframe
 from src.preprocessing.data_matching import match_surveys_with_buyers
 from src.preprocessing.data_integration import create_target_variable, merge_datasets, split_data
-from src.preprocessing.column_normalization import normalize_survey_columns, validate_normalized_columns
 
 # Funções adaptadas do data_loader.py para usar o armazenamento local
 def find_email_column(df):
@@ -32,18 +31,13 @@ def find_email_column(df):
     return None
 
 def process_survey_file(bucket, file_path):
-    """Processa um arquivo de pesquisa COM NORMALIZAÇÃO DE COLUNAS."""
+    """Processa um arquivo de pesquisa."""
     df = load_csv_or_excel(bucket, file_path)
     if df is None:
         return None
         
     # Identificar o lançamento deste arquivo
     launch_id = extract_launch_id(file_path)
-    
-    # ====== NOVA FUNCIONALIDADE: NORMALIZAR COLUNAS ======
-    df = normalize_survey_columns(df, launch_id)
-    validate_normalized_columns(df, launch_id)
-    # ====================================================
     
     # Encontrar e renomear coluna de email
     email_col = find_email_column(df)
@@ -101,14 +95,14 @@ def process_utm_file(bucket, file_path):
     return df
 
 def load_survey_files(bucket, survey_files):
-    """Carrega todos os arquivos de pesquisa COM NORMALIZAÇÃO e tratamento de erro."""
+    """Carrega todos os arquivos de pesquisa."""
     survey_dfs = []
     launch_data = {}
     
     print("\nLoading survey files...")
     for file_path in survey_files:
         try:
-            df = process_survey_file(bucket, file_path)  # Já inclui normalização que você implementou
+            df = process_survey_file(bucket, file_path)
             if df is not None:
                 survey_dfs.append(df)
                 
@@ -122,7 +116,6 @@ def load_survey_files(bucket, survey_files):
                 print(f"  - Loaded: {file_path} ({launch_id if launch_id else ''}), {df.shape[0]} rows, {df.shape[1]} columns")
         except Exception as e:
             print(f"  - Error processing {file_path}: {str(e)}")
-            # Continuar processamento mesmo com erro
     
     return survey_dfs, launch_data
 
@@ -251,8 +244,8 @@ def main():
     # 9. Criar variável alvo
     surveys_with_target = create_target_variable(surveys, matches_df)
     
-    # 10. Mesclar datasets (sem incluir dados de compradores para evitar vazamento)
-    merged_data = merge_datasets(surveys_with_target, utms, pd.DataFrame())
+    # 10. Mesclar datasets
+    merged_data = merge_datasets(surveys_with_target, utms, buyers)
     
     # 11. Estatísticas de lançamento
     if 'lançamento' in merged_data.columns:
