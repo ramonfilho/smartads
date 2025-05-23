@@ -23,9 +23,9 @@ warnings.filterwarnings('ignore')
 
 # Configurar projeto - ajustado para seu ambiente local
 PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
-INPUT_DIR = os.path.join(PROJECT_ROOT, "data/01_split")
-PROCESSED_DIR = os.path.join(PROJECT_ROOT, "data/02_processed")
-OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/03_feature_engineering_1")
+INPUT_DIR = os.path.join(PROJECT_ROOT, "data/V5/01_split")
+PROCESSED_DIR = os.path.join(PROJECT_ROOT, "data/V5/02_processed")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/V5/03_feature_engineering_1")
 PARAMS_DIR = os.path.join(PROJECT_ROOT, "src/preprocessing/03_params")  # Nova pasta para parâmetros
 
 # Garantir que ambos os diretórios existam
@@ -515,7 +515,6 @@ def main():
         'Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?',
         '¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?',
         'Déjame un mensaje',
-        '¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?'
     ]
     
     print(f"\nColunas de texto a processar: {text_columns}")
