@@ -125,7 +125,6 @@ def normalize_emails_preserving_originals(df, survey_email_col='¿Cuál es tu e-
         mask = df_result['email_norm'].isna() & df_result[source_col].notna()
         if mask.any():
             df_result.loc[mask, 'email_norm'] = df_result.loc[mask, source_col].apply(normalize_email)
-            print(f"   📧 Normalized {mask.sum()} emails from '{source_col}'")
     
     return df_result
 
@@ -215,8 +214,6 @@ def validate_production_compatibility(df, show_warnings=True):
     Returns:
         Tuple (is_compatible, validation_report)
     """
-    print("\n🔍 Production Compatibility Validation:")
-    
     validation_report = {
         'is_compatible': True,
         'errors': [],
@@ -235,15 +232,9 @@ def validate_production_compatibility(df, show_warnings=True):
     if missing_columns:
         validation_report['is_compatible'] = False
         validation_report['errors'].append(f"Missing required columns: {missing_columns}")
-        if show_warnings:
-            print(f"   ❌ Missing columns: {missing_columns}")
-    else:
-        print(f"   ✅ All required columns present")
     
     if extra_columns:
         validation_report['warnings'].append(f"Extra columns found: {extra_columns}")
-        if show_warnings:
-            print(f"   ⚠️  Extra columns (will be ignored): {extra_columns}")
     
     # 2. Verificar ordem das colunas
     expected_order = [col for col in production_columns if col in df.columns]
@@ -251,10 +242,6 @@ def validate_production_compatibility(df, show_warnings=True):
     
     if expected_order != actual_order:
         validation_report['warnings'].append("Column order differs from expected")
-        if show_warnings:
-            print(f"   ⚠️  Column order differs from production expectation")
-    else:
-        print(f"   ✅ Column order matches production")
     
     # 3. Verificar dados nas colunas críticas
     critical_data_columns = ['¿Cuál es tu e-mail?', 'E-MAIL', 'DATA']
@@ -267,8 +254,6 @@ def validate_production_compatibility(df, show_warnings=True):
             
             if null_percentage > 90:
                 validation_report['warnings'].append(f"{col} has {null_percentage:.1f}% null values")
-                if show_warnings:
-                    print(f"   ⚠️  {col} has very low data coverage: {100-null_percentage:.1f}%")
     
     # 4. Verificar target (se presente)
     if 'target' in df.columns:
@@ -276,18 +261,9 @@ def validate_production_compatibility(df, show_warnings=True):
         if not set(target_values).issubset({0, 1, np.nan}):
             validation_report['errors'].append(f"Invalid target values: {target_values}")
             validation_report['is_compatible'] = False
-            if show_warnings:
-                print(f"   ❌ Invalid target values found: {target_values}")
         else:
             positive_rate = (df['target'] == 1).sum() / len(df) * 100 if len(df) > 0 else 0
             validation_report['info'].append(f"Target positive rate: {positive_rate:.2f}%")
-            print(f"   ✅ Target variable valid (positive rate: {positive_rate:.2f}%)")
-    
-    # 5. Sumário
-    print(f"\n   📊 Validation Summary:")
-    print(f"      Errors: {len(validation_report['errors'])}")
-    print(f"      Warnings: {len(validation_report['warnings'])}")
-    print(f"      Compatible: {'✅ Yes' if validation_report['is_compatible'] else '❌ No'}")
     
     return validation_report['is_compatible'], validation_report
 
@@ -442,7 +418,7 @@ def match_surveys_with_buyers_improved(surveys, buyers, utms=None):
     Realiza correspondência entre pesquisas e compradores usando email_norm.
     Adaptado para trabalhar com as colunas de email originais preservadas.
     """
-    print("\nMatching surveys with buyers (preserving original email columns)...")
+    print("\nMatching surveys with buyers...")
     start_time = time.time()
     
     # Verificar se podemos prosseguir com a correspondência
@@ -481,14 +457,14 @@ def match_surveys_with_buyers_improved(surveys, buyers, utms=None):
             matches.append(match_data)
             match_count += 1
     
-    print(f"   🎯 Found {match_count} matches out of {len(buyers)} buyers")
-    print(f"   📈 Match rate: {(match_count/len(buyers)*100):.1f}%")
+    print(f"   Found {match_count} matches out of {len(buyers)} buyers")
+    print(f"   Match rate: {(match_count/len(buyers)*100):.1f}%")
     
     matches_df = pd.DataFrame(matches)
     
     # Calcular tempo gasto
     end_time = time.time()
-    print(f"   ⏱️  Matching completed in {end_time - start_time:.2f} seconds.")
+    print(f"   Matching completed in {end_time - start_time:.2f} seconds.")
     
     return matches_df
 
@@ -521,21 +497,12 @@ def create_target_variable(surveys_df, matches_df):
     positive_count = result_df['target'].sum()
     expected_positives = len(matches_df)
     
-    print(f"   📊 Created target variable: {positive_count} positive examples out of {len(result_df)}")
+    print(f"   Created target variable: {positive_count} positive examples out of {len(result_df)}")
     
     if positive_count != expected_positives:
-        print(f"   ⚠️  WARNING: Target integrity check failed!")
+        print(f"   WARNING: Target integrity check failed!")
         print(f"      Expected {expected_positives} positives (from matches)")
         print(f"      Got {positive_count} positives in target")
-        print(f"      Difference: {positive_count - expected_positives}")
-        
-        # Investigar a discrepância
-        if positive_count < expected_positives:
-            print(f"      Some matches have survey_ids not in the survey DataFrame")
-        else:
-            print(f"      Target has more positives than matches - this should not happen!")
-    else:
-        print(f"   ✅ Target integrity check passed")
     
     return result_df
 
@@ -544,7 +511,7 @@ def merge_datasets(surveys_df, utm_df, buyers_df):
     Mescla as diferentes fontes de dados em um único dataset.
     CORRIGIDO: Remove duplicatas de UTM antes do merge para evitar explosão de registros.
     """
-    print("Merging datasets (preserving original email columns)...")
+    print("Merging datasets...")
     
     if surveys_df.empty:
         print("WARNING: Empty survey data")
@@ -553,10 +520,9 @@ def merge_datasets(surveys_df, utm_df, buyers_df):
     # Mesclar pesquisas com UTM usando email_norm
     if not utm_df.empty and 'email_norm' in utm_df.columns and 'email_norm' in surveys_df.columns:
         # CORREÇÃO: Remover duplicatas de email_norm nas UTMs antes do merge
-        print(f"   📊 UTM records before deduplication: {len(utm_df):,}")
+        print(f"   UTM records before deduplication: {len(utm_df):,}")
         utm_df_dedup = utm_df.drop_duplicates(subset=['email_norm'])
-        print(f"   ✂️  UTM records after deduplication: {len(utm_df_dedup):,}")
-        print(f"   🔄 Removed {len(utm_df) - len(utm_df_dedup):,} duplicate emails from UTMs")
+        print(f"   UTM records after deduplication: {len(utm_df_dedup):,}")
         
         merged_df = pd.merge(
             surveys_df,
@@ -565,12 +531,7 @@ def merge_datasets(surveys_df, utm_df, buyers_df):
             how='left',
             suffixes=('', '_utm')
         )
-        print(f"   ✅ Merged surveys with UTM data: {merged_df.shape[0]} rows, {merged_df.shape[1]} columns")
-        
-        # Verificar que não houve explosão de registros
-        if len(merged_df) > len(surveys_df):
-            print(f"   ⚠️  WARNING: Merge created {len(merged_df) - len(surveys_df)} extra records!")
-            print("   🔍 This should not happen with deduplicated UTMs. Investigating...")
+        print(f"   Merged surveys with UTM data: {merged_df.shape[0]} rows, {merged_df.shape[1]} columns")
         
         # Consolidar colunas de email das UTMs
         if 'E-MAIL_utm' in merged_df.columns and 'E-MAIL' not in merged_df.columns:
@@ -581,18 +542,18 @@ def merge_datasets(surveys_df, utm_df, buyers_df):
             merged_df.loc[mask, 'E-MAIL'] = merged_df.loc[mask, 'E-MAIL_utm']
     else:
         merged_df = surveys_df.copy()
-        print("   ⚠️  No UTM data available for merging")
+        print("   No UTM data available for merging")
     
-    print(f"   📊 Final merged dataset: {merged_df.shape[0]} rows, {merged_df.shape[1]} columns")
+    print(f"   Final merged dataset: {merged_df.shape[0]} rows, {merged_df.shape[1]} columns")
     return merged_df
 
 def prepare_final_dataset(df):
     """
     Prepara o dataset final removendo apenas email_norm e preservando emails originais.
     """
-    print("\nPreparing final dataset (preserving original emails)...")
+    print("\nPreparing final dataset...")
     
-    print(f"   📊 Original dataset: {df.shape[0]} rows, {df.shape[1]} columns")
+    print(f"   Original dataset: {df.shape[0]} rows, {df.shape[1]} columns")
     
     # Listar todas as colunas originais
     original_columns = set(df.columns)
@@ -603,46 +564,28 @@ def prepare_final_dataset(df):
     # Remover email_norm (usado apenas para matching)
     if 'email_norm' in df_preserved.columns:
         df_preserved = df_preserved.drop(columns=['email_norm'])
-        print(f"   ✂️  Removed email_norm column (matching-only)")
     
     # Remover coluna 'email' genérica se ainda existir
     if 'email' in df_preserved.columns:
         df_preserved = df_preserved.drop(columns=['email'])
-        print(f"   ✂️  Removed generic 'email' column")
     
     # Filtrar para colunas de inferência (preservando dados)
     df_filtered = filter_to_inference_columns_preserving_data(df_preserved, add_missing=True)
     
-    # Análise de colunas
+    # Análise detalhada de colunas removidas
     final_columns = set(df_filtered.columns)
     removed_columns = original_columns - final_columns
-    added_columns = final_columns - original_columns
     
-    print(f"\n   📋 ANÁLISE DETALHADA DE COLUNAS:")
-    print(f"   📊 Colunas originais: {len(original_columns)}")
-    print(f"   📊 Colunas finais: {len(final_columns)}")
-    
+    print(f"\n   COLUMNS REMOVED FOR PRODUCTION COMPATIBILITY:")
+    print(f"   Total columns removed: {len(removed_columns)}")
     if removed_columns:
-        print(f"   🗑️  Colunas REMOVIDAS ({len(removed_columns)}):")
+        print(f"   Removed columns list:")
         for col in sorted(removed_columns):
             print(f"      - {col}")
+    else:
+        print(f"   No columns were removed (all original columns are in INFERENCE_COLUMNS)")
     
-    # Verificar se as colunas de email têm dados
-    email_cols_status = []
-    if '¿Cuál es tu e-mail?' in df_filtered.columns:
-        non_null = df_filtered['¿Cuál es tu e-mail?'].notna().sum()
-        email_cols_status.append(f"'¿Cuál es tu e-mail?': {non_null} valores")
-    
-    if 'E-MAIL' in df_filtered.columns:
-        non_null = df_filtered['E-MAIL'].notna().sum()
-        email_cols_status.append(f"'E-MAIL': {non_null} valores")
-    
-    if email_cols_status:
-        print(f"   📧 Status das colunas de email:")
-        for status in email_cols_status:
-            print(f"      - {status}")
-    
-    print(f"   📊 Final dataset: {df_filtered.shape[0]} rows, {df_filtered.shape[1]} columns")
+    print(f"\n   Final dataset: {df_filtered.shape[0]} rows, {df_filtered.shape[1]} columns")
     
     return df_filtered
 
@@ -659,10 +602,10 @@ def split_data(df, output_dir, test_size=0.3, val_size=0.5, stratify=True, rando
     
     # Verificar se temos target para estratificar
     if stratify and 'target' in df.columns and df['target'].nunique() > 1:
-        print("   📊 Using stratified split based on target variable")
+        print("   Using stratified split based on target variable")
         strat_col = df['target']
     else:
-        print("   🎲 Using random split (no stratification)")
+        print("   Using random split (no stratification)")
         strat_col = None
     
     # Primeira divisão: treino vs. (validação + teste)
@@ -687,13 +630,13 @@ def split_data(df, output_dir, test_size=0.3, val_size=0.5, stratify=True, rando
     )
     
     # Salvar os conjuntos
-    print(f"   📁 Train set: {train_df.shape[0]} rows, {train_df.shape[1]} columns")
+    print(f"   Train set: {train_df.shape[0]} rows, {train_df.shape[1]} columns")
     train_df.to_csv(os.path.join(output_dir, "train.csv"), index=False)
     
-    print(f"   📁 Validation set: {val_df.shape[0]} rows, {val_df.shape[1]} columns")
+    print(f"   Validation set: {val_df.shape[0]} rows, {val_df.shape[1]} columns")
     val_df.to_csv(os.path.join(output_dir, "validation.csv"), index=False)
     
-    print(f"   📁 Test set: {test_df.shape[0]} rows, {test_df.shape[1]} columns")
+    print(f"   Test set: {test_df.shape[0]} rows, {test_df.shape[1]} columns")
     test_df.to_csv(os.path.join(output_dir, "test.csv"), index=False)
     
     return train_df, val_df, test_df
@@ -704,132 +647,88 @@ def split_data(df, output_dir, test_size=0.3, val_size=0.5, stratify=True, rando
 
 def main():
     """Pipeline principal corrigido para preservar dados de email."""
-    print("🚀 Starting CORRECTED data collection and integration pipeline...")
-    print("   ✅ FIX: Preserving original email data in correct columns")
-    print("   ✅ FIX: Using email_norm only for matching")
-    print("   ✅ FIX: Deduplicating UTMs before merge")
-    print("   ✅ FIX: Validating target integrity")
-    print("   ✅ FIX: Production compatibility validation")
+    print("Starting data collection and integration pipeline...")
+    
+    # NOVO: Definir caminho dos dados brutos aqui
+    raw_data_path = "/Users/ramonmoreira/Desktop/smart_ads/data/raw_data"
     
     # 1. Conectar ao armazenamento local
-    print("\n1️⃣ Setting up connection to local storage...")
-    bucket = connect_to_gcs("local_bucket")
+    bucket = connect_to_gcs("local_bucket", data_path=raw_data_path)
     
     # 2. Listar e categorizar arquivos
-    print("\n2️⃣ Discovering and categorizing files...")
     file_paths = list_files_by_extension(bucket, prefix="")
-    print(f"   📁 Found {len(file_paths)} files")
+    print(f"Found {len(file_paths)} files in: {raw_data_path}")
     
     # 3. Categorizar arquivos
     survey_files, buyer_files, utm_files, all_files_by_launch = categorize_files(file_paths)
     
-    print(f"   📊 Survey files: {len(survey_files)}")
-    print(f"   💰 Buyer files: {len(buyer_files)}")
-    print(f"   🔗 UTM files: {len(utm_files)}")
+    print(f"Survey files: {len(survey_files)}")
+    print(f"Buyer files: {len(buyer_files)}")
+    print(f"UTM files: {len(utm_files)}")
     
     # 4. Carregar dados (preservando colunas originais)
-    print("\n3️⃣ Loading data files (preserving original columns)...")
     survey_dfs, _ = load_survey_files(bucket, survey_files)
     buyer_dfs, _ = load_buyer_files(bucket, buyer_files)
     utm_dfs, _ = load_utm_files(bucket, utm_files)
     
     # 5. Combinar datasets
-    print("\n4️⃣ Combining datasets...")
     surveys = pd.concat(survey_dfs, ignore_index=True) if survey_dfs else pd.DataFrame()
     buyers = pd.concat(buyer_dfs, ignore_index=True) if buyer_dfs else pd.DataFrame()
     utms = pd.concat(utm_dfs, ignore_index=True) if utm_dfs else pd.DataFrame()
     
-    print(f"   📊 Survey data: {surveys.shape[0]:,} rows, {surveys.shape[1]} columns")
-    print(f"   💰 Buyer data: {buyers.shape[0]:,} rows, {buyers.shape[1]} columns")
-    print(f"   🔗 UTM data: {utms.shape[0]:,} rows, {utms.shape[1]} columns")
+    print(f"Survey data: {surveys.shape[0]:,} rows, {surveys.shape[1]} columns")
+    print(f"Buyer data: {buyers.shape[0]:,} rows, {buyers.shape[1]} columns")
+    print(f"UTM data: {utms.shape[0]:,} rows, {utms.shape[1]} columns")
     
     # 6. Normalizar emails (criando email_norm para matching)
-    print("\n5️⃣ Normalizing emails for matching...")
-    
-    # Para surveys - preservar coluna original
     if not surveys.empty:
         surveys = normalize_emails_preserving_originals(surveys)
-        print(f"   ✅ Survey emails normalized (preserving originals)")
     
-    # Para buyers - ainda precisa da coluna 'email'
     if not buyers.empty and 'email' in buyers.columns:
         buyers = normalize_emails_in_dataframe(buyers)
-        print(f"   ✅ Buyer emails normalized")
     
-    # Para UTMs - preservar coluna original
     if not utms.empty:
         utms = normalize_emails_preserving_originals(utms)
-        print(f"   ✅ UTM emails normalized (preserving originals)")
     
     # 7. Matching
-    print("\n6️⃣ Performing matching...")
     matches_df = match_surveys_with_buyers_improved(surveys, buyers, utms)
     
     # 8. Criar variável alvo
-    print("\n7️⃣ Creating target variable...")
     surveys_with_target = create_target_variable(surveys, matches_df)
     
     # 9. Mesclar datasets
-    print("\n8️⃣ Merging datasets...")
     merged_data = merge_datasets(surveys_with_target, utms, pd.DataFrame())
     
     # 10. Preparar dataset final (preservando emails)
-    print("\n9️⃣ Preparing final dataset...")
     final_data = prepare_final_dataset(merged_data)
     
     # NOVA VALIDAÇÃO: Verificar compatibilidade com produção
-    print("\n🔟 Validating production compatibility...")
     is_compatible, validation_report = validate_production_compatibility(final_data)
     
     # 11. Estatísticas finais
-    print("\n1️⃣1️⃣ Final statistics...")
     if 'target' in final_data.columns:
         target_counts = final_data['target'].value_counts()
         total_records = len(final_data)
         positive_rate = (target_counts.get(1, 0) / total_records * 100) if total_records > 0 else 0
-        print(f"   🎯 Target variable distribution:")
-        print(f"      - Negative (0): {target_counts.get(0, 0):,} ({100-positive_rate:.2f}%)")
-        print(f"      - Positive (1): {target_counts.get(1, 0):,} ({positive_rate:.2f}%)")
-        
-        # VALIDAÇÃO FINAL: Verificar se número de positivos está correto
-        if len(matches_df) > 0:
-            expected_positives = len(matches_df)
-            actual_positives = target_counts.get(1, 0)
-            if actual_positives != expected_positives:
-                print(f"\n   ⚠️  ALERT: Final target validation")
-                print(f"      Matches found: {expected_positives}")
-                print(f"      Final positives: {actual_positives}")
-                print(f"      Discrepancy: {actual_positives - expected_positives}")
+        print(f"\nTarget variable distribution:")
+        print(f"   Negative (0): {target_counts.get(0, 0):,} ({100-positive_rate:.2f}%)")
+        print(f"   Positive (1): {target_counts.get(1, 0):,} ({positive_rate:.2f}%)")
     
     # 12. Split dos dados
-    print("\n1️⃣2️⃣ Splitting data for ML pipeline...")
-    output_dir = os.path.join(project_root, "data", "V5", "01_split")
+    output_dir = os.path.join(project_root, "data", "new", "01_split")
     
     if final_data.shape[0] > 0:
         train_df, val_df, test_df = split_data(final_data, output_dir, stratify=True)
         
-        print(f"\n✅ Pipeline completed successfully!")
-        print(f"   📁 Data saved to: {output_dir}")
-        print(f"   📊 Final dataset: {final_data.shape[0]:,} rows, {final_data.shape[1]} columns")
-        print(f"   🏭 Production compatible: {'Yes' if is_compatible else 'No'}")
-        
-        # Verificar status final dos emails
-        print(f"\n📧 Email data preservation check:")
-        if '¿Cuál es tu e-mail?' in final_data.columns:
-            survey_emails = final_data['¿Cuál es tu e-mail?'].notna().sum()
-            print(f"   ✅ Survey emails preserved: {survey_emails:,}")
-        
-        if 'E-MAIL' in final_data.columns:
-            utm_emails = final_data['E-MAIL'].notna().sum()
-            print(f"   ✅ UTM emails preserved: {utm_emails:,}")
+        print(f"\nPipeline completed successfully!")
+        print(f"Data saved to: {output_dir}")
         
         # Salvar relatório de validação
         validation_report_path = os.path.join(output_dir, "validation_report.json")
         with open(validation_report_path, 'w') as f:
             json.dump(validation_report, f, indent=2)
-        print(f"   📄 Validation report saved to: {validation_report_path}")
     else:
-        print(f"\n❌ No data was processed successfully!")
+        print("\nNo data was processed successfully!")
 
 if __name__ == "__main__":
     main()

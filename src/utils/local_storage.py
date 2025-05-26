@@ -211,20 +211,29 @@ class LocalBlob:
             return f.read()
 
 
-def connect_to_gcs(bucket_name):
+def connect_to_gcs(bucket_name, data_path=None):
     """
     Conecta a um "bucket" local.
     
     Args:
         bucket_name: Nome do bucket (ignorado, apenas para compatibilidade)
+        data_path: Caminho opcional para os dados. Se não fornecido, lança erro.
         
     Returns:
         Objeto LocalBucket
     """
-    # CORREÇÃO: Usar o caminho correto para os dados
-    base_path = "/Users/ramonmoreira/Desktop/smart_ads/data/00_raw_data"
-    print(f"Conectando ao armazenamento local em: {os.path.abspath(base_path)}")
-    return LocalBucket(base_path)
+    # MODIFICAÇÃO: Agora aceita data_path como parâmetro
+    if data_path is None:
+        raise ValueError("data_path must be provided when calling connect_to_gcs()")
+    
+    # Verificar se o diretório existe
+    if not os.path.exists(data_path):
+        print(f"Warning: Data directory does not exist: {data_path}")
+        print(f"Creating directory...")
+        os.makedirs(data_path, exist_ok=True)
+    
+    print(f"Conectando ao armazenamento local em: {os.path.abspath(data_path)}")
+    return LocalBucket(data_path)
 
 
 def list_files_by_extension(bucket, prefix="", extensions=(".xlsx", ".xls", ".csv")):
