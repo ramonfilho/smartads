@@ -1,566 +1,545 @@
 #!/usr/bin/env python
 """
-Script para processamento avançado de texto para o projeto Smart Ads.
-Este script aplica processamento de NLP em colunas de texto para gerar features avançadas.
+Script complementar de processamento de texto para o projeto Smart Ads.
+Este script aplica APENAS as features de NLP que NÃO são processadas pelo script 02.
 """
 
-# Importar e baixar recursos NLTK necessários
 import pandas as pd
 import numpy as np
 import os
+import sys
 import re
-import torch
-from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
-from sklearn.decomposition import LatentDirichletAllocation
-import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-from nltk.stem import WordNetLemmatizer
-from transformers import AutoTokenizer, AutoModel
+import gc
+import time
+import joblib
+from datetime import datetime
+from multiprocessing import Pool, cpu_count
+from functools import partial
 import warnings
+import nltk
+import logging
 
+# Silenciar avisos
 warnings.filterwarnings('ignore')
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-# Configurar projeto - ajustado para seu ambiente local
+# Configurar projeto
 PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
-INPUT_DIR = os.path.join(PROJECT_ROOT, "data/01_split")
-PROCESSED_DIR = os.path.join(PROJECT_ROOT, "data/02_processed")
-OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/03_feature_engineering_1")
-PARAMS_DIR = os.path.join(PROJECT_ROOT, "src/preprocessing/03_params")  # Nova pasta para parâmetros
 
-# Garantir que ambos os diretórios existam
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs(PARAMS_DIR, exist_ok=True)  # Criar pasta de parâmetros
+# Adicionar TODOS os paths necessários ao PYTHONPATH ANTES de qualquer import
+sys.path.insert(0, PROJECT_ROOT)
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "src"))
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "src", "preprocessing"))
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+# Verificar se o arquivo existe antes de tentar importar
+professional_module_path = os.path.join(PROJECT_ROOT, "src", "preprocessing", "professional_motivation_features.py")
+if not os.path.exists(professional_module_path):
+    print(f"ERRO FATAL: Arquivo não encontrado: {professional_module_path}")
+    print("O script não pode continuar sem este módulo.")
+    sys.exit(1)
 
-# Baixar recursos NLTK essenciais
+# Importar módulos obrigatórios - se falhar, o script para
 try:
-    nltk.data.find('tokenizers/punkt')
-    nltk.data.find('corpora/stopwords')
-    nltk.data.find('corpora/wordnet')
-except LookupError:
-    print("Baixando recursos NLTK necessários...")
-    nltk.download('punkt')
-    nltk.download('stopwords')
-    nltk.download('wordnet')
-
-# Verificar se os recursos foram baixados corretamente
-try:
-    from nltk.tokenize import word_tokenize
-    word_tokenize("Teste de tokenização")
-    print("✓ Tokenizer NLTK configurado com sucesso")
-except LookupError:
-    print("Erro ao carregar tokenizer. Baixando recursos adicionais...")
-    nltk.download('punkt', quiet=False)  # Download explícito com feedback
-
-# 1. Função para pré-processamento de texto
-def preprocess_text(text, language='spanish'):
-    """
-    Realiza pré-processamento básico de texto:
-    - Converte para minúsculas
-    - Remove caracteres especiais e números
-    - Remove stopwords
-    - Lematização básica
-    """
-    if pd.isna(text) or not isinstance(text, str):
-        return ""
-
-    # Converter para minúsculas
-    text = text.lower()
-
-    # Remover URLs e emails
-    text = re.sub(r'https?://\S+|www\.\S+', '', text)
-    text = re.sub(r'\S+@\S+', '', text)
-
-    # Remover caracteres especiais e números (preservando letras acentuadas)
-    text = re.sub(r'[^\w\s\áéíóúñü]', ' ', text)
-    text = re.sub(r'\d+', ' ', text)
-
-    # Remover espaços extras
-    text = re.sub(r'\s+', ' ', text).strip()
-
-    # Tokenização simplificada (sem dependência de parâmetro de idioma)
-    tokens = text.split()
-
-    # Remover stopwords (espanhol)
-    stop_words = set(stopwords.words(language))
-    tokens = [token for token in tokens if token not in stop_words]
-
-    # Lematização
-    lemmatizer = WordNetLemmatizer()
-    tokens = [lemmatizer.lemmatize(token) for token in tokens]
-
-    # Remover tokens muito curtos
-    tokens = [token for token in tokens if len(token) > 2]
-
-    # Juntar tokens novamente
-    processed_text = ' '.join(tokens)
-
-    return processed_text
-
-# 2. Função para extrair features básicas de texto
-def extract_basic_features(text):
-    """
-    Extrai features básicas de uma string de texto.
-    """
-    if pd.isna(text) or not isinstance(text, str) or len(text.strip()) == 0:
-        return {
-            'word_count': 0,
-            'char_count': 0,
-            'avg_word_length': 0,
-            'has_question': 0,
-            'has_exclamation': 0
-        }
-
-    # Limpar e tokenizar o texto
-    text = text.strip()
-    words = text.split()
-
-    # Extrair features
-    word_count = len(words)
-    char_count = len(text)
-    avg_word_length = sum(len(word) for word in words) / max(1, word_count)
-    has_question = 1 if '?' in text else 0
-    has_exclamation = 1 if '!' in text else 0
-
-    return {
-        'word_count': word_count,
-        'char_count': char_count,
-        'avg_word_length': avg_word_length,
-        'has_question': has_question,
-        'has_exclamation': has_exclamation
-    }
-
-# 3. Função para extrair features TF-IDF com refinamento de pesos
-def extract_tfidf_features(texts, max_features=200, fit=True, vectorizer=None):
-    """
-    Extrai features TF-IDF preservando a indexação original.
-    """
-    # Criar array para rastrear índices de documentos não vazios
-    valid_indices = []
-    filtered_texts = []
-
-    # Filtrar textos vazios mantendo controle dos índices
-    for i, text in enumerate(texts):
-        if isinstance(text, str) and len(text.strip()) > 0:
-            filtered_texts.append(text)
-            valid_indices.append(i)
-
-    # Inicializar DataFrame de resultado para todos os documentos
-    total_docs = len(texts)
-
-    if fit:
-        # Lista de stop words em espanhol
-        spanish_stopwords = stopwords.words('spanish')
-
-        # Configurar TF-IDF
-        vectorizer = TfidfVectorizer(
-            max_features=max_features,
-            min_df=5,
-            stop_words=spanish_stopwords,
-            ngram_range=(1, 2)
-        )
-
-        # Ajustar e transformar textos filtrados
-        if len(filtered_texts) > 0:
-            tfidf_matrix = vectorizer.fit_transform(filtered_texts)
-            feature_names = vectorizer.get_feature_names_out()
-
-            # Inicializar DataFrame para todos os documentos com zeros
-            tfidf_df = pd.DataFrame(
-                np.zeros((total_docs, len(feature_names))),
-                columns=[f'tfidf_{term}' for term in feature_names]
-            )
-
-            # Refinar pesos para termos importantes
-            filtered_matrix = tfidf_matrix.toarray()
-            mean_tfidf = np.array(filtered_matrix.mean(axis=0)).flatten()
-            top_indices = np.argsort(mean_tfidf)[-int(len(mean_tfidf)*0.2):]
-            important_terms = [feature_names[i] for i in top_indices]
-
-            # Aumentar pesos de termos importantes (refinamento)
-            for term in important_terms:
-                term_idx = np.where(feature_names == term)[0][0]
-                filtered_matrix[:, term_idx] *= 1.5
-
-            # Normalizar evitando divisão por zero
-            row_sums = filtered_matrix.sum(axis=1)
-            row_sums[row_sums == 0] = 1  # Evitar divisão por zero
-            filtered_matrix = filtered_matrix / row_sums[:, np.newaxis]
-
-            # Preencher apenas para documentos válidos
-            for i, orig_idx in enumerate(valid_indices):
-                for j, term in enumerate(feature_names):
-                    tfidf_df.iloc[orig_idx, j] = filtered_matrix[i, j]
-
-            return tfidf_df, vectorizer
-        else:
-            # Retornar DataFrame vazio se não houver textos válidos
-            empty_df = pd.DataFrame(index=range(total_docs))
-            return empty_df, vectorizer
-    else:
-        # Transformar usando o vetorizador existente
-        if vectorizer and len(filtered_texts) > 0:
-            tfidf_matrix = vectorizer.transform(filtered_texts)
-            feature_names = vectorizer.get_feature_names_out()
-
-            # Inicializar DataFrame para todos os documentos com zeros
-            tfidf_df = pd.DataFrame(
-                np.zeros((total_docs, len(feature_names))),
-                columns=[f'tfidf_{term}' for term in feature_names]
-            )
-
-            # Preencher apenas para documentos válidos
-            matrix_array = tfidf_matrix.toarray()
-            for i, orig_idx in enumerate(valid_indices):
-                for j, term in enumerate(feature_names):
-                    tfidf_df.iloc[orig_idx, j] = matrix_array[i, j]
-
-            return tfidf_df, vectorizer
-        else:
-            # Retornar DataFrame vazio se não houver textos válidos ou vetorizador
-            empty_df = pd.DataFrame(index=range(total_docs))
-            return empty_df, vectorizer
-
-# 4. Função para extrair tópicos usando LDA
-def extract_topics_lda(texts, n_topics=5, max_features=1000):
-    """
-    Extrai tópicos latentes usando LDA e preserva a indexação original.
-    """
-    print(f"Extraindo {n_topics} tópicos latentes via LDA...")
-
-    # Criar array para rastrear índices de documentos não vazios
-    valid_indices = []
-    filtered_texts = []
-
-    # Filtrar textos vazios mantendo controle dos índices
-    for i, text in enumerate(texts):
-        if isinstance(text, str) and len(text.strip()) > 0:
-            filtered_texts.append(text)
-            valid_indices.append(i)
-
-    if len(filtered_texts) < 10:
-        print("Poucos textos válidos para LDA. Pulando.")
-        return None
-
-    # Preparar vetorizador
-    vectorizer = CountVectorizer(max_features=max_features)
-    dtm = vectorizer.fit_transform(filtered_texts)
-    feature_names = vectorizer.get_feature_names_out()
-
-    # Treinar modelo LDA
-    lda = LatentDirichletAllocation(
-        n_components=n_topics,
-        max_iter=10,
-        learning_method='online',
-        random_state=42,
-        batch_size=128,
-        n_jobs=-1
+    from src.preprocessing.professional_motivation_features import (
+        create_professional_motivation_score,
+        analyze_aspiration_sentiment,
+        detect_commitment_expressions,
+        create_career_term_detector,
+        enhance_tfidf_for_career_terms
     )
+    print("✓ Módulos de motivação profissional carregados com sucesso!")
+except ImportError as e:
+    print(f"ERRO FATAL: Não foi possível importar os módulos necessários: {e}")
+    print("\nVerifique:")
+    print("1. Se o arquivo existe em: src/preprocessing/professional_motivation_features.py")
+    print("2. Se não há erros de sintaxe no arquivo")
+    print("3. Se todas as dependências estão instaladas")
+    print(f"\nPYTHONPATH atual: {sys.path}")
+    sys.exit(1)
 
-    # Obter distribuição de tópicos por documento
-    doc_topic_dist = lda.fit_transform(dtm)
-    dominant_topics = doc_topic_dist.argmax(axis=1)
+# Diretórios
+INPUT_DIR = os.path.join(PROJECT_ROOT, "data/new/02_processed")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/new/03_feature_engineering_1")
+PARAMS_DIR = os.path.join(PROJECT_ROOT, "src/preprocessing/params/new/03_params")
+CHECKPOINT_DIR = os.path.join(PROJECT_ROOT, "data/new/checkpoints/03_feature_engineering_1/03_professional")
 
-    # Criar DataFrame para armazenar resultados de tópicos
-    # Inicializar com zeros para todos os documentos originais
-    total_docs = len(texts)
-    topic_features = pd.DataFrame(
-        np.zeros((total_docs, n_topics + 1)),  # +1 para o tópico dominante
-        columns=[f'topic_{i}_prob' for i in range(n_topics)] + ['dominant_topic']
-    )
+# Criar diretórios necessários
+for dir_path in [OUTPUT_DIR, PARAMS_DIR, CHECKPOINT_DIR]:
+    os.makedirs(dir_path, exist_ok=True)
 
-    # Preencher apenas para documentos válidos
-    for i, orig_idx in enumerate(valid_indices):
-        for topic in range(n_topics):
-            topic_features.iloc[orig_idx, topic] = doc_topic_dist[i, topic]
-        topic_features.iloc[orig_idx, n_topics] = dominant_topics[i]
+# Otimização para processadores multi-core
+os.environ["OMP_NUM_THREADS"] = str(cpu_count())
 
-    # Obter palavras por tópico
-    topics = []
-    for topic_idx, topic in enumerate(lda.components_):
-        top_words_idx = topic.argsort()[:-11:-1]  # Top 10 palavras
-        top_words = [feature_names[i] for i in top_words_idx]
-        topics.append((topic_idx, top_words))
+# Flag para habilitar/desabilitar multiprocessing
+USE_MULTIPROCESSING = True
 
-    return {
-        'topics': topics,
-        'doc_topic_dist': doc_topic_dist,
-        'dominant_topics': dominant_topics,
-        'lda_model': lda,
-        'vectorizer': vectorizer,
-        'topic_features': topic_features,
-        'valid_indices': valid_indices
-    }
+# Configurar NLTK silenciosamente
+nltk_logger = logging.getLogger('nltk')
+nltk_logger.setLevel(logging.CRITICAL)
 
-# 5. Função para extrair embeddings (desativada por padrão para manter compatibilidade)
-def extract_embeddings(texts, model_name='distilbert-base-multilingual-cased', max_length=128, batch_size=32):
-    """
-    Extrai embeddings de uma coleção de textos usando um modelo pré-treinado.
-    """
-    # Filtrar textos vazios
-    filtered_texts = [text if isinstance(text, str) else "" for text in texts]
-    filtered_texts = [text if text.strip() else "" for text in filtered_texts]
+def setup_nltk_resources():
+    """Configura recursos NLTK necessários sem mensagens repetidas."""
+    resources = ['punkt', 'stopwords', 'wordnet', 'vader_lexicon']
+    for resource in resources:
+        try:
+            nltk.data.find(f'tokenizers/{resource}')
+        except LookupError:
+            try:
+                nltk.download(resource, quiet=True)
+            except:
+                pass
 
-    # Ajustar tamanho do batch para textos longos
-    if max(len(text.split()) for text in filtered_texts) > 100:
-        batch_size = min(16, batch_size)
+# Configurar NLTK uma única vez
+setup_nltk_resources()
 
-    print(f"Extraindo embeddings para {len(filtered_texts)} textos (batch_size={batch_size})...")
+# Cache global para modelos
+MODEL_CACHE = {}
 
-    # Carregar tokenizer e modelo
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModel.from_pretrained(model_name)
-
-    # Mover modelo para GPU se disponível
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = model.to(device)
-
-    # Lista para armazenar embeddings
-    all_embeddings = []
-
-    # Processar em batches
-    for i in range(0, len(filtered_texts), batch_size):
-        batch_texts = filtered_texts[i:i+batch_size]
-
-        print(f"Processando batch {i//batch_size + 1}/{(len(filtered_texts) + batch_size - 1)//batch_size}...", end="\r")
-
-        # Tokenizar textos
-        encoded_input = tokenizer(batch_texts, padding=True, truncation=True,
-                               max_length=max_length, return_tensors='pt')
-
-        # Mover inputs para GPU
-        encoded_input = {k: v.to(device) for k, v in encoded_input.items()}
-
-        # Extrair embeddings (sem cálculo de gradientes para economizar memória)
-        with torch.no_grad():
-            model_output = model(**encoded_input)
-
-        # Usar a média dos embeddings da última camada
-        embeddings = model_output.last_hidden_state.mean(dim=1)
-
-        # Mover para CPU e converter para numpy
-        embeddings = embeddings.cpu().numpy()
-        all_embeddings.append(embeddings)
-
-    print("\nProcessamento de embeddings concluído!")
-
-    # Concatenar todos os batches
-    all_embeddings = np.vstack(all_embeddings)
-
-    return all_embeddings
-
-# 6. Função para processar um conjunto de dados
-def process_dataset(original_df, processed_df, text_columns, dataset_name,
-                   tfidf_vectorizers=None, lda_models=None, save_dir=None,
-                   use_embeddings=False):  # Desativado por padrão para compatibilidade com o dataset antigo
-    """
-    Processa o conjunto de dados para extrair features de NLP e combinar com features processadas.
-
-    Implementa:
-    1. Features básicas de texto
-    2. TF-IDF com pesos refinados
-    3. LDA para extração de tópicos
-    4. Embeddings via modelo multilíngue (opcional)
-    """
-    print(f"\n=== Processando conjunto {dataset_name} ===")
-
-    # Verificar se ambos os DataFrames têm o mesmo número de linhas
-    if len(original_df) != len(processed_df):
-        print(f"ERRO: Os DataFrames original e processado têm tamanhos diferentes: {len(original_df)} vs {len(processed_df)}")
-        return None, None, None
-
-    # Criar um DF para armazenar features de texto
-    text_features_df = pd.DataFrame(index=original_df.index)
-
-    # Verificar qual tipo de conjunto estamos processando
-    is_training = dataset_name.lower() == 'train'
-
-    # Inicializar dicionários para armazenar modelos
-    if is_training:
-        if tfidf_vectorizers is None:
-            tfidf_vectorizers = {}
-        if lda_models is None:
-            lda_models = {}
-
-    # Processar cada coluna de texto
-    for col in text_columns:
-        if col not in original_df.columns:
-            continue
-
-        print(f"Processando coluna: {col}")
-
-        # Criar chave limpa para nomes de colunas
-        col_key = col.replace(' ', '_').replace('?', '')
-        col_key = re.sub(r'[^\w]', '', col_key)[:30]
-
-        # Pré-processar textos
-        processed_texts = original_df[col].apply(lambda x: preprocess_text(x))
-
-        # 1. Extrair features básicas
-        print("  Extraindo features básicas...")
-        basic_features = processed_texts.apply(extract_basic_features)
-
-        # Adicionar features básicas ao DataFrame
-        for feature in ['word_count', 'char_count', 'avg_word_length', 'has_question', 'has_exclamation']:
-            text_features_df[f"{col_key}_{feature}"] = basic_features.apply(lambda x: x.get(feature, 0))
-
-        # Verificar se temos textos suficientes
-        non_empty_texts = [text for text in processed_texts if isinstance(text, str) and len(text.strip()) > 0]
-
-        if len(non_empty_texts) > 10:
-            # 2. Extrair features TF-IDF com refinamento de pesos
-            print("  Extraindo features TF-IDF refinadas...")
-            if is_training:
-                # Treinar vetorizador no conjunto de treino
-                tfidf_df, vectorizer = extract_tfidf_features(processed_texts, max_features=200, fit=True)
-                tfidf_vectorizers[col_key] = vectorizer
-            else:
-                # Usar vetorizador treinado no conjunto de treino
-                if col_key in tfidf_vectorizers:
-                    tfidf_df, _ = extract_tfidf_features(processed_texts, fit=False,
-                                                       vectorizer=tfidf_vectorizers[col_key])
-                else:
-                    print(f"AVISO: Vetorizador para {col_key} não encontrado. Pulando TF-IDF.")
-                    tfidf_df = None
-
-            # Adicionar features TF-IDF ao DataFrame
-            if tfidf_df is not None:
-                for tfidf_col in tfidf_df.columns:
-                    text_features_df[f"{col_key}_{tfidf_col}"] = tfidf_df[tfidf_col].values
-
-            # 3. Extrair tópicos com LDA
-            print("  Aplicando LDA para extração de tópicos...")
-            if is_training:
-                # Treinar modelo LDA no conjunto de treino
-                lda_results = extract_topics_lda(processed_texts.tolist(), n_topics=5)
-                if lda_results is not None:
-                    lda_models[col_key] = {
-                        'lda_model': lda_results['lda_model'],
-                        'vectorizer': lda_results['vectorizer']
-                    }
-
-                    # Adicionar features de tópicos
-                    for topic_col in lda_results['topic_features'].columns:
-                        text_features_df[f"{col_key}_{topic_col}"] = lda_results['topic_features'][topic_col].values
-            else:
-                # Aplicar modelo LDA do treino
-                if col_key in lda_models:
-                    try:
-                        lda_model = lda_models[col_key]['lda_model']
-                        vectorizer = lda_models[col_key]['vectorizer']
-
-                        # Transformar textos
-                        dtm = vectorizer.transform(processed_texts)
-                        doc_topic_dist = lda_model.transform(dtm)
-
-                        # Adicionar features
-                        for i in range(doc_topic_dist.shape[1]):
-                            text_features_df[f"{col_key}_topic_{i}_prob"] = doc_topic_dist[:, i]
-
-                        text_features_df[f"{col_key}_dominant_topic"] = doc_topic_dist.argmax(axis=1)
-                    except Exception as e:
-                        print(f"Erro ao aplicar LDA: {str(e)}")
-
-            # 4. Extrair embeddings (opcional e desativado por padrão)
-            if use_embeddings:
-                print("  Extraindo embeddings (limitado às primeiras 1000 linhas)...")
-                # Limitar a 1000 linhas para evitar uso excessivo de memória
-                embeddings = extract_embeddings(processed_texts.head(1000).tolist())
-
-                # Salvar embeddings
-                if save_dir is not None:
-                    emb_path = os.path.join(save_dir, f"{dataset_name}_{col_key}_embeddings.npy")
-                    np.save(emb_path, embeddings)
-                    print(f"  Embeddings salvos em: {emb_path}")
-
-    # Concatenar features processadas com features de texto
-    final_df = pd.concat([processed_df, text_features_df], axis=1)
-
-    # Salvar arquivo processado
-    if save_dir is not None:
-        output_path = os.path.join(save_dir, f"{dataset_name}.csv")
-        final_df.to_csv(output_path, index=False)
-        print(f"Dataset com features de NLP salvo em: {output_path}")
-
-    return final_df, tfidf_vectorizers, lda_models
-
-def main():
-    """Função principal para executar o processamento."""
-    
-    # Carregar datasets
-    print("\nCarregando datasets processados...")
+def save_checkpoint(data, checkpoint_name):
+    """Salva checkpoint do processamento."""
+    checkpoint_path = os.path.join(CHECKPOINT_DIR, f"{checkpoint_name}.pkl")
     try:
-        processed_train = pd.read_csv(os.path.join(PROCESSED_DIR, 'train.csv'))
-        processed_valid = pd.read_csv(os.path.join(PROCESSED_DIR, 'validation.csv'))
-        processed_test = pd.read_csv(os.path.join(PROCESSED_DIR, 'test.csv'))
-        print(f"Datasets processados carregados: {processed_train.shape}, {processed_valid.shape}, {processed_test.shape}")
+        joblib.dump(data, checkpoint_path)
+        print(f"  ✓ Checkpoint salvo: {checkpoint_name}")
     except Exception as e:
-        print(f"Erro ao carregar datasets processados: {e}")
-        return
+        print(f"  ✗ Erro ao salvar checkpoint: {e}")
 
-    print("\nCarregando datasets com texto original...")
-    try:
-        original_train = pd.read_csv(os.path.join(INPUT_DIR, 'train.csv'), low_memory=False)
-        original_valid = pd.read_csv(os.path.join(INPUT_DIR, 'validation.csv'), low_memory=False)
-        original_test = pd.read_csv(os.path.join(INPUT_DIR, 'test.csv'), low_memory=False)
-        print(f"Datasets originais carregados: {original_train.shape}, {original_valid.shape}, {original_test.shape}")
-    except Exception as e:
-        print(f"Erro ao carregar datasets originais: {e}")
-        return
+def load_checkpoint(checkpoint_name):
+    """Carrega checkpoint se existir."""
+    checkpoint_path = os.path.join(CHECKPOINT_DIR, f"{checkpoint_name}.pkl")
+    if os.path.exists(checkpoint_path):
+        try:
+            data = joblib.load(checkpoint_path)
+            print(f"  ✓ Checkpoint carregado: {checkpoint_name}")
+            return data
+        except Exception as e:
+            print(f"  ✗ Erro ao carregar checkpoint: {e}")
+    return None
 
-    # Definir colunas de texto para processamento
-    text_columns = [
+def identify_text_columns(df):
+    """
+    Identifica colunas de texto no DataFrame.
+    """
+    text_columns_normalized = [
         'Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?',
-        '¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?',
-        'Déjame un mensaje',
+        '¿Qué esperas aprender en el evento Cero a Inglés Fluido?',
+        'Déjame un mensaje'
     ]
     
-    print(f"\nColunas de texto a processar: {text_columns}")
-
-    # Processar primeiro o conjunto de treino
-    train_with_nlp, tfidf_vectorizers, lda_models = process_dataset(
-        original_train,
-        processed_train,
-        text_columns,
-        'train',
-        save_dir=OUTPUT_DIR,
-        use_embeddings=False  # Manter desativado para reproduzir 02_2_processed
-    )
-
-    # Processar validação e teste usando os modelos treinados
-    valid_with_nlp, _, _ = process_dataset(
-        original_valid,
-        processed_valid,
-        text_columns,
-        'validation',
-        tfidf_vectorizers=tfidf_vectorizers,
-        lda_models=lda_models,
-        save_dir=OUTPUT_DIR,
-        use_embeddings=False
-    )
-
-    test_with_nlp, _, _ = process_dataset(
-        original_test,
-        processed_test,
-        text_columns,
-        'test',
-        tfidf_vectorizers=tfidf_vectorizers,
-        lda_models=lda_models,
-        save_dir=OUTPUT_DIR,
-        use_embeddings=False
-    )
-
-    # Salvar modelos para uso na pipeline de inferência
-    os.makedirs(os.path.join(OUTPUT_DIR, "models"), exist_ok=True)
-    import joblib
-    joblib.dump(tfidf_vectorizers, os.path.join(PARAMS_DIR, "03_tfidf_vectorizers.joblib"))
-    joblib.dump(lda_models, os.path.join(PARAMS_DIR, "03_lda_models.joblib"))
+    text_columns = []
+    for col in text_columns_normalized:
+        if col in df.columns:
+            text_columns.append(col)
+            print(f"  ✓ Encontrada: {col[:60]}...")
     
-    print("\n=== Processamento de NLP concluído! ===")
-    print(f"Modelos salvos em: {PARAMS_DIR}")
-    print(f"Dados processados salvos em: {OUTPUT_DIR}")
+    # Se não encontrou a versão normalizada, buscar variações
+    if '¿Qué esperas aprender en el evento Cero a Inglés Fluido?' not in text_columns:
+        variations = [
+            '¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?',
+            '¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?'
+        ]
+        for var in variations:
+            if var in df.columns:
+                text_columns.append(var)
+                print(f"  ✓ Encontrada variação: {var[:60]}...")
+    
+    return text_columns
+
+def process_professional_features_batch(df, text_columns, dataset_name, batch_size=5000, 
+                                      fit=True, params=None):
+    """
+    Processa features profissionais em batches com checkpoints.
+    """
+    print(f"\n=== Processando features profissionais para {dataset_name} ===")
+    start_time = time.time()
+    
+    # Verificar checkpoint
+    checkpoint_data = load_checkpoint(f"{dataset_name}_professional")
+    if checkpoint_data is not None:
+        print(f"Retomando do checkpoint...")
+        df = checkpoint_data['df']
+        params = checkpoint_data['params']
+        start_col = checkpoint_data['last_column'] + 1
+        features_added = checkpoint_data.get('features_added', {})
+    else:
+        start_col = 0
+        features_added = {}
+        # Inicializar parâmetros
+        if params is None:
+            params = {
+                'professional_motivation': {},
+                'aspiration_sentiment': {},
+                'commitment': {},
+                'career_terms': {},
+                'career_tfidf': {}
+            }
+    
+    n_samples = len(df)
+    n_batches = (n_samples + batch_size - 1) // batch_size
+    
+    print(f"Processando {n_samples} amostras em {n_batches} batches (batch_size: {batch_size})")
+    
+    # Processar cada coluna de texto
+    for col_idx in range(start_col, len(text_columns)):
+        col = text_columns[col_idx]
+        if col not in df.columns:
+            continue
+        
+        print(f"\n[{col_idx+1}/{len(text_columns)}] Processando: {col[:60]}...")
+        
+        col_key = re.sub(r'[^\w]', '', col.replace(' ', '_'))[:30]
+        features_added[col_key] = {
+            'professional_motivation': 0,
+            'aspiration': 0,
+            'commitment': 0,
+            'career_terms': 0,
+            'career_tfidf': 0
+        }
+        
+        # Processar em batches para economia de memória
+        for batch_idx in range(n_batches):
+            batch_start = batch_idx * batch_size
+            batch_end = min((batch_idx + 1) * batch_size, n_samples)
+            
+            # Mostrar progresso
+            if batch_idx % 5 == 0:
+                elapsed = time.time() - start_time
+                if batch_idx > 0:
+                    avg_time_per_batch = elapsed / batch_idx
+                    remaining_batches = n_batches - batch_idx
+                    eta = avg_time_per_batch * remaining_batches
+                    print(f"\r  Batch {batch_idx+1}/{n_batches} "
+                          f"({(batch_idx+1)/n_batches*100:.1f}%) "
+                          f"ETA: {eta/60:.1f} min", end='', flush=True)
+            
+            # Criar DataFrame do batch
+            batch_df = df.iloc[batch_start:batch_end][[col]].copy()
+            
+            # 1. Score de motivação profissional
+            if batch_idx == 0:
+                print("\n  1. Calculando score de motivação profissional...")
+            
+            motiv_df, motiv_params = create_professional_motivation_score(
+                batch_df, [col], 
+                fit=fit and batch_idx == 0,
+                params=params['professional_motivation'] if not (fit and batch_idx == 0) else None
+            )
+            if fit and batch_idx == 0:
+                params['professional_motivation'] = motiv_params
+            
+            for motiv_col in motiv_df.columns:
+                if motiv_col not in df.columns:
+                    df[motiv_col] = np.nan
+                df.loc[batch_start:batch_end-1, motiv_col] = motiv_df[motiv_col].values
+                features_added[col_key]['professional_motivation'] += 1
+            
+            # 2. Análise de sentimento de aspiração
+            if batch_idx == 0:
+                print("\n  2. Analisando sentimento de aspiração...")
+            
+            asp_df, asp_params = analyze_aspiration_sentiment(
+                batch_df, [col],
+                fit=fit and batch_idx == 0,
+                params=params['aspiration_sentiment'] if not (fit and batch_idx == 0) else None
+            )
+            if fit and batch_idx == 0:
+                params['aspiration_sentiment'] = asp_params
+            
+            for asp_col in asp_df.columns:
+                if asp_col not in df.columns:
+                    df[asp_col] = np.nan
+                df.loc[batch_start:batch_end-1, asp_col] = asp_df[asp_col].values
+                features_added[col_key]['aspiration'] += 1
+            
+            # 3. Detecção de expressões de compromisso
+            if batch_idx == 0:
+                print("\n  3. Detectando expressões de compromisso...")
+            
+            comm_df, comm_params = detect_commitment_expressions(
+                batch_df, [col],
+                fit=fit and batch_idx == 0,
+                params=params['commitment'] if not (fit and batch_idx == 0) else None
+            )
+            if fit and batch_idx == 0:
+                params['commitment'] = comm_params
+            
+            for comm_col in comm_df.columns:
+                if comm_col not in df.columns:
+                    df[comm_col] = np.nan
+                df.loc[batch_start:batch_end-1, comm_col] = comm_df[comm_col].values
+                features_added[col_key]['commitment'] += 1
+            
+            # 4. Detector de termos de carreira
+            if batch_idx == 0:
+                print("\n  4. Detectando termos de carreira...")
+            
+            career_df, career_params = create_career_term_detector(
+                batch_df, [col],
+                fit=fit and batch_idx == 0,
+                params=params['career_terms'] if not (fit and batch_idx == 0) else None
+            )
+            if fit and batch_idx == 0:
+                params['career_terms'] = career_params
+            
+            for career_col in career_df.columns:
+                if career_col not in df.columns:
+                    df[career_col] = np.nan
+                df.loc[batch_start:batch_end-1, career_col] = career_df[career_col].values
+                features_added[col_key]['career_terms'] += 1
+            
+            # Limpar memória após cada batch
+            del batch_df
+            gc.collect()
+        
+        print()  # Nova linha após progresso
+        
+        # 5. TF-IDF aprimorado (processa coluna inteira)
+        print("  5. Aplicando TF-IDF aprimorado para termos de carreira...")
+
+        temp_df = df[[col]].copy()
+
+        # CORREÇÃO: Usar col_key consistente
+        tfidf_df, tfidf_params = enhance_tfidf_for_career_terms(
+            temp_df, [col],
+            fit=fit,
+            params=params['career_tfidf'].get(col_key) if not fit else None  # ← AQUI
+        )
+
+        if fit:
+            # CORREÇÃO: Salvar com col_key correto
+            if 'career_tfidf' not in params:
+                params['career_tfidf'] = {}
+            params['career_tfidf'][col_key] = tfidf_params  # ← AQUI
+        
+        added_count = 0
+        for tfidf_col in tfidf_df.columns:
+            if tfidf_col not in df.columns and tfidf_col != col:
+                df[tfidf_col] = tfidf_df[tfidf_col].values
+                added_count += 1
+        features_added[col_key]['career_tfidf'] = added_count
+        print(f"     ✓ Adicionadas {added_count} features TF-IDF de carreira")
+        
+        # Salvar checkpoint após cada coluna
+        save_checkpoint({
+            'df': df,
+            'params': params,
+            'last_column': col_idx,
+            'features_added': features_added
+        }, f"{dataset_name}_professional")
+    
+    # Relatório final
+    elapsed_time = time.time() - start_time
+    print(f"\n✓ Processamento concluído em {elapsed_time/60:.1f} minutos")
+    
+    # Limpar checkpoint após conclusão
+    checkpoint_path = os.path.join(CHECKPOINT_DIR, f"{dataset_name}_professional.pkl")
+    if os.path.exists(checkpoint_path):
+        os.remove(checkpoint_path)
+    
+    return df, params
+
+# Adicionar esta função antes da função main():
+
+def summarize_features(df, dataset_name, original_shape=None):
+    """
+    Sumariza as features criadas no DataFrame.
+    """
+    print(f"\n{'='*60}")
+    print(f"SUMÁRIO DE FEATURES - {dataset_name.upper()}")
+    print(f"{'='*60}")
+    
+    if original_shape:
+        print(f"\n📊 DIMENSÕES:")
+        print(f"   Original: {original_shape[0]} linhas × {original_shape[1]} colunas")
+        print(f"   Atual:    {df.shape[0]} linhas × {df.shape[1]} colunas")
+        print(f"   Features adicionadas: {df.shape[1] - original_shape[1]}")
+    
+    # Categorizar features por tipo
+    feature_categories = {
+        'professional_motivation': [],
+        'aspiration': [],
+        'commitment': [],
+        'career_terms': [],
+        'career_tfidf': [],
+        'outras': []
+    }
+    
+    new_features = [col for col in df.columns if any(pattern in col for pattern in [
+        'professional_motivation', 'career_keyword', 'aspiration', 'commitment', 
+        'career_term', 'career_tfidf'
+    ])]
+    
+    for col in new_features:
+        if 'professional_motivation' in col or 'career_keyword' in col:
+            feature_categories['professional_motivation'].append(col)
+        elif 'aspiration' in col:
+            feature_categories['aspiration'].append(col)
+        elif 'commitment' in col:
+            feature_categories['commitment'].append(col)
+        elif 'career_tfidf' in col:
+            feature_categories['career_tfidf'].append(col)
+        elif 'career_term' in col:
+            feature_categories['career_terms'].append(col)
+        else:
+            feature_categories['outras'].append(col)
+    
+    print(f"\n📈 FEATURES CRIADAS POR CATEGORIA:")
+    total_new = 0
+    for category, features in feature_categories.items():
+        if features:
+            print(f"\n   {category.upper()} ({len(features)} features):")
+            # Mostrar até 5 exemplos
+            for i, feat in enumerate(features[:5]):
+                print(f"      • {feat}")
+            if len(features) > 5:
+                print(f"      ... e mais {len(features) - 5} features")
+            total_new += len(features)
+    
+    print(f"\n   TOTAL DE NOVAS FEATURES: {total_new}")
+    
+    # Estatísticas sobre valores ausentes nas novas features
+    if new_features:
+        print(f"\n📊 ESTATÍSTICAS DAS NOVAS FEATURES:")
+        null_counts = df[new_features].isnull().sum()
+        features_with_nulls = null_counts[null_counts > 0]
+        if len(features_with_nulls) > 0:
+            print(f"   Features com valores ausentes: {len(features_with_nulls)}/{len(new_features)}")
+        else:
+            print(f"   ✓ Todas as novas features estão completas (sem valores ausentes)")
+    
+    print(f"\n{'='*60}\n")
+
+# Modificar a função main() para incluir os sumários:
+
+def main():
+    """Função principal."""
+    
+    print("=== PROCESSAMENTO DE FEATURES PROFISSIONAIS ===")
+    print(f"Data e hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"CPUs disponíveis: {cpu_count()}")
+    
+    # Carregar datasets
+    print("\nCarregando datasets processados pelo script 02...")
+    try:
+        train_df = pd.read_csv(os.path.join(INPUT_DIR, 'train.csv'))
+        valid_df = pd.read_csv(os.path.join(INPUT_DIR, 'validation.csv'))
+        test_df = pd.read_csv(os.path.join(INPUT_DIR, 'test.csv'))
+        
+        print(f"✓ Datasets carregados:")
+        print(f"  Train: {train_df.shape}")
+        print(f"  Validation: {valid_df.shape}")
+        print(f"  Test: {test_df.shape}")
+    except Exception as e:
+        print(f"ERRO FATAL: Não foi possível carregar os datasets: {e}")
+        sys.exit(1)
+    
+    # Guardar shapes originais
+    train_original_shape = train_df.shape
+    valid_original_shape = valid_df.shape
+    test_original_shape = test_df.shape
+    
+    # Verificar features já existentes
+    print("\n📋 ANÁLISE INICIAL DAS FEATURES:")
+    print("\nFeatures de texto já processadas pelo script 02:")
+    existing_features = {
+        'básicas': len([c for c in train_df.columns if any(x in c for x in ['_length', '_word_count', '_has_question'])]),
+        'tfidf': len([c for c in train_df.columns if '_tfidf_' in c]),
+        'sentiment': len([c for c in train_df.columns if '_sentiment' in c]),
+        'motivation': len([c for c in train_df.columns if '_motiv_' in c and 'professional_motivation' not in c]),
+        'topic': len([c for c in train_df.columns if '_topic_' in c]),
+        'embedding': len([c for c in train_df.columns if '_embedding_' in c]),
+        'discriminative': len([c for c in train_df.columns if '_high_conv_' in c or '_low_conv_' in c])
+    }
+    
+    total_existing = 0
+    for feature_type, count in existing_features.items():
+        if count > 0:
+            print(f"  {feature_type}: {count} features")
+            total_existing += count
+    print(f"\n  TOTAL de features de texto existentes: {total_existing}")
+    print(f"  TOTAL de features no dataset: {train_df.shape[1]}")
+    
+    # Identificar colunas de texto
+    print("\nIdentificando colunas de texto...")
+    text_columns = identify_text_columns(train_df)
+    
+    if not text_columns:
+        print("ERRO FATAL: Nenhuma coluna de texto encontrada!")
+        sys.exit(1)
+    
+    print(f"\n✓ {len(text_columns)} colunas de texto identificadas")
+    
+    # Processar treino
+    print("\n>>> PROCESSANDO TREINO <<<")
+    train_processed, params = process_professional_features_batch(
+        train_df, text_columns, 'train', batch_size=5000, fit=True
+    )
+    
+    # Sumarizar features do treino
+    summarize_features(train_processed, 'train', train_original_shape)
+    
+    # Salvar parâmetros
+    print("\nSalvando parâmetros...")
+    params_path = os.path.join(PARAMS_DIR, "03_professional_features_params.joblib")
+    joblib.dump(params, params_path)
+    
+    # Processar validação
+    print("\n>>> PROCESSANDO VALIDAÇÃO <<<")
+    valid_processed, _ = process_professional_features_batch(
+        valid_df, text_columns, 'validation', batch_size=5000, fit=False, params=params
+    )
+    
+    # Sumarizar features da validação
+    summarize_features(valid_processed, 'validation', valid_original_shape)
+    
+    # Processar teste
+    print("\n>>> PROCESSANDO TESTE <<<")
+    test_processed, _ = process_professional_features_batch(
+        test_df, text_columns, 'test', batch_size=5000, fit=False, params=params
+    )
+    
+    # Sumarizar features do teste
+    summarize_features(test_processed, 'test', test_original_shape)
+    
+    # Verificar consistência de colunas
+    print("\n🔍 VERIFICAÇÃO DE CONSISTÊNCIA:")
+    train_cols = set(train_processed.columns)
+    valid_cols = set(valid_processed.columns)
+    test_cols = set(test_processed.columns)
+    
+    if train_cols == valid_cols == test_cols:
+        print("✓ Todos os datasets têm exatamente as mesmas colunas")
+        print(f"  Total de colunas: {len(train_cols)}")
+    else:
+        print("✗ AVISO: Inconsistência detectada nas colunas!")
+        if train_cols - valid_cols:
+            print(f"  Colunas em train mas não em valid: {len(train_cols - valid_cols)}")
+        if train_cols - test_cols:
+            print(f"  Colunas em train mas não em test: {len(train_cols - test_cols)}")
+    
+    # Salvar datasets
+    print("\nSalvando datasets processados...")
+    train_processed.to_csv(os.path.join(OUTPUT_DIR, 'train.csv'), index=False)
+    valid_processed.to_csv(os.path.join(OUTPUT_DIR, 'validation.csv'), index=False)
+    test_processed.to_csv(os.path.join(OUTPUT_DIR, 'test.csv'), index=False)
+    
+    # Resumo final
+    print(f"\n{'='*60}")
+    print("RESUMO FINAL DO PROCESSAMENTO")
+    print(f"{'='*60}")
+    print(f"\n📊 INCREMENTO DE FEATURES:")
+    print(f"   Dataset   | Original | Final | Adicionadas")
+    print(f"   ----------|----------|-------|------------")
+    print(f"   Train     | {train_original_shape[1]:>8} | {train_processed.shape[1]:>5} | {train_processed.shape[1] - train_original_shape[1]:>11}")
+    print(f"   Valid     | {valid_original_shape[1]:>8} | {valid_processed.shape[1]:>5} | {valid_processed.shape[1] - valid_original_shape[1]:>11}")
+    print(f"   Test      | {test_original_shape[1]:>8} | {test_processed.shape[1]:>5} | {test_processed.shape[1] - test_original_shape[1]:>11}")
+    
+    print(f"\n📁 ARQUIVOS SALVOS:")
+    print(f"   Datasets: {OUTPUT_DIR}")
+    print(f"   Parâmetros: {PARAMS_DIR}")
+    
+    print(f"\n✅ PROCESSAMENTO CONCLUÍDO COM SUCESSO!")
+    print(f"{'='*60}\n")
 
 if __name__ == "__main__":
     main()

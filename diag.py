@@ -1,208 +1,151 @@
 #!/usr/bin/env python
 """
-Script para diagnosticar onde os 134 matches estão sendo perdidos no pipeline.
+Script para diagnosticar e identificar colunas de texto nos datasets.
+Analisa os datasets processados e identifica quais colunas são de texto livre.
 """
 
 import pandas as pd
 import os
 import sys
 
-# Adicionar o diretório raiz ao path
-project_root = "/Users/ramonmoreira/Desktop/smart_ads"
-sys.path.insert(0, project_root)
+# Configurar projeto
+PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
+sys.path.insert(0, PROJECT_ROOT)
 
-from src.utils.local_storage import connect_to_gcs, list_files_by_extension, categorize_files
-from src.preprocessing.email_processing import normalize_emails_in_dataframe, normalize_email
-from src.preprocessing.data_matching import match_surveys_with_buyers
-from src.preprocessing.data_integration import create_target_variable
+# Diretórios - USANDO OS NOVOS CAMINHOS
+INPUT_DIR = os.path.join(PROJECT_ROOT, "data/new/01_split")
+PROCESSED_DIR = os.path.join(PROJECT_ROOT, "data/new/02_processed")
 
-def diagnose_match_loss():
-    """Diagnostica onde os matches estão sendo perdidos."""
+def analyze_text_columns(df, dataset_name):
+    """Analisa e identifica colunas de texto em um DataFrame."""
+    print(f"\n=== Analisando {dataset_name} ===")
+    print(f"Dimensões: {df.shape}")
     
-    print("DIAGNÓSTICO DE MATCHES PERDIDOS")
-    print("=" * 80)
+    # Colunas de texto conhecidas (originais)
+    known_text_cols = [
+        'Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?',
+        '¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?',
+        'Déjame un mensaje',
+        '¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?',
+        '¿Qué esperas aprender en el evento Cero a Inglés Fluido?'  # Possível coluna normalizada
+    ]
     
-    # Conectar ao armazenamento
-    raw_data_path = "/Users/ramonmoreira/Desktop/smart_ads/data/raw_data"
-    bucket = connect_to_gcs("local_bucket", data_path=raw_data_path)
+    # Padrões para identificar colunas de texto
+    text_patterns = [
+        'mensaje', 'esperas', 'qué', '¿Qué', 'Cuando', 'vida', 'oportunidad',
+        'aprender', 'inglés', 'fluido', 'fluidez', 'Déjame', 'cambiará',
+        'Semana', 'Inmersión', 'evento'
+    ]
     
-    # Listar arquivos
-    file_paths = list_files_by_extension(bucket, prefix="")
-    survey_files, buyer_files, utm_files, _ = categorize_files(file_paths)
+    print("\n1. Colunas conhecidas encontradas:")
+    found_known = []
+    for col in known_text_cols:
+        if col in df.columns:
+            print(f"  ✓ {col}")
+            found_known.append(col)
     
-    # 1. CARREGAR DADOS BRUTOS
-    print("\n1. CARREGANDO DADOS BRUTOS")
-    print("-" * 40)
+    print(f"\nTotal de colunas conhecidas encontradas: {len(found_known)}")
     
-    # Carregar apenas um exemplo de cada tipo para análise
-    from src.utils.local_storage import load_csv_or_excel
+    # Buscar colunas com padrões de texto
+    print("\n2. Colunas com padrões de texto (possíveis colunas de texto):")
+    pattern_matches = []
+    for col in df.columns:
+        if any(pattern in col for pattern in text_patterns):
+            if col not in found_known:  # Evitar duplicatas
+                print(f"  - {col}")
+                pattern_matches.append(col)
     
-    # Combinar todos os surveys
-    all_surveys = []
-    for file in survey_files:
-        df = load_csv_or_excel(bucket, file)
-        if df is not None:
-            all_surveys.append(df)
+    # Verificar colunas do tipo object
+    print("\n3. Colunas do tipo 'object' (possíveis textos):")
+    object_cols = df.select_dtypes(include=['object']).columns.tolist()
     
-    surveys_raw = pd.concat(all_surveys, ignore_index=True)
-    print(f"Surveys carregados: {len(surveys_raw):,} registros")
+    # Filtrar colunas que parecem ser texto livre
+    text_candidates = []
+    for col in object_cols:
+        if col in df.columns and col not in ['email', 'email_norm', 'target']:
+            # Verificar se tem características de texto livre
+            sample = df[col].dropna().head(5)
+            if len(sample) > 0:
+                avg_length = sample.astype(str).str.len().mean()
+                if avg_length > 20:  # Textos com mais de 20 caracteres em média
+                    text_candidates.append(col)
+                    print(f"  - {col} (comprimento médio: {avg_length:.0f})")
     
-    # Combinar todos os buyers
-    all_buyers = []
-    for file in buyer_files:
-        df = load_csv_or_excel(bucket, file)
-        if df is not None:
-            all_buyers.append(df)
+    # Verificar colunas com sufixo _original
+    print("\n4. Colunas com sufixo '_original' (textos preservados):")
+    original_cols = [col for col in df.columns if col.endswith('_original')]
+    for col in original_cols:
+        print(f"  - {col}")
     
-    buyers_raw = pd.concat(all_buyers, ignore_index=True)
-    print(f"Buyers carregados: {len(buyers_raw):,} registros")
+    # Resumo final
+    all_text_cols = list(set(found_known + pattern_matches + text_candidates))
     
-    # 2. NORMALIZAR EMAILS
-    print("\n2. NORMALIZANDO EMAILS")
-    print("-" * 40)
+    print(f"\n=== RESUMO para {dataset_name} ===")
+    print(f"Total de possíveis colunas de texto: {len(all_text_cols)}")
+    print("\nColunas de texto identificadas:")
+    for i, col in enumerate(all_text_cols, 1):
+        print(f"{i}. {col}")
     
-    # Encontrar e normalizar emails nos surveys
-    email_cols_survey = [col for col in surveys_raw.columns if 'mail' in col.lower()]
-    print(f"Colunas de email em surveys: {email_cols_survey}")
+    return all_text_cols
+
+def main():
+    """Função principal para diagnóstico."""
+    print("=== DIAGNÓSTICO DE COLUNAS DE TEXTO ===")
     
-    if email_cols_survey:
-        surveys_raw['email'] = surveys_raw[email_cols_survey[0]]
-        surveys_norm = normalize_emails_in_dataframe(surveys_raw.copy())
-    else:
-        print("ERRO: Nenhuma coluna de email encontrada em surveys!")
-        return
+    # Verificar datasets originais primeiro
+    print("\n>>> ANALISANDO DATASETS ORIGINAIS (01_split) <<<")
+    try:
+        for dataset in ['train', 'validation', 'test']:
+            df = pd.read_csv(os.path.join(INPUT_DIR, f"{dataset}.csv"), nrows=100)
+            text_cols = analyze_text_columns(df, f"Original {dataset}")
+    except Exception as e:
+        print(f"Erro ao carregar datasets originais: {e}")
     
-    # Encontrar e normalizar emails nos buyers
-    email_cols_buyer = [col for col in buyers_raw.columns if 'mail' in col.lower() or 'email' in col.lower()]
-    print(f"Colunas de email em buyers: {email_cols_buyer}")
+    # Verificar datasets processados
+    print("\n\n>>> ANALISANDO DATASETS PROCESSADOS (02_processed) <<<")
+    try:
+        for dataset in ['train', 'validation', 'test']:
+            df = pd.read_csv(os.path.join(PROCESSED_DIR, f"{dataset}.csv"), nrows=100)
+            text_cols = analyze_text_columns(df, f"Processado {dataset}")
+    except Exception as e:
+        print(f"Erro ao carregar datasets processados: {e}")
     
-    if email_cols_buyer:
-        buyers_raw['email'] = buyers_raw[email_cols_buyer[0]]
-        buyers_norm = normalize_emails_in_dataframe(buyers_raw.copy())
-    else:
-        print("ERRO: Nenhuma coluna de email encontrada em buyers!")
-        return
-    
-    # 3. EXECUTAR MATCHING
-    print("\n3. EXECUTANDO MATCHING")
-    print("-" * 40)
-    
-    # Guardar índices originais
-    surveys_norm['original_survey_index'] = surveys_norm.index
-    
-    # Fazer matching
-    matches_df = match_surveys_with_buyers(surveys_norm, buyers_norm)
-    print(f"Total de matches encontrados: {len(matches_df):,}")
-    
-    # 4. ANALISAR MATCHES
-    print("\n4. ANÁLISE DETALHADA DOS MATCHES")
-    print("-" * 40)
-    
-    if not matches_df.empty:
-        # Verificar quais survey_ids existem no DataFrame
-        valid_survey_ids = matches_df['survey_id'].isin(surveys_norm.index)
-        print(f"Survey IDs válidos: {valid_survey_ids.sum():,}")
-        print(f"Survey IDs inválidos: {(~valid_survey_ids).sum():,}")
+    # Análise do módulo text_processing
+    print("\n\n>>> ANALISANDO MÓDULO text_processing.py <<<")
+    try:
+        from src.preprocessing.text_processing import text_feature_engineering
+        import inspect
         
-        # Mostrar exemplos de IDs inválidos
-        if (~valid_survey_ids).any():
-            invalid_ids = matches_df[~valid_survey_ids]['survey_id'].head(10).tolist()
-            print(f"Exemplos de IDs inválidos: {invalid_ids}")
-            print(f"Índice máximo em surveys: {surveys_norm.index.max()}")
+        # Obter o código fonte da função
+        source = inspect.getsource(text_feature_engineering)
         
-        # Analisar distribuição dos matches por lançamento
-        if 'lançamento' in matches_df.columns:
-            print("\nMatches por lançamento:")
-            print(matches_df['lançamento'].value_counts())
-    
-    # 5. CRIAR TARGET E VERIFICAR
-    print("\n5. CRIANDO VARIÁVEL TARGET")
-    print("-" * 40)
-    
-    surveys_with_target = create_target_variable(surveys_norm, matches_df)
-    
-    # Verificar quantos targets foram criados
-    if 'target' in surveys_with_target.columns:
-        targets_created = surveys_with_target['target'].sum()
-        print(f"Targets criados: {targets_created:,}")
-        print(f"Diferença: {len(matches_df) - targets_created:,}")
+        # Buscar definição de text_cols
+        import re
+        text_cols_pattern = r'text_cols\s*=\s*\[(.*?)\]'
+        match = re.search(text_cols_pattern, source, re.DOTALL)
         
-        # Análise mais detalhada
-        print("\n6. DIAGNÓSTICO DA DIFERENÇA")
-        print("-" * 40)
-        
-        # Verificar se há duplicatas de email_norm que podem causar problemas
-        email_duplicates = surveys_norm['email_norm'].value_counts()
-        duplicated_emails = email_duplicates[email_duplicates > 1]
-        
-        if not duplicated_emails.empty:
-            print(f"Emails duplicados em surveys: {len(duplicated_emails):,}")
-            print("Top 5 emails mais duplicados:")
-            print(duplicated_emails.head())
-            
-            # Ver quantos matches são com emails duplicados
-            matches_with_dup_emails = matches_df[
-                matches_df['survey_id'].isin(
-                    surveys_norm[surveys_norm['email_norm'].isin(duplicated_emails.index)].index
-                )
-            ]
-            print(f"\nMatches com emails duplicados: {len(matches_with_dup_emails):,}")
+        if match:
+            print("Colunas de texto definidas no módulo:")
+            cols_str = match.group(1)
+            # Extrair strings entre aspas
+            cols = re.findall(r"'([^']+)'|\"([^\"]+)\"", cols_str)
+            for col in cols:
+                col_name = col[0] if col[0] else col[1]
+                print(f"  - {col_name}")
+    except Exception as e:
+        print(f"Erro ao analisar módulo: {e}")
     
-    # 7. RASTREAR MATCHES ESPECÍFICOS
-    print("\n7. RASTREAMENTO DE MATCHES PERDIDOS")
-    print("-" * 40)
-    
-    # Pegar uma amostra de matches e rastrear o que acontece
-    sample_matches = matches_df.head(10)
-    
-    for idx, match in sample_matches.iterrows():
-        survey_id = match['survey_id']
-        buyer_id = match['buyer_id']
+    # Verificar column_normalization se existir
+    print("\n\n>>> VERIFICANDO NORMALIZAÇÕES DE COLUNAS <<<")
+    try:
+        from src.preprocessing.column_normalization import COLUMN_MAPPINGS
         
-        print(f"\nMatch {idx}:")
-        print(f"  Survey ID: {survey_id}")
-        print(f"  Buyer ID: {buyer_id}")
-        
-        # Verificar se o survey_id existe
-        if survey_id in surveys_norm.index:
-            survey_email = surveys_norm.loc[survey_id, 'email_norm']
-            print(f"  Survey email_norm: {survey_email}")
-            
-            # Verificar se foi marcado como target
-            if 'target' in surveys_with_target.columns and survey_id in surveys_with_target.index:
-                target_value = surveys_with_target.loc[survey_id, 'target']
-                print(f"  Target marcado: {target_value}")
-            else:
-                print(f"  ❌ Survey ID não encontrado no DataFrame final!")
-        else:
-            print(f"  ❌ Survey ID não existe no DataFrame de surveys!")
-    
-    # 8. SALVAR RELATÓRIO
-    print("\n8. SALVANDO RELATÓRIO DETALHADO")
-    print("-" * 40)
-    
-    report_path = os.path.join(project_root, "reports", "missing_matches_diagnosis.txt")
-    os.makedirs(os.path.dirname(report_path), exist_ok=True)
-    
-    with open(report_path, 'w') as f:
-        f.write("RELATÓRIO DE DIAGNÓSTICO DE MATCHES PERDIDOS\n")
-        f.write("=" * 80 + "\n\n")
-        
-        f.write(f"Total de matches encontrados: {len(matches_df):,}\n")
-        if 'target' in surveys_with_target.columns:
-            f.write(f"Total de targets criados: {surveys_with_target['target'].sum():,}\n")
-            f.write(f"Diferença (matches perdidos): {len(matches_df) - surveys_with_target['target'].sum():,}\n")
-        
-        f.write("\n\nDETALHES DOS MATCHES:\n")
-        f.write("-" * 40 + "\n")
-        
-        # Salvar todos os matches com seus status
-        for idx, match in matches_df.iterrows():
-            survey_id = match['survey_id']
-            status = "✓" if survey_id in surveys_norm.index else "✗"
-            f.write(f"{status} Match {idx}: Survey ID {survey_id}\n")
-    
-    print(f"Relatório salvo em: {report_path}")
+        print("Mapeamentos de normalização encontrados:")
+        for old_name, new_name in COLUMN_MAPPINGS.items():
+            if 'esperas' in old_name or 'esperas' in new_name:
+                print(f"  {old_name} → {new_name}")
+    except Exception as e:
+        print(f"Módulo column_normalization não encontrado ou erro: {e}")
 
 if __name__ == "__main__":
-    diagnose_match_loss()
+    main()
