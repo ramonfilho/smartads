@@ -70,7 +70,7 @@ def merge_datasets(surveys_df, utm_df, buyers_df):
             
             # Tentar normalizar emails do UTM se não estiver já normalizado
             if 'email_norm' not in result_df.columns and 'email' in result_df.columns:
-                from ..preprocessing.email_processing import normalize_email
+                from . import normalize_email
                 result_df['email_norm'] = result_df['email'].apply(normalize_email)
                 
             # Marcar compradores se possível (mas não adicionar suas features)
@@ -102,7 +102,7 @@ def merge_datasets(surveys_df, utm_df, buyers_df):
     if not utm_df.empty and 'email' in utm_df.columns:
         # Normalizar emails do UTM se ainda não estiverem
         if 'email_norm' not in utm_df.columns:
-            from ..preprocessing.email_processing import normalize_email
+            from . import normalize_email
             utm_df['email_norm'] = utm_df['email'].apply(normalize_email)
         
         merged_df = pd.merge(
