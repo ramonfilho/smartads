@@ -119,7 +119,7 @@ def extract_sentiment_features(df, text_cols, fit=True, params=None):
     return df_result, params
 
 def extract_tfidf_features(df, text_cols, fit=True, params=None):
-    """Extrai features TF-IDF dos textos.
+    """Extrai features TF-IDF dos textos com parâmetros MELHORADOS.
     
     Args:
         df: DataFrame pandas
@@ -144,45 +144,6 @@ def extract_tfidf_features(df, text_cols, fit=True, params=None):
     # Filtrar colunas de texto existentes
     text_cols = [col for col in text_cols if col in df_result.columns]
     
-    # Lista de stop words em espanhol
-    spanish_stopwords = [
-        'a', 'al', 'algo', 'algunas', 'algunos', 'ante', 'antes', 'como', 'con', 'contra',
-        'cual', 'cuando', 'de', 'del', 'desde', 'donde', 'durante', 'e', 'el', 'ella',
-        'ellas', 'ellos', 'en', 'entre', 'era', 'erais', 'eran', 'eras', 'eres', 'es',
-        'esa', 'esas', 'ese', 'eso', 'esos', 'esta', 'estaba', 'estabais', 'estaban',
-        'estabas', 'estad', 'estada', 'estadas', 'estado', 'estados', 'estamos', 'estando',
-        'estar', 'estaremos', 'estará', 'estarán', 'estarás', 'estaré', 'estaréis',
-        'estaría', 'estaríais', 'estaríamos', 'estarían', 'estarías', 'estas', 'este',
-        'estemos', 'esto', 'estos', 'estoy', 'estuve', 'estuviera', 'estuvierais',
-        'estuvieran', 'estuvieras', 'estuvieron', 'estuviese', 'estuvieseis', 'estuviesen',
-        'estuvieses', 'estuvimos', 'estuviste', 'estuvisteis', 'estuviéramos',
-        'estuviésemos', 'estuvo', 'ha', 'habéis', 'haber', 'habida', 'habidas', 'habido',
-        'habidos', 'habiendo', 'habrá', 'habrán', 'habrás', 'habré', 'habréis', 'habría',
-        'habríais', 'habríamos', 'habrían', 'habrías', 'han', 'has', 'hasta', 'hay', 'haya',
-        'hayamos', 'hayan', 'hayas', 'hayáis', 'he', 'hemos', 'hube', 'hubiera', 'hubierais',
-        'hubieran', 'hubieras', 'hubieron', 'hubiese', 'hubieseis', 'hubiesen', 'hubieses',
-        'hubimos', 'hubiste', 'hubisteis', 'hubiéramos', 'hubiésemos', 'hubo', 'la', 'las',
-        'le', 'les', 'lo', 'los', 'me', 'mi', 'mis', 'mucho', 'muchos', 'muy', 'más',
-        'mí', 'mía', 'mías', 'mío', 'míos', 'nada', 'ni', 'no', 'nos', 'nosotras',
-        'nosotros', 'nuestra', 'nuestras', 'nuestro', 'nuestros', 'o', 'os', 'otra',
-        'otras', 'otro', 'otros', 'para', 'pero', 'poco', 'por', 'porque', 'que',
-        'quien', 'quienes', 'qué', 'se', 'sea', 'seamos', 'sean', 'seas', 'sentid',
-        'sentida', 'sentido', 'ser', 'seremos', 'será', 'serán', 'serás', 'seré',
-        'seréis', 'sería', 'seríais', 'seríamos', 'serían', 'serías', 'siente',
-        'sin', 'sintiendo', 'sobre', 'sois', 'somos', 'son', 'soy', 'su', 'sus',
-        'suya', 'suyas', 'suyo', 'suyos', 'sí', 'también', 'tanto', 'te', 'tendremos',
-        'tendrá', 'tendrán', 'tendrás', 'tendré', 'tendréis', 'tendría', 'tendríais',
-        'tendríamos', 'tendrían', 'tendrías', 'tened', 'tenemos', 'tenga', 'tengamos',
-        'tengan', 'tengas', 'tengo', 'tengáis', 'tenida', 'tenidas', 'tenido', 'tenidos',
-        'teniendo', 'tenéis', 'tenía', 'teníais', 'teníamos', 'tenían', 'tenías', 'ti',
-        'tiene', 'tienen', 'tienes', 'todo', 'todos', 'tu', 'tus', 'tuve', 'tuviera',
-        'tuvierais', 'tuvieran', 'tuvieras', 'tuvieron', 'tuviese', 'tuvieseis',
-        'tuviesen', 'tuvieses', 'tuvimos', 'tuviste', 'tuvisteis', 'tuviéramos',
-        'tuviésemos', 'tuvo', 'tuya', 'tuyas', 'tuyo', 'tuyos', 'tú', 'un', 'una',
-        'uno', 'unos', 'vosotras', 'vosotros', 'vuestra', 'vuestras', 'vuestro',
-        'vuestros', 'y', 'ya', 'yo', 'él', 'éramos'
-    ]
-    
     for col in text_cols:
         # Verificar se há texto suficiente para processar
         clean_col = f'{col}_clean'
@@ -191,18 +152,27 @@ def extract_tfidf_features(df, text_cols, fit=True, params=None):
             continue
         
         if fit:
-            # Configurar TF-IDF
+            # NOVOS PARÂMETROS MELHORADOS
             tfidf = TfidfVectorizer(
-                max_features=50,
-                min_df=5,
-                stop_words=spanish_stopwords,
-                ngram_range=(1, 2)
+                max_features=200,           # Aumentado de 50 para 200
+                min_df=5,                   # Mantido
+                max_df=0.95,                # NOVO: Remove termos muito comuns
+                ngram_range=(1, 3),         # Expandido para trigramas
+                stop_words=None,            # Removido - deixa min_df/max_df filtrar
+                use_idf=True,               # Explicitamente definido
+                norm='l2',                  # Normalização L2
+                sublinear_tf=True,          # NOVO: Aplica log(TF+1)
+                token_pattern=r'\b\w+\b|@\w+|\d+'  # NOVO: Captura mais padrões
             )
             
             # Ajustar e transformar
             try:
+                print(f"  Processando TF-IDF para '{col}' com novos parâmetros...")
                 tfidf_matrix = tfidf.fit_transform(df_result[clean_col].fillna(''))
                 feature_names = tfidf.get_feature_names_out()
+                
+                print(f"    - Features extraídas: {len(feature_names)}")
+                print(f"    - Exemplos de n-gramas: {list(feature_names[:10])}")
                 
                 # Armazenar o vetorizador e os nomes das features
                 params['tfidf'][col] = {
@@ -294,7 +264,7 @@ def extract_motivation_features(df, text_cols, fit=True, params=None):
         for category in set(motivation_keywords.values()):
             df_result[f'{col}_motiv_{category}'] = 0
         
-        # Processar cada linha - AQUI ESTÁ A CORREÇÃO
+        # Processar cada linha
         for i, (idx, text) in enumerate(df_result[clean_col].items()):
             if not isinstance(text, str) or text == '':
                 continue
@@ -443,7 +413,8 @@ def text_feature_engineering(df, fit=True, params=None):
         'Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?',
         '¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?',
         'Déjame un mensaje',
-        '¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?'
+        '¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?',
+        '¿Qué esperas aprender en el evento Cero a Inglés Fluido?'  # NOVA coluna normalizada
     ]
     
     # Filtrar apenas colunas existentes no dataframe
@@ -455,6 +426,8 @@ def text_feature_engineering(df, fit=True, params=None):
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
     
+    print(f"\nProcessamento de texto iniciado para {len(text_cols)} colunas...")
+    
     # Aplicar pipeline de processamento de texto
     df_result, params = extract_basic_text_features(df_result, text_cols, fit, params)
     df_result, params = extract_sentiment_features(df_result, text_cols, fit, params)
@@ -465,5 +438,9 @@ def text_feature_engineering(df, fit=True, params=None):
     # Remover colunas temporárias de texto limpo
     columns_to_drop = [f'{col}_clean' for col in text_cols if f'{col}_clean' in df_result.columns]
     df_result = df_result.drop(columns=columns_to_drop, errors='ignore')
+    
+    # Contar features TF-IDF criadas
+    tfidf_count = len([col for col in df_result.columns if '_tfidf_' in col])
+    print(f"Total de features TF-IDF criadas: {tfidf_count}")
     
     return df_result, params

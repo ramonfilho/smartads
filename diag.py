@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 """
-Script para diagnosticar os valores reais da coluna '¿Hace quánto tiempo me conoces?'
-e identificar por que time_known_encoded tem 85% de valores ausentes.
+Script para diagnosticar onde os 134 matches estão sendo perdidos no pipeline.
 """
 
 import pandas as pd
@@ -12,125 +11,198 @@ import sys
 project_root = "/Users/ramonmoreira/Desktop/smart_ads"
 sys.path.insert(0, project_root)
 
-def diagnose_time_known_column(file_path):
-    """
-    Analisa os valores únicos da coluna de tempo e sua distribuição.
-    """
-    print(f"\nAnalisando arquivo: {file_path}")
+from src.utils.local_storage import connect_to_gcs, list_files_by_extension, categorize_files
+from src.preprocessing.email_processing import normalize_emails_in_dataframe, normalize_email
+from src.preprocessing.data_matching import match_surveys_with_buyers
+from src.preprocessing.data_integration import create_target_variable
+
+def diagnose_match_loss():
+    """Diagnostica onde os matches estão sendo perdidos."""
+    
+    print("DIAGNÓSTICO DE MATCHES PERDIDOS")
     print("=" * 80)
     
-    # Carregar dados
-    df = pd.read_csv(file_path)
+    # Conectar ao armazenamento
+    raw_data_path = "/Users/ramonmoreira/Desktop/smart_ads/data/raw_data"
+    bucket = connect_to_gcs("local_bucket", data_path=raw_data_path)
     
-    # Nome da coluna original
-    col_name = '¿Hace quánto tiempo me conoces?'
+    # Listar arquivos
+    file_paths = list_files_by_extension(bucket, prefix="")
+    survey_files, buyer_files, utm_files, _ = categorize_files(file_paths)
     
-    if col_name not in df.columns:
-        print(f"ERRO: Coluna '{col_name}' não encontrada!")
-        print(f"Colunas disponíveis: {list(df.columns)}")
+    # 1. CARREGAR DADOS BRUTOS
+    print("\n1. CARREGANDO DADOS BRUTOS")
+    print("-" * 40)
+    
+    # Carregar apenas um exemplo de cada tipo para análise
+    from src.utils.local_storage import load_csv_or_excel
+    
+    # Combinar todos os surveys
+    all_surveys = []
+    for file in survey_files:
+        df = load_csv_or_excel(bucket, file)
+        if df is not None:
+            all_surveys.append(df)
+    
+    surveys_raw = pd.concat(all_surveys, ignore_index=True)
+    print(f"Surveys carregados: {len(surveys_raw):,} registros")
+    
+    # Combinar todos os buyers
+    all_buyers = []
+    for file in buyer_files:
+        df = load_csv_or_excel(bucket, file)
+        if df is not None:
+            all_buyers.append(df)
+    
+    buyers_raw = pd.concat(all_buyers, ignore_index=True)
+    print(f"Buyers carregados: {len(buyers_raw):,} registros")
+    
+    # 2. NORMALIZAR EMAILS
+    print("\n2. NORMALIZANDO EMAILS")
+    print("-" * 40)
+    
+    # Encontrar e normalizar emails nos surveys
+    email_cols_survey = [col for col in surveys_raw.columns if 'mail' in col.lower()]
+    print(f"Colunas de email em surveys: {email_cols_survey}")
+    
+    if email_cols_survey:
+        surveys_raw['email'] = surveys_raw[email_cols_survey[0]]
+        surveys_norm = normalize_emails_in_dataframe(surveys_raw.copy())
+    else:
+        print("ERRO: Nenhuma coluna de email encontrada em surveys!")
         return
     
-    # Análise dos valores
-    print(f"\n1. ANÁLISE DA COLUNA '{col_name}':")
-    print(f"   - Total de registros: {len(df):,}")
-    print(f"   - Valores não-nulos: {df[col_name].notna().sum():,}")
-    print(f"   - Valores nulos: {df[col_name].isna().sum():,}")
-    print(f"   - % de nulos: {df[col_name].isna().sum() / len(df) * 100:.2f}%")
+    # Encontrar e normalizar emails nos buyers
+    email_cols_buyer = [col for col in buyers_raw.columns if 'mail' in col.lower() or 'email' in col.lower()]
+    print(f"Colunas de email em buyers: {email_cols_buyer}")
     
-    # Valores únicos
-    print(f"\n2. VALORES ÚNICOS NA COLUNA (com contagem):")
-    value_counts = df[col_name].value_counts(dropna=False)
-    for value, count in value_counts.items():
-        if pd.isna(value):
-            print(f"   - NaN: {count:,} ({count/len(df)*100:.1f}%)")
-        else:
-            # Mostrar valor completo entre aspas para ver espaços/caracteres especiais
-            print(f"   - '{value}': {count:,} ({count/len(df)*100:.1f}%)")
+    if email_cols_buyer:
+        buyers_raw['email'] = buyers_raw[email_cols_buyer[0]]
+        buyers_norm = normalize_emails_in_dataframe(buyers_raw.copy())
+    else:
+        print("ERRO: Nenhuma coluna de email encontrada em buyers!")
+        return
     
-    # Verificar se existe time_known_encoded
-    if 'time_known_encoded' in df.columns:
-        print(f"\n3. ANÁLISE DE 'time_known_encoded':")
-        print(f"   - Valores não-nulos: {df['time_known_encoded'].notna().sum():,}")
-        print(f"   - Valores nulos: {df['time_known_encoded'].isna().sum():,}")
-        print(f"   - % de nulos: {df['time_known_encoded'].isna().sum() / len(df) * 100:.2f}%")
+    # 3. EXECUTAR MATCHING
+    print("\n3. EXECUTANDO MATCHING")
+    print("-" * 40)
+    
+    # Guardar índices originais
+    surveys_norm['original_survey_index'] = surveys_norm.index
+    
+    # Fazer matching
+    matches_df = match_surveys_with_buyers(surveys_norm, buyers_norm)
+    print(f"Total de matches encontrados: {len(matches_df):,}")
+    
+    # 4. ANALISAR MATCHES
+    print("\n4. ANÁLISE DETALHADA DOS MATCHES")
+    print("-" * 40)
+    
+    if not matches_df.empty:
+        # Verificar quais survey_ids existem no DataFrame
+        valid_survey_ids = matches_df['survey_id'].isin(surveys_norm.index)
+        print(f"Survey IDs válidos: {valid_survey_ids.sum():,}")
+        print(f"Survey IDs inválidos: {(~valid_survey_ids).sum():,}")
         
-        # Comparar valores originais com encoded
-        print(f"\n4. MAPEAMENTO ATUAL vs VALORES REAIS:")
+        # Mostrar exemplos de IDs inválidos
+        if (~valid_survey_ids).any():
+            invalid_ids = matches_df[~valid_survey_ids]['survey_id'].head(10).tolist()
+            print(f"Exemplos de IDs inválidos: {invalid_ids}")
+            print(f"Índice máximo em surveys: {surveys_norm.index.max()}")
         
-        # Mapeamento atual no código
-        current_map = {
-            'Te acabo de conocer a través d...': 0,
-            'Te sigo desde hace 1 mes': 1,
-            'Te sigo desde hace 3 meses': 2,
-            'Te sigo desde hace más de 5 me...': 3,
-            'Te sigo desde hace 1 año': 4,
-            'Te sigo hace más de 1 año': 5,
-            'desconhecido': -1
-        }
+        # Analisar distribuição dos matches por lançamento
+        if 'lançamento' in matches_df.columns:
+            print("\nMatches por lançamento:")
+            print(matches_df['lançamento'].value_counts())
+    
+    # 5. CRIAR TARGET E VERIFICAR
+    print("\n5. CRIANDO VARIÁVEL TARGET")
+    print("-" * 40)
+    
+    surveys_with_target = create_target_variable(surveys_norm, matches_df)
+    
+    # Verificar quantos targets foram criados
+    if 'target' in surveys_with_target.columns:
+        targets_created = surveys_with_target['target'].sum()
+        print(f"Targets criados: {targets_created:,}")
+        print(f"Diferença: {len(matches_df) - targets_created:,}")
         
-        print("\n   Valores no mapeamento atual:")
-        for key, val in current_map.items():
-            print(f"   - '{key}' -> {val}")
+        # Análise mais detalhada
+        print("\n6. DIAGNÓSTICO DA DIFERENÇA")
+        print("-" * 40)
         
-        print("\n   Valores reais não mapeados:")
-        real_values = df[col_name].dropna().unique()
-        for value in real_values:
-            # Verificar se alguma chave do mapeamento corresponde ao início do valor
-            matched = False
-            for map_key in current_map.keys():
-                if map_key in str(value) or str(value).startswith(map_key.replace('...', '')):
-                    matched = True
-                    break
+        # Verificar se há duplicatas de email_norm que podem causar problemas
+        email_duplicates = surveys_norm['email_norm'].value_counts()
+        duplicated_emails = email_duplicates[email_duplicates > 1]
+        
+        if not duplicated_emails.empty:
+            print(f"Emails duplicados em surveys: {len(duplicated_emails):,}")
+            print("Top 5 emails mais duplicados:")
+            print(duplicated_emails.head())
             
-            if not matched and value != 'desconhecido':
-                print(f"   ❌ '{value}'")
+            # Ver quantos matches são com emails duplicados
+            matches_with_dup_emails = matches_df[
+                matches_df['survey_id'].isin(
+                    surveys_norm[surveys_norm['email_norm'].isin(duplicated_emails.index)].index
+                )
+            ]
+            print(f"\nMatches com emails duplicados: {len(matches_with_dup_emails):,}")
     
-    # Sugerir novo mapeamento
-    print("\n5. SUGESTÃO DE NOVO MAPEAMENTO:")
-    print("```python")
-    print("time_map = {")
-    for value in df[col_name].dropna().unique():
-        if 'acabo de conocer' in str(value).lower():
-            print(f"    '{value}': 0,")
-        elif '1 mes' in str(value):
-            print(f"    '{value}': 1,")
-        elif '3 meses' in str(value):
-            print(f"    '{value}': 2,")
-        elif 'más de 5 me' in str(value) or 'mas de 5 me' in str(value):
-            print(f"    '{value}': 3,")
-        elif '1 año' in str(value) and 'más' not in str(value) and 'mas' not in str(value):
-            print(f"    '{value}': 4,")
-        elif ('más de 1 año' in str(value) or 'mas de 1 año' in str(value) or 
-              'hace más de 1 año' in str(value) or 'hace mas de 1 año' in str(value)):
-            print(f"    '{value}': 5,")
-    print("    'desconhecido': -1")
-    print("}")
-    print("```")
-
-def main():
-    """Executa diagnóstico nos datasets."""
+    # 7. RASTREAR MATCHES ESPECÍFICOS
+    print("\n7. RASTREAMENTO DE MATCHES PERDIDOS")
+    print("-" * 40)
     
-    # Caminhos dos arquivos
-    paths = {
-        'raw_train': os.path.join(project_root, "data/new/01_split/train.csv"),
-        'processed_train': os.path.join(project_root, "data/new/02_processed/train.csv")
-    }
+    # Pegar uma amostra de matches e rastrear o que acontece
+    sample_matches = matches_df.head(10)
     
-    print("DIAGNÓSTICO DO PROBLEMA COM 'time_known_encoded'")
-    print("=" * 80)
+    for idx, match in sample_matches.iterrows():
+        survey_id = match['survey_id']
+        buyer_id = match['buyer_id']
+        
+        print(f"\nMatch {idx}:")
+        print(f"  Survey ID: {survey_id}")
+        print(f"  Buyer ID: {buyer_id}")
+        
+        # Verificar se o survey_id existe
+        if survey_id in surveys_norm.index:
+            survey_email = surveys_norm.loc[survey_id, 'email_norm']
+            print(f"  Survey email_norm: {survey_email}")
+            
+            # Verificar se foi marcado como target
+            if 'target' in surveys_with_target.columns and survey_id in surveys_with_target.index:
+                target_value = surveys_with_target.loc[survey_id, 'target']
+                print(f"  Target marcado: {target_value}")
+            else:
+                print(f"  ❌ Survey ID não encontrado no DataFrame final!")
+        else:
+            print(f"  ❌ Survey ID não existe no DataFrame de surveys!")
     
-    # Analisar dados brutos primeiro
-    if os.path.exists(paths['raw_train']):
-        diagnose_time_known_column(paths['raw_train'])
-    else:
-        print(f"Arquivo não encontrado: {paths['raw_train']}")
+    # 8. SALVAR RELATÓRIO
+    print("\n8. SALVANDO RELATÓRIO DETALHADO")
+    print("-" * 40)
     
-    # Depois analisar dados processados
-    if os.path.exists(paths['processed_train']):
-        print("\n\n")
-        diagnose_time_known_column(paths['processed_train'])
-    else:
-        print(f"Arquivo não encontrado: {paths['processed_train']}")
+    report_path = os.path.join(project_root, "reports", "missing_matches_diagnosis.txt")
+    os.makedirs(os.path.dirname(report_path), exist_ok=True)
+    
+    with open(report_path, 'w') as f:
+        f.write("RELATÓRIO DE DIAGNÓSTICO DE MATCHES PERDIDOS\n")
+        f.write("=" * 80 + "\n\n")
+        
+        f.write(f"Total de matches encontrados: {len(matches_df):,}\n")
+        if 'target' in surveys_with_target.columns:
+            f.write(f"Total de targets criados: {surveys_with_target['target'].sum():,}\n")
+            f.write(f"Diferença (matches perdidos): {len(matches_df) - surveys_with_target['target'].sum():,}\n")
+        
+        f.write("\n\nDETALHES DOS MATCHES:\n")
+        f.write("-" * 40 + "\n")
+        
+        # Salvar todos os matches com seus status
+        for idx, match in matches_df.iterrows():
+            survey_id = match['survey_id']
+            status = "✓" if survey_id in surveys_norm.index else "✗"
+            f.write(f"{status} Match {idx}: Survey ID {survey_id}\n")
+    
+    print(f"Relatório salvo em: {report_path}")
 
 if __name__ == "__main__":
-    main()
+    diagnose_match_loss()

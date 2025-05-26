@@ -128,13 +128,17 @@ def encode_categorical_features(df, fit=True, params=None):
     }
     
     time_map = {
-        'Te acabo de conocer a través d...': 0,
-        'Te sigo desde hace 1 mes': 1,
-        'Te sigo desde hace 3 meses': 2,
-        'Te sigo desde hace más de 5 me...': 3,
-        'Te sigo desde hace 1 año': 4,
-        'Te sigo hace más de 1 año': 5,
-        'desconhecido': -1
+    # Valor principal (84.2% dos casos)
+    'Te acabo de conocer a través del anuncio.': 0,
+    # Valores de acompanhamento
+    'Te sigo desde hace 1 mes': 1,
+    'Te sigo desde hace 3 meses': 2,
+    'Te sigo desde hace más de 5 meses': 3,
+    'Te sigo desde hace 1 año': 4,
+    'Te sigo hace más de 1 año': 5,
+    'Te sigo hace más de 2 años': 6,  # NOVO - 151 casos
+    # Valor padrão
+    'desconhecido': -1
     }
     
     availability_map = {
