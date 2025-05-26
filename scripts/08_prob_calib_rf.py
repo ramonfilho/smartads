@@ -22,7 +22,7 @@ sys.path.append(project_root)
 
 # Importar a função de sanitização de nomes de colunas que foi usada no treinamento
 from src.evaluation.baseline_model import sanitize_column_names
-from src.evaluation.mlflow_utils import find_optimal_threshold
+from src.utils.mlflow_utils import find_optimal_threshold
 
 # Caminho para o modelo Random Forest
 MODEL_PATH = "/Users/ramonmoreira/desktop/smart_ads/models/mlflow/783044341530730386/2c54d70c822c4e42ad92313f4f2bfe8e/artifacts/random_forest"

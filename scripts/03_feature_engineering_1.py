@@ -145,6 +145,152 @@ def identify_text_columns(df):
     
     return text_columns
 
+def perform_topic_modeling_fixed(df, text_cols, n_topics=5, fit=True, params=None):
+    """
+    Extrai tópicos latentes dos textos usando LDA - VERSÃO CORRIGIDA.
+    """
+    if params is None:
+        params = {}
+    
+    if 'lda' not in params:
+        params['lda'] = {}
+    
+    df_result = df.copy()
+    
+    # Filtrar colunas de texto existentes
+    text_cols = [col for col in text_cols if col in df.columns]
+    print(f"\n🔍 DEBUG LDA: Iniciando processamento LDA para {len(text_cols)} colunas de texto")
+    
+    # Contador de features LDA criadas
+    lda_features_created = 0
+    
+    for i, col in enumerate(text_cols):
+        print(f"\n[{i+1}/{len(text_cols)}] Processando LDA para: {col[:60]}...")
+        
+        col_clean = re.sub(r'[^\w]', '', col.replace(' ', '_'))[:30]
+        
+        # Verificar se temos texto limpo
+        texts = df[col].fillna('').astype(str)
+        valid_texts = texts[texts.str.len() > 10]
+        
+        print(f"  📊 Textos válidos: {len(valid_texts)} de {len(texts)} total")
+        
+        if len(valid_texts) < 50:  # Reduzido de 10 para 50 para garantir qualidade
+            print(f"  ⚠️ Poucos textos válidos para LDA. Pulando esta coluna.")
+            continue
+        
+        if fit:
+            try:
+                from sklearn.feature_extraction.text import TfidfVectorizer
+                from sklearn.decomposition import LatentDirichletAllocation
+                
+                # Vetorizar textos
+                print(f"  🔄 Vetorizando textos...")
+                vectorizer = TfidfVectorizer(
+                    max_features=100,
+                    min_df=5,
+                    max_df=0.95,
+                    stop_words=None
+                )
+                
+                doc_term_matrix = vectorizer.fit_transform(valid_texts)
+                print(f"  ✓ Matriz documento-termo: {doc_term_matrix.shape}")
+                
+                # Aplicar LDA
+                print(f"  🔄 Aplicando LDA com {n_topics} tópicos...")
+                lda = LatentDirichletAllocation(
+                    n_components=n_topics,
+                    max_iter=20,
+                    learning_method='online',
+                    random_state=42,
+                    n_jobs=-1
+                )
+                
+                # Transformar apenas textos válidos
+                topic_dist_valid = lda.fit_transform(doc_term_matrix)
+                
+                # Criar distribuição completa (zeros para textos inválidos)
+                topic_distribution = np.zeros((len(df), n_topics))
+                valid_indices = texts[texts.str.len() > 10].index
+                for idx, valid_idx in enumerate(valid_indices):
+                    topic_distribution[valid_idx] = topic_dist_valid[idx]
+                
+                # Armazenar modelo
+                params['lda'][col_clean] = {
+                    'model': lda,
+                    'vectorizer': vectorizer,
+                    'n_topics': n_topics,
+                    'feature_names': vectorizer.get_feature_names_out().tolist()
+                }
+                
+                # Adicionar features ao DataFrame
+                for topic_idx in range(n_topics):
+                    feature_name = f'{col_clean}_topic_{topic_idx+1}'
+                    df_result[feature_name] = topic_distribution[:, topic_idx]
+                    lda_features_created += 1
+                    print(f"  ✓ Criada feature: {feature_name}")
+                
+                # Adicionar tópico dominante
+                dominant_topic_name = f'{col_clean}_dominant_topic'
+                df_result[dominant_topic_name] = np.argmax(topic_distribution, axis=1) + 1
+                lda_features_created += 1
+                print(f"  ✓ Criada feature: {dominant_topic_name}")
+                
+                print(f"  ✅ LDA concluído! {n_topics + 1} features criadas para esta coluna")
+                
+            except Exception as e:
+                print(f"  ❌ Erro ao aplicar LDA: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        else:  # transform mode
+            if col_clean in params['lda']:
+                try:
+                    print(f"  🔄 Aplicando LDA pré-treinado...")
+                    
+                    # Recuperar modelo e vetorizador
+                    lda = params['lda'][col_clean]['model']
+                    vectorizer = params['lda'][col_clean]['vectorizer']
+                    n_topics = params['lda'][col_clean]['n_topics']
+                    
+                    # Vetorizar e transformar textos válidos
+                    doc_term_matrix = vectorizer.transform(valid_texts)
+                    topic_dist_valid = lda.transform(doc_term_matrix)
+                    
+                    # Criar distribuição completa
+                    topic_distribution = np.zeros((len(df), n_topics))
+                    valid_indices = texts[texts.str.len() > 10].index
+                    for idx, valid_idx in enumerate(valid_indices):
+                        topic_distribution[valid_idx] = topic_dist_valid[idx]
+                    
+                    # Adicionar features
+                    for topic_idx in range(n_topics):
+                        feature_name = f'{col_clean}_topic_{topic_idx+1}'
+                        df_result[feature_name] = topic_distribution[:, topic_idx]
+                        lda_features_created += 1
+                    
+                    # Tópico dominante
+                    dominant_topic_name = f'{col_clean}_dominant_topic'
+                    df_result[dominant_topic_name] = np.argmax(topic_distribution, axis=1) + 1
+                    lda_features_created += 1
+                    
+                    print(f"  ✅ LDA aplicado! {n_topics + 1} features criadas")
+                    
+                except Exception as e:
+                    print(f"  ❌ Erro ao transformar com LDA: {e}")
+            else:
+                print(f"  ⚠️ Modelo LDA não encontrado para '{col_clean}'")
+    
+    print(f"\n📊 RESUMO LDA: Total de {lda_features_created} features LDA criadas")
+    
+    # DEBUG: Listar todas as colunas topic_
+    topic_cols = [col for col in df_result.columns if 'topic_' in col]
+    print(f"🔍 DEBUG: Colunas com 'topic_' no DataFrame: {len(topic_cols)}")
+    if topic_cols:
+        print(f"  Exemplos: {topic_cols[:5]}")
+    
+    return df_result, params
+
 def process_professional_features_batch(df, text_columns, dataset_name, batch_size=5000, 
                                       fit=True, params=None):
     """
@@ -171,7 +317,8 @@ def process_professional_features_batch(df, text_columns, dataset_name, batch_si
                 'aspiration_sentiment': {},
                 'commitment': {},
                 'career_terms': {},
-                'career_tfidf': {}
+                'career_tfidf': {},
+                'lda': {}  # IMPORTANTE: Adicionar seção LDA
             }
     
     n_samples = len(df)
@@ -302,14 +449,14 @@ def process_professional_features_batch(df, text_columns, dataset_name, batch_si
         tfidf_df, tfidf_params = enhance_tfidf_for_career_terms(
             temp_df, [col],
             fit=fit,
-            params=params['career_tfidf'].get(col_key) if not fit else None  # ← AQUI
+            params=params['career_tfidf'].get(col_key) if not fit else None
         )
 
         if fit:
             # CORREÇÃO: Salvar com col_key correto
             if 'career_tfidf' not in params:
                 params['career_tfidf'] = {}
-            params['career_tfidf'][col_key] = tfidf_params  # ← AQUI
+            params['career_tfidf'][col_key] = tfidf_params
         
         added_count = 0
         for tfidf_col in tfidf_df.columns:
@@ -327,6 +474,14 @@ def process_professional_features_batch(df, text_columns, dataset_name, batch_si
             'features_added': features_added
         }, f"{dataset_name}_professional")
     
+    # ADICIONAR: Aplicar LDA após processar todas as features profissionais
+    print("\n6. Aplicando LDA para extração de tópicos...")
+    df, params = perform_topic_modeling_fixed(df, text_columns, n_topics=5, fit=fit, params=params)
+    
+    # DEBUG: Verificar features finais
+    topic_features = [col for col in df.columns if 'topic_' in col]
+    print(f"\n🔍 DEBUG FINAL: Total de features com 'topic_' no DataFrame: {len(topic_features)}")
+    
     # Relatório final
     elapsed_time = time.time() - start_time
     print(f"\n✓ Processamento concluído em {elapsed_time/60:.1f} minutos")
@@ -337,8 +492,6 @@ def process_professional_features_batch(df, text_columns, dataset_name, batch_si
         os.remove(checkpoint_path)
     
     return df, params
-
-# Adicionar esta função antes da função main():
 
 def summarize_features(df, dataset_name, original_shape=None):
     """
@@ -361,12 +514,13 @@ def summarize_features(df, dataset_name, original_shape=None):
         'commitment': [],
         'career_terms': [],
         'career_tfidf': [],
+        'topic': [],  # ADICIONAR categoria topic
         'outras': []
     }
     
     new_features = [col for col in df.columns if any(pattern in col for pattern in [
         'professional_motivation', 'career_keyword', 'aspiration', 'commitment', 
-        'career_term', 'career_tfidf'
+        'career_term', 'career_tfidf', 'topic_', 'dominant_topic'  # ADICIONAR patterns de topic
     ])]
     
     for col in new_features:
@@ -380,6 +534,8 @@ def summarize_features(df, dataset_name, original_shape=None):
             feature_categories['career_tfidf'].append(col)
         elif 'career_term' in col:
             feature_categories['career_terms'].append(col)
+        elif 'topic_' in col or 'dominant_topic' in col:  # ADICIONAR condição para topic
+            feature_categories['topic'].append(col)
         else:
             feature_categories['outras'].append(col)
     
@@ -397,6 +553,10 @@ def summarize_features(df, dataset_name, original_shape=None):
     
     print(f"\n   TOTAL DE NOVAS FEATURES: {total_new}")
     
+    # ADICIONAR: Debug específico para features LDA
+    lda_features = [col for col in df.columns if 'topic_' in col]
+    print(f"\n🔍 DEBUG LDA: {len(lda_features)} features LDA no dataset final")
+    
     # Estatísticas sobre valores ausentes nas novas features
     if new_features:
         print(f"\n📊 ESTATÍSTICAS DAS NOVAS FEATURES:")
@@ -408,8 +568,6 @@ def summarize_features(df, dataset_name, original_shape=None):
             print(f"   ✓ Todas as novas features estão completas (sem valores ausentes)")
     
     print(f"\n{'='*60}\n")
-
-# Modificar a função main() para incluir os sumários:
 
 def main():
     """Função principal."""
@@ -516,6 +674,16 @@ def main():
             print(f"  Colunas em train mas não em valid: {len(train_cols - valid_cols)}")
         if train_cols - test_cols:
             print(f"  Colunas em train mas não em test: {len(train_cols - test_cols)}")
+    
+    # DEBUG FINAL: Verificar features LDA
+    lda_features_train = [col for col in train_processed.columns if 'topic_' in col]
+    lda_features_valid = [col for col in valid_processed.columns if 'topic_' in col]
+    lda_features_test = [col for col in test_processed.columns if 'topic_' in col]
+    
+    print(f"\n🔍 DEBUG LDA FINAL:")
+    print(f"  Features LDA no train: {len(lda_features_train)}")
+    print(f"  Features LDA no validation: {len(lda_features_valid)}")
+    print(f"  Features LDA no test: {len(lda_features_test)}")
     
     # Salvar datasets
     print("\nSalvando datasets processados...")
