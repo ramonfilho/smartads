@@ -216,7 +216,7 @@ def process_datasets(input_dir, output_dir, params_dir=None, preserve_text=True)
     # 4. Salvar parâmetros aprendidos
     if params_dir:
         os.makedirs(params_dir, exist_ok=True)
-        params_path = os.path.join(params_dir, "02_params.joblib")
+        params_path = os.path.join(params_dir, "all_preprocessing_params.joblib")
         joblib.dump(params, params_path)
         print(f"Parâmetros de pré-processamento salvos em {params_path}")
     
@@ -258,11 +258,11 @@ def process_datasets(input_dir, output_dir, params_dir=None, preserve_text=True)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Aplicar pipeline de pré-processamento nos conjuntos de dados.")
-    parser.add_argument("--input-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/data/01_split"), 
+    parser.add_argument("--input-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/data/split"), 
                         help="Diretório contendo os arquivos de entrada (train.csv, validation.csv, test.csv)")
-    parser.add_argument("--output-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/data/02_processed"), 
+    parser.add_argument("--output-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/data/processed"), 
                         help="Diretório para salvar os arquivos processados")
-    parser.add_argument("--params-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/src/preprocessing/02_params"), 
+    parser.add_argument("--params-dir", type=str, default=os.path.join(os.path.expanduser("~"), "desktop/smart_ads/src/preprocessing/preprocessing_params"), 
                         help="Diretório para salvar os parâmetros aprendidos")
     parser.add_argument("--preserve-text", action="store_true", default=True,
                         help="Preservar as colunas de texto originais (default: True)")
