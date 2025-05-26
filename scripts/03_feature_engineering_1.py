@@ -23,9 +23,9 @@ warnings.filterwarnings('ignore')
 
 # Configurar projeto - ajustado para seu ambiente local
 PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
-INPUT_DIR = os.path.join(PROJECT_ROOT, "data/V5/01_split")
-PROCESSED_DIR = os.path.join(PROJECT_ROOT, "data/V5/02_processed")
-OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/V5/03_feature_engineering_1")
+INPUT_DIR = os.path.join(PROJECT_ROOT, "data/01_split")
+PROCESSED_DIR = os.path.join(PROJECT_ROOT, "data/02_processed")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/03_feature_engineering_1")
 PARAMS_DIR = os.path.join(PROJECT_ROOT, "src/preprocessing/03_params")  # Nova pasta para parâmetros
 
 # Garantir que ambos os diretórios existam
@@ -133,7 +133,7 @@ def extract_basic_features(text):
     }
 
 # 3. Função para extrair features TF-IDF com refinamento de pesos
-def extract_tfidf_features(texts, max_features=50, fit=True, vectorizer=None):
+def extract_tfidf_features(texts, max_features=200, fit=True, vectorizer=None):
     """
     Extrai features TF-IDF preservando a indexação original.
     """
@@ -414,7 +414,7 @@ def process_dataset(original_df, processed_df, text_columns, dataset_name,
             print("  Extraindo features TF-IDF refinadas...")
             if is_training:
                 # Treinar vetorizador no conjunto de treino
-                tfidf_df, vectorizer = extract_tfidf_features(processed_texts, max_features=50, fit=True)
+                tfidf_df, vectorizer = extract_tfidf_features(processed_texts, max_features=200, fit=True)
                 tfidf_vectorizers[col_key] = vectorizer
             else:
                 # Usar vetorizador treinado no conjunto de treino

@@ -21,7 +21,7 @@ sys.path.insert(0, project_root)
 from src.modeling.gmm_wrapper import GMM_Wrapper
 
 # Importar funções de avaliação existentes
-from src.evaluation.mlflow_utils import setup_mlflow_tracking, find_optimal_threshold
+from src.utils.mlflow_utils import setup_mlflow_tracking, find_optimal_threshold
 
 # Configuração centralizada
 CONFIG = {

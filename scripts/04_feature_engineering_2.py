@@ -41,9 +41,9 @@ os.environ["OMP_NUM_THREADS"] = "8"  # Otimiza para MacBook M1
 
 # Define paths
 PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
-INPUT_DIR_BASIC = os.path.join(PROJECT_ROOT, "data/V5/02_processed") # Resultado do Script 02
-INPUT_DIR_TEXT = os.path.join(PROJECT_ROOT, "data/V5/03_feature_engineering_1") # Resultado do Script 03
-OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/V5/04_feature_engineering_2") # Saída deste script
+INPUT_DIR_BASIC = os.path.join(PROJECT_ROOT, "data/02_processed") # Resultado do Script 02
+INPUT_DIR_TEXT = os.path.join(PROJECT_ROOT, "data/03_feature_engineering_1") # Resultado do Script 03
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data/04_feature_engineering_2") # Saída deste script
 PARAMS_DIR = os.path.join(PROJECT_ROOT, "src/preprocessing/04_params") # Parâmetros do Script 04
 
 # Criar diretórios se não existirem

@@ -110,7 +110,7 @@ def extract_basic_features(text):
     }
 
 # 3. Função para extrair features TF-IDF com refinamento de pesos
-def extract_tfidf_features(texts, max_features=50, fit=False, vectorizer=None):
+def extract_tfidf_features(texts, max_features=200, fit=False, vectorizer=None):
     """
     Extrai features TF-IDF preservando a indexação original.
     Para mode de inferência, fit=False e vectorizer deve ser fornecido.
@@ -224,7 +224,7 @@ def apply_lda_transform(texts, lda_model, vectorizer):
             filtered_texts.append(text)
             valid_indices.append(i)
 
-    if len(filtered_texts) < 5:
+    if len(filtered_texts) < 3:
         print("Poucos textos válidos para LDA. Pulando.")
         return None
         
