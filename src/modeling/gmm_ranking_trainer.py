@@ -172,7 +172,7 @@ class GMMRankingTrainer:
         
         return X_train_selected, X_val_selected, selected_features
     
-    def optimize_pca_for_ranking(self, X_train_scaled, y_train, variance_thresholds=[0.80, 0.85, 0.90, 0.95]):
+    def optimize_pca_for_ranking(self, X_train_scaled, y_train, variance_thresholds=[0.90, 0.95, 0.98, 0.99]):
         """
         Otimiza número de componentes PCA focando em métricas de ranking.
         """
@@ -191,7 +191,7 @@ class GMMRankingTrainer:
             
             cumulative_variance = np.cumsum(pca_temp.explained_variance_ratio_)
             n_components = np.argmax(cumulative_variance >= var_threshold) + 1
-            n_components = max(n_components, 15)  # Mínimo de 15 componentes
+            n_components = max(n_components, 150)
             
             # Transformar dados
             X_pca = pca_temp.transform(X_train_scaled)[:, :n_components]
@@ -321,7 +321,7 @@ class GMMRankingTrainer:
                     gmm = GaussianMixture(
                         n_components=n_comp,
                         covariance_type=cov_type,
-                        reg_covar=1e-6,  # Regularização
+                        reg_covar=1e-6,
                         random_state=self.config['random_state'],
                         max_iter=200,
                         n_init=5
@@ -334,6 +334,7 @@ class GMMRankingTrainer:
                     
                     # Treinar modelo simples por cluster para avaliação
                     cluster_proba = np.zeros_like(y_val, dtype=float)
+                    valid_clusters = 0
                     
                     for cluster_id in np.unique(train_labels):
                         mask_train = train_labels == cluster_id
@@ -342,32 +343,66 @@ class GMMRankingTrainer:
                         if mask_train.sum() < 50 or mask_val.sum() < 10:
                             continue
                         
+                        # Verificar se há ambas as classes no cluster de treino
+                        y_cluster_train = y_train.iloc[mask_train]
+                        n_classes = len(np.unique(y_cluster_train))
+                        
+                        if n_classes < 2:
+                            # Cluster tem apenas uma classe
+                            print(f"  Cluster {cluster_id}: apenas classe {y_cluster_train.iloc[0]} - pulando")
+                            # Atribuir probabilidade baseada na classe predominante
+                            if y_cluster_train.iloc[0] == 0:
+                                cluster_proba[mask_val] = 0.01  # Baixa probabilidade
+                            else:
+                                cluster_proba[mask_val] = 0.99  # Alta probabilidade
+                            continue
+                        
                         # Modelo simples para avaliação
                         rf = RandomForestClassifier(
                             n_estimators=50,
                             max_depth=5,
-                            random_state=self.config['random_state']
+                            random_state=self.config['random_state'],
+                            class_weight='balanced'  # Importante para dados desbalanceados
                         )
-                        rf.fit(X_train_pca[mask_train], y_train.iloc[mask_train])
                         
-                        if mask_val.sum() > 0:
-                            cluster_proba[mask_val] = rf.predict_proba(X_val_pca[mask_val])[:, 1]
+                        try:
+                            rf.fit(X_train_pca[mask_train], y_cluster_train)
+                            
+                            if mask_val.sum() > 0:
+                                # Verificar formato da saída
+                                proba = rf.predict_proba(X_val_pca[mask_val])
+                                if proba.shape[1] == 2:
+                                    cluster_proba[mask_val] = proba[:, 1]
+                                else:
+                                    # Fallback se apenas uma classe
+                                    cluster_proba[mask_val] = proba[:, 0]
+                                
+                                valid_clusters += 1
+                        except Exception as e:
+                            print(f"  Erro ao treinar modelo para cluster {cluster_id}: {e}")
+                            # Atribuir probabilidade padrão
+                            cluster_proba[mask_val] = y_train.mean()  # Taxa base
+                    
+                    # Verificar se temos clusters válidos suficientes
+                    if valid_clusters < 2:
+                        print(f"  Apenas {valid_clusters} clusters válidos - configuração ruim")
+                        continue
                     
                     # Avaliar métricas de ranking
                     metrics, decile_stats = self.evaluate_ranking_metrics(y_val, cluster_proba)
                     
                     # Score composto para ranking
-                    # Priorizar: GINI alto, top decile lift > 3, poucos violations
                     ranking_score = (
-                        metrics['gini'] * 100 +  # GINI é mais importante
-                        min(metrics['top_decile_lift'], 5) * 10 +  # Bonus por lift alto
-                        metrics['top_20pct_recall'] * 50 -  # Captura nos top 20%
-                        metrics['monotonicity_violations'] * 20  # Penalizar violações
+                    metrics['gini'] * 100 +  
+                    min(metrics['top_decile_lift'], 5) * 20 +  # Aumentar peso do lift
+                    metrics['top_20pct_recall'] * 50 -  
+                    metrics['monotonicity_violations'] * 5   # Reduzir penalização
                     )
                     
                     result = {
                         'n_components': n_comp,
                         'covariance_type': cov_type,
+                        'valid_clusters': valid_clusters,
                         'gini': metrics['gini'],
                         'ks_statistic': metrics['ks_statistic'],
                         'top_decile_lift': metrics['top_decile_lift'],
@@ -378,14 +413,19 @@ class GMMRankingTrainer:
                     
                     results.append(result)
                     
+                    print(f"  Clusters válidos: {valid_clusters}")
                     print(f"  GINI: {metrics['gini']:.4f}")
                     print(f"  Top Decile Lift: {metrics['top_decile_lift']:.2f}")
                     print(f"  Top 20% Recall: {metrics['top_20pct_recall']:.2%}")
                     print(f"  Ranking Score: {ranking_score:.2f}")
                     
                 except Exception as e:
-                    print(f"  Erro: {e}")
+                    print(f"  Erro geral: {e}")
+                    import traceback
+                    traceback.print_exc()
                     continue
+        
+        # Resto do método permanece igual...
         
         # Selecionar melhor configuração
         if not results:
@@ -425,11 +465,11 @@ class GMMRankingTrainer:
         
         # Features numéricas
         numeric_cols = [col for col in X_train.columns 
-                       if X_train[col].dtype in ['int64', 'float64']]
+                    if X_train[col].dtype in ['int64', 'float64']]
         X_train_numeric = X_train[numeric_cols].astype(float).fillna(0)
         
         with self.safe_mlflow_run(experiment_id=self.experiment_id,
-                                 run_name=f"gmm_ranking_cluster_models"):
+                                run_name=f"gmm_ranking_cluster_models"):
             
             for cluster_id in np.unique(cluster_labels_train):
                 print(f"\nCluster {cluster_id}:")
@@ -441,53 +481,122 @@ class GMMRankingTrainer:
                 
                 print(f"  Amostras: {len(X_cluster)}")
                 print(f"  Taxa de conversão: {y_cluster.mean():.4f}")
+                print(f"  Classes únicas: {np.unique(y_cluster)}")
                 
                 if len(X_cluster) < 100:
                     print(f"  Pulando - poucos dados")
                     continue
                 
-                # Escolher modelo baseado no tamanho do cluster
-                if len(X_cluster) > 5000:
-                    # LightGBM para clusters grandes
-                    model = lgb.LGBMClassifier(
-                        objective='binary',
-                        metric='auc',  # Otimizar para AUC
-                        n_estimators=200,
-                        max_depth=5,
-                        num_leaves=31,
-                        learning_rate=0.05,
-                        min_child_samples=20,
-                        subsample=0.8,
-                        colsample_bytree=0.8,
-                        is_unbalance=True,
-                        random_state=self.config['random_state'],
-                        n_jobs=-1,
-                        verbosity=-1
-                    )
-                    model_type = 'lightgbm'
+                # Verificar se há ambas as classes
+                n_classes = len(np.unique(y_cluster))
+                if n_classes < 2:
+                    print(f"  Pulando - apenas uma classe presente")
+                    # Criar modelo dummy que sempre prediz a probabilidade base
+                    from sklearn.dummy import DummyClassifier
+                    model = DummyClassifier(strategy='constant', 
+                                        constant=1 if y_cluster.iloc[0] == 1 else 0)
+                    model.fit(X_cluster, y_cluster)
+                    model_type = 'dummy'
+                    
+                    # Para DummyClassifier, definir GINI como 0
+                    gini = 0.0
                 else:
-                    # RandomForest para clusters menores
-                    model = RandomForestClassifier(
-                        n_estimators=100,
-                        max_depth=8,  # Limitado!
-                        min_samples_split=20,
-                        min_samples_leaf=10,
-                        max_features='sqrt',
-                        class_weight='balanced_subsample',
-                        random_state=self.config['random_state'],
-                        n_jobs=-1
-                    )
-                    model_type = 'randomforest'
+                    # Escolher modelo baseado no tamanho do cluster
+                    if len(X_cluster) > 5000 and n_classes == 2:
+                        # Limpar nomes de features para LightGBM
+                        X_cluster_clean = X_cluster.copy()
+                        feature_mapping = {}
+                        
+                        # Renomear colunas problemáticas
+                        import re
+                        rename_dict = {}
+                        for col in X_cluster_clean.columns:
+                            # Substituir caracteres problemáticos
+                            clean_name = re.sub(r'[^\w\s]', '_', str(col))  # Remove caracteres especiais
+                            clean_name = re.sub(r'\s+', '_', clean_name)    # Substitui espaços
+                            clean_name = re.sub(r'__+', '_', clean_name)    # Remove underscores múltiplos
+                            clean_name = clean_name.strip('_')               # Remove underscores nas extremidades
+                            
+                            if clean_name != col:
+                                rename_dict[col] = clean_name
+                        
+                        if rename_dict:
+                            print(f"  Limpando {len(rename_dict)} nomes de features para LightGBM")
+                            X_cluster_clean = X_cluster_clean.rename(columns=rename_dict)
+                            feature_mapping = {v: k for k, v in rename_dict.items()}  # Mapeamento reverso
+                        
+                        # LightGBM para clusters grandes
+                        try:
+                            model = lgb.LGBMClassifier(
+                                objective='binary',
+                                metric='auc',
+                                n_estimators=200,
+                                max_depth=5,
+                                num_leaves=31,
+                                learning_rate=0.05,
+                                min_child_samples=20,
+                                subsample=0.8,
+                                colsample_bytree=0.8,
+                                is_unbalance=True,
+                                random_state=self.config['random_state'],
+                                n_jobs=-1,
+                                verbosity=-1
+                            )
+                            model.fit(X_cluster_clean, y_cluster)
+                            model_type = 'lightgbm'
+                            
+                            # Avaliar GINI
+                            y_pred_proba = model.predict_proba(X_cluster_clean)[:, 1]
+                            gini = 2 * self._calculate_auc_fast(y_cluster, y_pred_proba) - 1
+                            print(f"  GINI (treino): {gini:.4f}")
+                            
+                        except Exception as e:
+                            print(f"  LightGBM falhou: {e}, usando RandomForest")
+                            # Fallback para RandomForest
+                            model = RandomForestClassifier(
+                                n_estimators=100,
+                                max_depth=8,
+                                min_samples_split=20,
+                                min_samples_leaf=10,
+                                class_weight='balanced',
+                                random_state=self.config['random_state'],
+                                n_jobs=-1
+                            )
+                            model.fit(X_cluster, y_cluster)
+                            model_type = 'randomforest'
+                            feature_mapping = {}
+                            
+                            # Avaliar GINI
+                            y_pred_proba = model.predict_proba(X_cluster)[:, 1]
+                            gini = 2 * self._calculate_auc_fast(y_cluster, y_pred_proba) - 1
+                            print(f"  GINI (treino): {gini:.4f}")
+                            
+                    else:
+                        # RandomForest para clusters menores
+                        model = RandomForestClassifier(
+                            n_estimators=100,
+                            max_depth=8,
+                            min_samples_split=20,
+                            min_samples_leaf=10,
+                            max_features='sqrt',
+                            class_weight='balanced_subsample',
+                            random_state=self.config['random_state'],
+                            n_jobs=-1
+                        )
+                        model.fit(X_cluster, y_cluster)
+                        model_type = 'randomforest'
+                        feature_mapping = {}
+                        
+                        # Avaliar GINI
+                        try:
+                            y_pred_proba = model.predict_proba(X_cluster)[:, 1]
+                            gini = 2 * self._calculate_auc_fast(y_cluster, y_pred_proba) - 1
+                            print(f"  GINI (treino): {gini:.4f}")
+                        except:
+                            gini = 0.0
+                            print(f"  Não foi possível calcular GINI")
                 
                 print(f"  Usando modelo: {model_type}")
-                
-                # Treinar
-                model.fit(X_cluster, y_cluster)
-                
-                # Avaliar no próprio cluster (validação interna)
-                y_pred_proba = model.predict_proba(X_cluster)[:, 1]
-                gini = 2 * self._calculate_auc_fast(y_cluster, y_pred_proba) - 1
-                print(f"  GINI (treino): {gini:.4f}")
                 
                 # Salvar informações
                 model_info = {
@@ -495,9 +604,11 @@ class GMMRankingTrainer:
                     "model": model,
                     "model_type": model_type,
                     "features": numeric_cols,
+                    "feature_mapping": feature_mapping if 'feature_mapping' in locals() else {},
                     "n_samples": len(X_cluster),
                     "conversion_rate": float(y_cluster.mean()),
-                    "gini_train": float(gini)
+                    "n_classes": n_classes,
+                    "gini_train": float(gini) if not np.isnan(gini) else 0.0
                 }
                 
                 cluster_models.append(model_info)
@@ -510,7 +621,8 @@ class GMMRankingTrainer:
                 mlflow.log_params({
                     f"cluster_{cluster_id}_type": model_type,
                     f"cluster_{cluster_id}_samples": len(X_cluster),
-                    f"cluster_{cluster_id}_gini": float(gini)
+                    f"cluster_{cluster_id}_n_classes": n_classes,
+                    f"cluster_{cluster_id}_gini": float(gini) if not np.isnan(gini) else 0.0
                 })
         
         return cluster_models
@@ -537,19 +649,44 @@ class GMMRankingTrainer:
             
             model = model_info["model"]
             features = model_info["features"]
+            model_type = model_info.get("model_type", "unknown")
+            n_classes = model_info.get("n_classes", 2)
             
             X_cluster = X_val[features][mask].astype(float).fillna(0)
             
             if len(X_cluster) > 0:
-                proba = model.predict_proba(X_cluster)[:, 1]
-                y_pred_proba[mask] = proba
+                try:
+                    if model_type == 'dummy' or n_classes < 2:
+                        # Para modelos dummy ou clusters com uma classe
+                        # Usar a taxa de conversão do cluster como probabilidade
+                        cluster_rate = model_info.get("conversion_rate", y_val.mean())
+                        y_pred_proba[mask] = cluster_rate
+                        print(f"  Cluster {cluster_id}: usando taxa fixa {cluster_rate:.4f}")
+                    else:
+                        # Para modelos normais
+                        proba = model.predict_proba(X_cluster)
+                        if proba.shape[1] == 2:
+                            y_pred_proba[mask] = proba[:, 1]
+                        else:
+                            # Fallback se apenas uma coluna
+                            y_pred_proba[mask] = proba[:, 0]
+                        print(f"  Cluster {cluster_id}: {mask.sum()} amostras processadas")
+                except Exception as e:
+                    print(f"  Erro no cluster {cluster_id}: {e}")
+                    # Usar taxa base como fallback
+                    y_pred_proba[mask] = y_val.mean()
+        
+        # Verificar se temos predições válidas
+        if np.all(y_pred_proba == 0):
+            print("AVISO: Todas as probabilidades são zero!")
+            y_pred_proba = np.full_like(y_val, y_val.mean(), dtype=float)
         
         # Avaliar métricas de ranking
         metrics, decile_stats = self.evaluate_ranking_metrics(y_val, y_pred_proba)
         
         # Registrar no MLflow
         with self.safe_mlflow_run(experiment_id=self.experiment_id,
-                                 run_name=f"gmm_ranking_evaluation"):
+                                run_name=f"gmm_ranking_evaluation"):
             # Métricas principais
             mlflow.log_metrics({
                 "gini": metrics['gini'],
@@ -605,6 +742,31 @@ class GMMRankingTrainer:
         
         return results, metrics
     
+    def clean_feature_names(self, df):
+        """
+        Limpa nomes de features para compatibilidade com LightGBM.
+        Remove caracteres especiais que causam problemas.
+        """
+        import re
+        
+        # Criar mapeamento de nomes
+        rename_dict = {}
+        for col in df.columns:
+            # Substituir caracteres problemáticos
+            clean_name = re.sub(r'[^\w\s-]', '_', col)  # Remove caracteres especiais
+            clean_name = re.sub(r'[-\s]+', '_', clean_name)  # Substitui espaços e hífens
+            clean_name = re.sub(r'__+', '_', clean_name)  # Remove underscores múltiplos
+            clean_name = clean_name.strip('_')  # Remove underscores nas extremidades
+            
+            if clean_name != col:
+                rename_dict[col] = clean_name
+        
+        if rename_dict:
+            print(f"  Limpando {len(rename_dict)} nomes de features para LightGBM")
+            df = df.rename(columns=rename_dict)
+        
+        return df, rename_dict
+
     def plot_ranking_diagnostics(self, y_true, y_pred_proba):
         """
         Gera visualizações para avaliar qualidade do ranking.
@@ -795,16 +957,54 @@ class GMMRankingTrainer:
         # Gerar visualizações
         y_pred_proba = np.zeros_like(y_val, dtype=float)
         cluster_model_map = {model["cluster_id"]: model for model in cluster_models}
-        
+
         for cluster_id, model_info in cluster_model_map.items():
             mask = val_labels == cluster_id
             if any(mask):
                 model = model_info["model"]
                 features = model_info["features"]
+                model_type = model_info.get("model_type", "unknown")
+                n_classes = model_info.get("n_classes", 2)
+                
                 X_cluster = X_val[features][mask].astype(float).fillna(0)
+                
                 if len(X_cluster) > 0:
-                    y_pred_proba[mask] = model.predict_proba(X_cluster)[:, 1]
-        
+                    try:
+                        if model_type == 'dummy' or n_classes < 2:
+                            # Para modelos dummy
+                            cluster_rate = model_info.get("conversion_rate", 0.0)
+                            y_pred_proba[mask] = cluster_rate
+                        elif model_type == 'lightgbm' and 'feature_mapping' in model_info:
+                            # Para LightGBM com features renomeadas
+                            X_cluster_renamed = X_cluster.copy()
+                            
+                            # Aplicar renomeação se necessário
+                            reverse_mapping = {v: k for k, v in model_info['feature_mapping'].items()}
+                            if reverse_mapping:
+                                rename_dict = {}
+                                for col in X_cluster_renamed.columns:
+                                    if col in reverse_mapping:
+                                        rename_dict[col] = reverse_mapping[col]
+                                if rename_dict:
+                                    X_cluster_renamed = X_cluster_renamed.rename(columns=rename_dict)
+                            
+                            proba = model.predict_proba(X_cluster_renamed)
+                            if proba.ndim == 2 and proba.shape[1] == 2:
+                                y_pred_proba[mask] = proba[:, 1]
+                            else:
+                                y_pred_proba[mask] = proba if proba.ndim == 1 else proba[:, 0]
+                        else:
+                            # Para outros modelos
+                            proba = model.predict_proba(X_cluster)
+                            if proba.ndim == 2 and proba.shape[1] == 2:
+                                y_pred_proba[mask] = proba[:, 1]
+                            else:
+                                y_pred_proba[mask] = proba if proba.ndim == 1 else proba[:, 0]
+                                
+                    except Exception as e:
+                        print(f"Erro ao gerar predições para cluster {cluster_id}: {e}")
+                        y_pred_proba[mask] = y_val.mean()
+
         self.plot_ranking_diagnostics(y_val, y_pred_proba)
         
         # Criar pipeline para GMM_Wrapper

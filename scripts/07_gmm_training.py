@@ -19,9 +19,10 @@ from src.modeling.gmm_ranking_trainer import GMMRankingTrainer
 # Configuração
 CONFIG = {
     'base_dir': PROJECT_ROOT,
-    'data_dir': os.path.join(PROJECT_ROOT, "data/new/03_feature_engineering_1"),  # Dataset completo
+    'data_dir': os.path.join(PROJECT_ROOT, "data/new/03_feature_engineering"),  # Dataset completo
     'mlflow_dir': os.path.join(PROJECT_ROOT, "models/mlflow"),
     'artifact_dir': os.path.join(PROJECT_ROOT, "models/artifacts"),
+    'pca_variance_thresholds': [0.90, 0.95, 0.98, 0.99],
     'experiment_name': "smart_ads_gmm_ranking",
     'random_state': 42,
     'param_search': {
