@@ -72,13 +72,6 @@ def convert_integer_columns_to_float(train_df, val_df=None):
 def prepare_data_for_training(train_path, val_path=None):
     """
     Load and prepare data for training a baseline model.
-    
-    Args:
-        train_path: Path to training dataset
-        val_path: Path to validation dataset (optional)
-        
-    Returns:
-        Dictionary with prepared data components
     """
     print("Carregando datasets...")
     
@@ -89,7 +82,6 @@ def prepare_data_for_training(train_path, val_path=None):
     if val_path:
         val_df = pd.read_csv(val_path)
     else:
-        # If no validation set provided, we'll split the training data later
         val_df = None
     
     # Sanitize column names
@@ -203,7 +195,7 @@ def train_and_evaluate_model(model, name, X_train, y_train, X_val, y_val,
     import time
     import shutil
     
-    from src.evaluation.mlflow_utils import (
+    from src.utils.mlflow_utils import (
         plot_confusion_matrix, plot_prob_histogram, plot_precision_recall_curve,
         plot_learning_curve, plot_threshold_analysis, plot_feature_importance,
         find_optimal_threshold
@@ -395,7 +387,7 @@ def run_baseline_model_training(
     """
     Run the full baseline model training pipeline.
     """
-    from src.evaluation.mlflow_utils import get_data_hash
+    from src.utils.mlflow_utils import get_data_hash
     
     # NÃO configurar novamente o tracking URI aqui
     # NÃO chamar setup_mlflow_tracking aqui

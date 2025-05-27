@@ -143,7 +143,7 @@ def parse_arguments():
     parser.add_argument(
         '--max-features',
         type=int,
-        default=700,
+        default=300,  # Mudado de 700 para 300 como padrão
         help='Número máximo de features a selecionar'
     )
     
@@ -405,6 +405,7 @@ def main():
     logger.info(f"Input: {args.input_dir}")
     logger.info(f"Output: {args.output_dir}")
     logger.info(f"Modo: {'RÁPIDO' if args.fast_mode else 'COMPLETO'}")
+    logger.info(f"Max features: {args.max_features}")
     
     # Criar diretórios
     create_directories(args)
@@ -545,90 +546,82 @@ def main():
     final_importance.to_csv(importance_path, index=False)
     logger.info(f"Importância das features salva em {importance_path}")
     
-    # PASSO 3: Seleção final
+    # PASSO 3: Seleção das top features baseado em importância
+    logger.info(f"\n📊 Selecionando top {args.max_features} features baseado em Mean_Importance")
+    
+    # Ordenar por importância e pegar as top N
+    top_features_df = final_importance.nlargest(args.max_features, 'Mean_Importance')
+    top_features_sanitized = top_features_df['Feature'].tolist()
+    
+    # Converter de volta para nomes originais
+    if rename_dict:
+        reverse_rename_dict = {v: k for k, v in rename_dict.items()}
+        top_features_original = []
+        for feat in top_features_sanitized:
+            original_name = reverse_rename_dict.get(feat, feat)
+            top_features_original.append(original_name)
+    else:
+        top_features_original = top_features_sanitized
+    
+    logger.info(f"✅ Top {args.max_features} features selecionadas")
+    logger.info(f"   Importância média das top features: {top_features_df['Mean_Importance'].mean():.4f}")
+    logger.info(f"   Top 5 features: {top_features_original[:5]}")
+    
+    # Documentar features selecionadas
+    recommended_path = os.path.join(args.analysis_dir, 'recommended_features.txt')
+    with open(recommended_path, 'w') as f:
+        for feature in top_features_original:
+            f.write(f"{feature}\n")
+    logger.info(f"Lista de features recomendadas salva em {recommended_path}")
+    
+    # Salvar também um CSV com as top features e suas importâncias
+    top_features_info = top_features_df.copy()
+    if rename_dict:
+        # Adicionar coluna com nomes originais
+        top_features_info['Original_Feature'] = [
+            reverse_rename_dict.get(feat, feat) for feat in top_features_info['Feature']
+        ]
+    top_features_info.to_csv(
+        os.path.join(args.analysis_dir, 'top_features_importance.csv'), 
+        index=False
+    )
+    
     if not args.keep_all_features:
-        # Converter corr_groups para formato esperado
-        high_corr_pairs = []
-        for (feat1, feat2), info in corr_groups.items():
-            high_corr_pairs.append({
-                'feature1': feat1,
-                'feature2': feat2,
-                'correlation': info['correlation']
-            })
+        # PASSO 4: Aplicar seleção aos datasets, salvando APENAS as top features
+        logger.info(f"\n📁 Salvando datasets com apenas as top {args.max_features} features...")
         
-        # Selecionar features finais
-        original_relevant_features, features_to_remove_corr, unrecommended_features = \
-            select_final_features(
-                final_importance, high_corr_pairs, numeric_cols,
-                rename_dict, importance_threshold=args.importance_threshold/100
-            )
-        
-        # Limitar ao número máximo se especificado
-        if len(original_relevant_features) > args.max_features:
-            logger.info(f"Limitando de {len(original_relevant_features)} para {args.max_features} features")
-            # Pegar as top N baseado na importância
-            top_features_df = final_importance[final_importance['Feature'].isin(
-                [rename_dict.get(f, f) for f in original_relevant_features]
-            )].head(args.max_features)
-            
-            # Converter de volta para nomes originais
-            original_relevant_features = []
-            for feat in top_features_df['Feature']:
-                original_name = feat
-                for orig, renamed in rename_dict.items():
-                    if renamed == feat:
-                        original_name = orig
-                        break
-                original_relevant_features.append(original_name)
-        
-        # Documentar seleções
-        document_feature_selections(
-            original_relevant_features, unrecommended_features,
-            final_importance, high_corr_pairs, rename_dict,
-            output_dir=args.analysis_dir
-        )
-        
-        logger.info(f"\nFeatures selecionadas: {len(original_relevant_features)}")
-        logger.info(f"Features removidas: {initial_n_features - len(original_relevant_features)}")
-        
-        # Aplicar seleção aos datasets
-        logger.info("\nAplicando seleção de features aos datasets...")
-        
-        # Garantir consistência entre datasets
-        train_cols = set(train_df.columns)
-        val_cols = set(val_df.columns)
-        test_cols = set(test_df.columns)
-        common_cols = train_cols.intersection(val_cols).intersection(test_cols)
-        
-        # Features selecionadas que existem em todos os datasets
-        selected_common_features = [f for f in original_relevant_features if f in common_cols]
-        
-        logger.info(f"Features comuns selecionadas: {len(selected_common_features)}")
-        
-        # Aplicar seleção
         for df_name, df_data in [('train', train_df), ('validation', val_df), ('test', test_df)]:
-            # Selecionar colunas
-            selected_cols = [col for col in selected_common_features if col in df_data.columns]
+            # Verificar quais features existem no dataset
+            features_in_dataset = [f for f in top_features_original if f in df_data.columns]
+            missing_features = set(top_features_original) - set(features_in_dataset)
+            
+            if missing_features:
+                logger.warning(f"  {df_name}: {len(missing_features)} features não encontradas")
+            
+            # Adicionar target se existir
+            columns_to_keep = features_in_dataset.copy()
             if target_col in df_data.columns:
-                selected_cols.append(target_col)
+                columns_to_keep.append(target_col)
             
             # Criar dataset selecionado
-            df_selected = df_data[selected_cols]
+            df_selected = df_data[columns_to_keep]
             
             # Salvar
             output_path = os.path.join(args.output_dir, f"{df_name}.csv")
             df_selected.to_csv(output_path, index=False)
             
-            logger.info(f"{df_name}: {df_data.shape[1]} → {df_selected.shape[1]} colunas")
+            logger.info(f"✅ {df_name}: {df_data.shape[1]} → {df_selected.shape[1]} colunas")
+            logger.info(f"   Features: {len(features_in_dataset)}, Target: {'Sim' if target_col in columns_to_keep else 'Não'}")
         
         # Informações de output
         output_info = {
-            'features_selected': len(selected_common_features),
-            'features_removed': initial_n_features - len(selected_common_features),
+            'features_selected': args.max_features,
+            'features_removed': initial_n_features - args.max_features,
             'original_features': initial_n_features,
-            'common_features': len(common_cols),
+            'features_after_correlation_removal': len(numeric_cols),
             'datasets_processed': ['train', 'validation', 'test'],
-            'mode': 'fast' if args.fast_mode else 'complete'
+            'mode': 'fast' if args.fast_mode else 'complete',
+            'top_5_features': top_features_original[:5]
         }
     else:
         logger.info("\nModo --keep-all-features ativado. Apenas gerando análise.")
@@ -658,6 +651,7 @@ def main():
     logger.info(f"Resultados salvos em: {args.analysis_dir}")
     if not args.keep_all_features:
         logger.info(f"Datasets selecionados salvos em: {args.output_dir}")
+        logger.info(f"Cada dataset contém apenas as top {args.max_features} features + target")
 
 if __name__ == "__main__":
     main()
