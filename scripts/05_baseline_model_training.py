@@ -16,7 +16,7 @@ sys.path.insert(0, project_root)
 from src.evaluation.baseline_model import run_baseline_model_training
 
 # Configuração de caminhos - usando caminhos absolutos
-train_path = os.path.join(project_root, "data/03_5_feature_selection_final_treated/train.csv")
+train_path = os.path.join(project_root, "data/new/03_5_feature_selection_final_treated/train.csv")
 val_path = os.path.join(project_root, "data/03_5_feature_selection_final_treated/validation.csv")
 
 # Diretório MLflow para tracking - usando caminho absoluto

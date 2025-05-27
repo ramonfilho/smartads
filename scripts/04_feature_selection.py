@@ -1,4 +1,13 @@
+#!/usr/bin/env python
+"""
+Feature Selection Script for Smart Ads Project
+
+Este script realiza seleção de features usando múltiplos modelos e técnicas
+para identificar as features mais relevantes para predição de conversão.
+"""
+
 import os
+import sys
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -8,1006 +17,647 @@ import xgboost as xgb
 from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import roc_auc_score, precision_recall_curve, average_precision_score, f1_score
-from sklearn.feature_selection import VarianceThreshold
+from sklearn.feature_selection import VarianceThreshold, SelectKBest, f_classif
 from scipy.stats import pearsonr
 import re
-import shap
 import warnings
+import argparse
+import json
+from datetime import datetime
+import logging
+import time
+
 warnings.filterwarnings('ignore')
 
-# Definir caminhos de entrada e saída
-input_dir = 'data/02_3_processed_text_code6'
-output_dir = 'data/03_4_feature_selection_final'
+# Configurar logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-# Criar diretórios de saída
-if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
-    print(f"Pasta '{output_dir}' criada para salvar os datasets processados")
-else:
-    print(f"Pasta '{output_dir}' já existe")
+# Configurar projeto
+PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
+sys.path.insert(0, PROJECT_ROOT)
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "src"))
 
-# Criar pasta para resultados de análise
-analysis_dir = 'eda_results/feature_importance_results'
-if not os.path.exists(analysis_dir):
-    os.makedirs(analysis_dir)
-    print(f"Pasta '{analysis_dir}' criada para salvar resultados de análise")
-else:
-    print(f"Pasta '{analysis_dir}' já existe")
-
-# 1 - Carregar dataset de treino
-print("Carregando datasets...")
+# Importar módulos do projeto se disponíveis
 try:
-    train_df = pd.read_csv(os.path.join(input_dir, "train.csv"))
-    print(f"Dataset de treino carregado: {train_df.shape[0]} linhas, {train_df.shape[1]} colunas")
+    from src.evaluation.feature_importance import (
+        create_output_directory,
+        load_dataset,
+        identify_launch_column,
+        identify_target_column,
+        select_numeric_features,
+        identify_text_derived_columns,
+        sanitize_column_names,
+        analyze_multicollinearity,
+        compare_country_encodings,
+        evaluate_model,
+        analyze_rf_importance,
+        analyze_lgb_importance,
+        analyze_xgb_importance,
+        combine_importance_results,
+        analyze_launch_robustness
+    )
+    from src.evaluation.feature_selector import (
+        identify_irrelevant_features,
+        analyze_text_features,
+        select_final_features,
+        document_feature_selections,
+        create_selected_dataset,
+        summarize_feature_categories
+    )
+    logger.info("Módulos do projeto carregados com sucesso")
+    USE_PROJECT_MODULES = True
+except ImportError as e:
+    logger.warning(f"Não foi possível importar módulos do projeto: {e}")
+    logger.info("Usando implementação local")
+    USE_PROJECT_MODULES = False
+
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description='Feature Selection for Smart Ads Project',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     
-    val_df = pd.read_csv(os.path.join(input_dir, "validation.csv"))
-    print(f"Dataset de validação carregado: {val_df.shape[0]} linhas, {val_df.shape[1]} colunas")
+    # Diretórios
+    parser.add_argument(
+        '--input-dir',
+        type=str,
+        default=os.path.join(PROJECT_ROOT, 'data/new/03_feature_engineering_1'),
+        help='Diretório de entrada com os datasets processados'
+    )
     
-    test_df = pd.read_csv(os.path.join(input_dir, "test.csv"))
-    print(f"Dataset de teste carregado: {test_df.shape[0]} linhas, {test_df.shape[1]} colunas")
-except Exception as e:
-    print(f"Erro ao carregar datasets: {e}")
-    exit(1)
-
-# Vamos usar o dataset de treino para a análise de features
-df = train_df
-
-# 2 - Identificar coluna de lançamento (usando especificamente 'lançamento')
-print("\nIdentificando coluna de lançamento...")
-launch_col = 'lançamento'  # Nome específico conforme indicado
-
-if launch_col in df.columns:
-    print(f"Coluna de lançamento encontrada: '{launch_col}'")
-    n_launches = df[launch_col].nunique()
-    print(f"Número de lançamentos: {n_launches}")
-    print(f"Lançamentos identificados: {sorted(df[launch_col].unique())}")
-    print(f"Distribuição de lançamentos:\n{df[launch_col].value_counts(normalize=True)*100}")
-else:
-    print(f"Coluna '{launch_col}' não encontrada. Verificando alternativas...")
-    # Procurar colunas alternativas
-    alt_launch_cols = [col for col in df.columns if 'lanc' in col.lower() or 'launch' in col.lower()]
-    if alt_launch_cols:
-        launch_col = alt_launch_cols[0]
-        print(f"Usando coluna alternativa: '{launch_col}'")
-        print(f"Número de lançamentos: {df[launch_col].nunique()}")
-        print(f"Distribuição de lançamentos:\n{df[launch_col].value_counts(normalize=True)*100}")
-    else:
-        launch_col = None
-        print("Nenhuma coluna de lançamento identificada.")
-
-# 3 - Preparar dados para modelagem
-print("\nPreparando dados para análise de importância...")
-# Verificar coluna target
-if 'target' not in df.columns:
-    print("Coluna 'target' não encontrada. Verificando alternativas...")
-    target_cols = [col for col in df.columns if col.lower() in ['target', 'comprou', 'converted', 'conversion']]
-    if target_cols:
-        target_col = target_cols[0]
-        print(f"Usando '{target_col}' como target.")
-    else:
-        raise ValueError("Não foi possível encontrar uma coluna target.")
-else:
-    target_col = 'target'
-
-# Selecionar colunas numéricas para análise
-numeric_cols = df.select_dtypes(include=['number', 'bool']).columns.tolist()
-if target_col in numeric_cols:
-    numeric_cols.remove(target_col)
-
-# Remover colunas com mais de 90% de valores ausentes
-missing_pct = df[numeric_cols].isna().mean()
-high_missing_cols = missing_pct[missing_pct > 0.9].index.tolist()
-if high_missing_cols:
-    print(f"Removendo {len(high_missing_cols)} colunas com mais de 90% de valores ausentes")
-    numeric_cols = [col for col in numeric_cols if col not in high_missing_cols]
-
-# Remover colunas com variância zero
-try:
-    selector = VarianceThreshold(threshold=0)
-    selector.fit(df[numeric_cols].fillna(0))
-    zero_var_cols = [numeric_cols[i] for i, var in enumerate(selector.variances_) if var == 0]
-    if zero_var_cols:
-        print(f"Removendo {len(zero_var_cols)} colunas com variância zero")
-        numeric_cols = [col for col in numeric_cols if col not in zero_var_cols]
-except Exception as e:
-    print(f"Erro ao verificar variância: {e}")
-
-# Verificar se há features textuais no dataset
-text_derived_cols = [col for col in numeric_cols if any(text_indicator in col for text_indicator in 
-                                                     ['_tfidf_', '_sentiment', '_word_count', '_length', '_motiv_', '_has_question'])]
-print(f"Features derivadas de texto identificadas: {len(text_derived_cols)}")
-if text_derived_cols:
-    print("Exemplos de features textuais:")
-    for col in text_derived_cols[:5]:  # Mostrar alguns exemplos
-        print(f"  - {col}")
-    if len(text_derived_cols) > 5:
-        print(f"  - ... e mais {len(text_derived_cols) - 5} features textuais")
-
-# IMPORTANTE: Sanitizar nomes de colunas para evitar erro de caracteres especiais JSON
-# Isso resolve o erro "Do not support special JSON characters in feature name"
-print("\nSanitizando nomes das features para evitar problemas com caracteres especiais...")
-rename_dict = {}
-for col in numeric_cols:
-    # Substituir caracteres especiais e espaços por underscores
-    new_col = re.sub(r'[^0-9a-zA-Z_]', '_', col)
-    # Garantir que não comece com número
-    if new_col[0].isdigit():
-        new_col = 'f_' + new_col
-    # Verificar se já existe esse novo nome
-    i = 1
-    temp_col = new_col
-    while temp_col in rename_dict.values():
-        temp_col = f"{new_col}_{i}"
-        i += 1
-    new_col = temp_col
+    parser.add_argument(
+        '--output-dir',
+        type=str,
+        default=os.path.join(PROJECT_ROOT, 'data/new/04_feature_selection'),
+        help='Diretório de saída para datasets com features selecionadas'
+    )
     
-    # Só adicionar ao dicionário se o nome mudou
-    if col != new_col:
-        rename_dict[col] = new_col
-
-# Aplicar renomeação
-if rename_dict:
-    print(f"Renomeando {len(rename_dict)} colunas para evitar erros com caracteres especiais")
-    df = df.rename(columns=rename_dict)
+    parser.add_argument(
+        '--analysis-dir',
+        type=str,
+        default=os.path.join(PROJECT_ROOT, 'reports/feature_importance_results'),
+        help='Diretório para salvar resultados de análise'
+    )
     
-    # Atualizar lista de colunas numéricas
-    numeric_cols = [rename_dict.get(col, col) for col in numeric_cols]
+    # Parâmetros
+    parser.add_argument(
+        '--importance-threshold',
+        type=float,
+        default=0.1,
+        help='Threshold de importância mínima (em %% da importância total)'
+    )
     
-    # Atualizar lista de colunas textuais
-    text_derived_cols = [rename_dict.get(col, col) for col in text_derived_cols]
-
-X = df[numeric_cols].fillna(0)
-y = df[target_col]
-
-print(f"Usando {len(numeric_cols)} features numéricas para análise")
-print(f"Distribuição do target: {y.value_counts(normalize=True) * 100}")
-
-# 4 - Análise de Multicolinearidade
-print("\n--- Análise de Multicolinearidade ---")
-# Identificar pares de features com correlação alta
-corr_matrix = X.corr()
-high_corr_pairs = []
-
-# Limiar de correlação (ajustável)
-corr_threshold = 0.8
-
-for i in range(len(corr_matrix.columns)):
-    for j in range(i+1, len(corr_matrix.columns)):
-        if abs(corr_matrix.iloc[i, j]) > corr_threshold:
-            high_corr_pairs.append({
-                'feature1': corr_matrix.columns[i],
-                'feature2': corr_matrix.columns[j],
-                'correlation': corr_matrix.iloc[i, j]
-            })
-
-# Ordenar por correlação absoluta
-high_corr_pairs = sorted(high_corr_pairs, key=lambda x: abs(x['correlation']), reverse=True)
-
-print(f"Encontrados {len(high_corr_pairs)} pares de features com correlação > {corr_threshold}:")
-for i, pair in enumerate(high_corr_pairs[:10]):  # Mostrar os 10 primeiros
-    print(f"{i+1}. {pair['feature1']} & {pair['feature2']}: {pair['correlation']:.4f}")
-
-if len(high_corr_pairs) > 10:
-    print(f"... e mais {len(high_corr_pairs) - 10} pares.")
-
-# 5 - Verificação Específica: country_freq vs country_encoded
-print("\n--- Análise de Redundância: country_freq vs country_encoded ---")
-# Procurar versões sanitizadas dos nomes
-country_freq_col = next((col for col in X.columns if 'country_freq' in col), None)
-country_encoded_col = next((col for col in X.columns if 'country_encoded' in col), None)
-
-if country_freq_col and country_encoded_col:
-    # Calcular correlação
-    corr, p_value = pearsonr(X[country_freq_col].fillna(0), X[country_encoded_col].fillna(0))
-    print(f"Correlação entre {country_freq_col} e {country_encoded_col}: {corr:.4f} (p-value: {p_value:.4f})")
+    parser.add_argument(
+        '--cv-threshold',
+        type=float,
+        default=1.5,
+        help='Threshold de coeficiente de variação para features instáveis'
+    )
     
-    # Avaliar valor preditivo relativo para o target
-    corr_target_freq = pearsonr(X[country_freq_col].fillna(0), y)[0]
-    corr_target_encoded = pearsonr(X[country_encoded_col].fillna(0), y)[0]
+    parser.add_argument(
+        '--correlation-threshold',
+        type=float,
+        default=0.95,
+        help='Threshold de correlação para identificar features redundantes'
+    )
     
-    print(f"Correlação com target:")
-    print(f"- {country_freq_col}: {corr_target_freq:.4f}")
-    print(f"- {country_encoded_col}: {corr_target_encoded:.4f}")
+    parser.add_argument(
+        '--n-folds',
+        type=int,
+        default=3,  # Reduzido de 5 para 3 para acelerar
+        help='Número de folds para cross-validation'
+    )
     
-    recommendation = f"{country_freq_col if abs(corr_target_freq) > abs(corr_target_encoded) else country_encoded_col} parece ter maior valor preditivo."
-    print(f"Recomendação: {recommendation}")
-else:
-    print("Colunas country_freq e/ou country_encoded não encontradas.")
+    parser.add_argument(
+        '--batch-size',
+        type=int,
+        default=10000,
+        help='Tamanho do batch para processamento (economia de memória)'
+    )
+    
+    parser.add_argument(
+        '--max-features',
+        type=int,
+        default=700,
+        help='Número máximo de features a selecionar'
+    )
+    
+    parser.add_argument(
+        '--fast-mode',
+        action='store_true',
+        help='Modo rápido: usa apenas RandomForest sem CV'
+    )
+    
+    # Flags
+    parser.add_argument(
+        '--use-cache',
+        action='store_true',
+        help='Usar cache de análises anteriores se disponível'
+    )
+    
+    parser.add_argument(
+        '--skip-launch-analysis',
+        action='store_true',
+        default=True,
+        help='Pular análise de robustez entre lançamentos'
+    )
+    
+    parser.add_argument(
+        '--keep-all-features',
+        action='store_true',
+        help='Manter todas as features (apenas gerar análise)'
+    )
+    
+    parser.add_argument(
+        '--config',
+        type=str,
+        help='Arquivo JSON com configurações (sobrescreve outros argumentos)'
+    )
+    
+    args = parser.parse_args()
+    
+    # Carregar configurações de arquivo se fornecido
+    if args.config and os.path.exists(args.config):
+        with open(args.config, 'r') as f:
+            config = json.load(f)
+            for key, value in config.items():
+                if hasattr(args, key):
+                    setattr(args, key, value)
+        logger.info(f"Configurações carregadas de {args.config}")
+    
+    return args
 
-# 6 - Separar dados para treinamento e validação
-X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-print(f"Treinamento: {X_train.shape[0]} amostras, Validação: {X_val.shape[0]} amostras")
-print(f"Proporção da classe positiva no treino: {y_train.mean()*100:.2f}%")
-print(f"Proporção da classe positiva na validação: {y_val.mean()*100:.2f}%")
+def create_directories(args):
+    """Criar diretórios necessários."""
+    for dir_path in [args.output_dir, args.analysis_dir]:
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+            logger.info(f"Diretório criado: {dir_path}")
+        else:
+            logger.info(f"Diretório já existe: {dir_path}")
 
-# 7 - Definir funções de avaliação para dados desbalanceados
-def evaluate_model(model, X, y, feature_names):
-    """Avalia o modelo usando métricas adequadas para dados desbalanceados"""
-    if hasattr(model, 'predict_proba'):
-        y_proba = model.predict_proba(X)[:, 1]
-    else:  # Para modelos como XGBoost com DMatrix
-        y_proba = model.predict(X)
+def load_datasets(args):
+    """Carregar datasets de treino, validação e teste."""
+    datasets = {}
     
-    # Calcular métricas
-    # AUC - avalia ranking independente do threshold
-    auc = roc_auc_score(y, y_proba)
-    
-    # Average Precision - média ponderada de precisões em diferentes thresholds
-    ap = average_precision_score(y, y_proba)
-    
-    # Encontrar melhor F1-score ajustando threshold
-    precisions, recalls, thresholds = precision_recall_curve(y, y_proba)
-    f1_scores = 2 * recalls * precisions / (recalls + precisions + 1e-10)
-    best_threshold_idx = np.argmax(f1_scores)
-    best_threshold = 0 if len(thresholds) == 0 else thresholds[min(best_threshold_idx, len(thresholds)-1)]
-    best_f1 = f1_scores[best_threshold_idx]
-    
-    print(f"Desempenho do modelo:")
-    print(f"  AUC: {auc:.4f}")
-    print(f"  Average Precision: {ap:.4f}")
-    print(f"  Melhor F1-Score: {best_f1:.4f} (threshold: {best_threshold:.4f})")
-    
-    return {
-        'auc': auc,
-        'ap': ap,
-        'f1': best_f1,
-        'threshold': best_threshold
-    }
-
-# 8 - Análise de importância com múltiplos modelos
-print("\n--- Iniciando análise de importância de features ---")
-
-# 8.1 - RandomForest com validação cruzada para dados desbalanceados
-print("\nAnalisando com RandomForest e validação cruzada para dados desbalanceados...")
-try:
-    # Usar validação cruzada estratificada para lidar com o desbalanceamento
-    n_folds = 5
-    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
-    
-    rf_importances = np.zeros(len(numeric_cols))
-    rf_metrics = {'auc': [], 'ap': [], 'f1': []}
-    
-    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
-        print(f"\nFold {fold+1}/{n_folds}")
-        X_fold_train, X_fold_val = X.iloc[train_idx], X.iloc[val_idx]
-        y_fold_train, y_fold_val = y.iloc[train_idx], y.iloc[val_idx]
+    for dataset_name in ['train', 'validation', 'test']:
+        file_path = os.path.join(args.input_dir, f"{dataset_name}.csv")
         
-        # Calcular class_weight
-        n_samples = len(y_fold_train)
-        n_pos = y_fold_train.sum()
-        n_neg = n_samples - n_pos
-        weight_pos = (n_samples / (2 * n_pos)) if n_pos > 0 else 1.0
-        weight_neg = (n_samples / (2 * n_neg)) if n_neg > 0 else 1.0
-        
-        rf_model = RandomForestClassifier(
-            n_estimators=100, 
-            class_weight={0: weight_neg, 1: weight_pos},
-            max_depth=10,
-            random_state=42 + fold,
-            n_jobs=-1
-        )
-        
-        rf_model.fit(X_fold_train, y_fold_train)
-        
-        # Avaliar modelo
-        metrics = evaluate_model(rf_model, X_fold_val, y_fold_val, numeric_cols)
-        for key in rf_metrics:
-            rf_metrics[key].append(metrics[key])
-        
-        # Acumular importâncias
-        rf_importances += rf_model.feature_importances_
-    
-    # Calcular média das importâncias
-    rf_importances /= n_folds
-    
-    # Criar dataframe de importância
-    rf_importance = pd.DataFrame({
-        'Feature': numeric_cols,
-        'Importance_RF': rf_importances
-    }).sort_values(by='Importance_RF', ascending=False)
-    
-    print("\nMétricas médias da validação cruzada (RandomForest):")
-    for key, values in rf_metrics.items():
-        print(f"  {key.upper()}: {np.mean(values):.4f} (±{np.std(values):.4f})")
-    
-    print("\nTop 15 features (RandomForest):")
-    print(rf_importance.head(15))
-except Exception as e:
-    print(f"Erro ao executar RandomForest: {e}")
-    # Criar dataframe vazio em caso de erro
-    rf_importance = pd.DataFrame({
-        'Feature': numeric_cols,
-        'Importance_RF': [0] * len(numeric_cols)
-    })
-
-# 8.2 - LightGBM (com cuidado para evitar erros)
-print("\nAnalisando com LightGBM...")
-try:
-    # Validação cruzada com LightGBM para dados desbalanceados
-    lgb_importances = np.zeros(len(numeric_cols))
-    lgb_metrics = {'auc': [], 'ap': [], 'f1': []}
-    
-    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
-        print(f"\nFold {fold+1}/{n_folds}")
-        X_fold_train, X_fold_val = X.iloc[train_idx], X.iloc[val_idx]
-        y_fold_train, y_fold_val = y.iloc[train_idx], y.iloc[val_idx]
-        
-        # Calcular scale_pos_weight
-        pos_scale = (y_fold_train == 0).sum() / max(1, (y_fold_train == 1).sum())
-        
-        train_data = lgb.Dataset(X_fold_train, label=y_fold_train)
-        val_data = lgb.Dataset(X_fold_val, label=y_fold_val, reference=train_data)
-        
-        params = {
-            'objective': 'binary',
-            'metric': 'auc',
-            'verbosity': -1,
-            'seed': 42 + fold,
-            'learning_rate': 0.05,
-            'scale_pos_weight': pos_scale,
-            'n_jobs': -1
-        }
-        
-        # Treinando modelo
-        callbacks = [lgb.early_stopping(stopping_rounds=50, verbose=False),
-                    lgb.log_evaluation(period=0)]
-        
-        lgb_model = lgb.train(
-            params, 
-            train_data, 
-            num_boost_round=500,
-            valid_sets=[val_data],
-            callbacks=callbacks
-        )
-        
-        # Avaliar modelo
-        metrics = evaluate_model(lgb_model, X_fold_val, y_fold_val, numeric_cols)
-        for key in lgb_metrics:
-            lgb_metrics[key].append(metrics[key])
-        
-        # Acumular importâncias
-        fold_importance = lgb_model.feature_importance(importance_type='gain')
-        lgb_importances += fold_importance
-    
-    # Calcular média das importâncias
-    lgb_importances /= n_folds
-    
-    # Criar dataframe de importância
-    lgb_importance = pd.DataFrame({
-        'Feature': numeric_cols,
-        'Importance_LGB': lgb_importances
-    }).sort_values(by='Importance_LGB', ascending=False)
-    
-    print("\nMétricas médias da validação cruzada (LightGBM):")
-    for key, values in lgb_metrics.items():
-        print(f"  {key.upper()}: {np.mean(values):.4f} (±{np.std(values):.4f})")
-
-    print("\nTop 15 features (LightGBM):")
-    print(lgb_importance.head(15))
-except Exception as e:
-    print(f"Erro ao executar LightGBM: {e}")
-    print("Criando dataframe de importância vazio para LightGBM")
-    # Criar dataframe vazio em caso de erro
-    lgb_importance = pd.DataFrame({
-        'Feature': numeric_cols,
-        'Importance_LGB': [0] * len(numeric_cols)
-    })
-
-# 8.3 - XGBoost
-print("\nAnalisando com XGBoost...")
-try:
-    # Validação cruzada com XGBoost para dados desbalanceados
-    xgb_importances = {}  # Dicionário para acumular importâncias
-    xgb_metrics = {'auc': [], 'ap': [], 'f1': []}
-    
-    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
-        print(f"\nFold {fold+1}/{n_folds}")
-        X_fold_train, X_fold_val = X.iloc[train_idx], X.iloc[val_idx]
-        y_fold_train, y_fold_val = y.iloc[train_idx], y.iloc[val_idx]
-        
-        # Calcular scale_pos_weight
-        pos_scale = (y_fold_train == 0).sum() / max(1, (y_fold_train == 1).sum())
-        
-        # Preparar dados
-        dtrain = xgb.DMatrix(X_fold_train, label=y_fold_train, feature_names=numeric_cols)
-        dval = xgb.DMatrix(X_fold_val, label=y_fold_val, feature_names=numeric_cols)
-        
-        # Configuração para dados desbalanceados
-        xgb_params = {
-            'objective': 'binary:logistic',
-            'eval_metric': 'auc',
-            'scale_pos_weight': pos_scale,
-            'learning_rate': 0.05,
-            'seed': 42 + fold,
-            'tree_method': 'hist'
-        }
-        
-        # Treinando o modelo
-        xgb_model = xgb.train(
-            xgb_params,
-            dtrain,
-            num_boost_round=500,
-            evals=[(dval, 'val')],
-            early_stopping_rounds=50,
-            verbose_eval=False
-        )
-        
-        # Avaliar modelo
-        dval_pred = xgb.DMatrix(X_fold_val, feature_names=numeric_cols)
-        y_pred = xgb_model.predict(dval_pred)
-        auc = roc_auc_score(y_fold_val, y_pred)
-        ap = average_precision_score(y_fold_val, y_pred)
-        
-        # Encontrar melhor F1-score ajustando threshold
-        precisions, recalls, thresholds = precision_recall_curve(y_fold_val, y_pred)
-        f1_scores = 2 * recalls * precisions / (recalls + precisions + 1e-10)
-        best_threshold_idx = np.argmax(f1_scores)
-        best_threshold = 0 if len(thresholds) == 0 else thresholds[min(best_threshold_idx, len(thresholds)-1)]
-        best_f1 = f1_scores[best_threshold_idx]
-        
-        xgb_metrics['auc'].append(auc)
-        xgb_metrics['ap'].append(ap)
-        xgb_metrics['f1'].append(best_f1)
-        
-        # Acumular importâncias
-        importance_dict = xgb_model.get_score(importance_type='gain')
-        for feat, score in importance_dict.items():
-            if feat in xgb_importances:
-                xgb_importances[feat] += score
-            else:
-                xgb_importances[feat] = score
-    
-    # Calcular média das importâncias
-    for feat in xgb_importances:
-        xgb_importances[feat] /= n_folds
-    
-    # Criar dataframe de importância
-    xgb_features = []
-    xgb_scores = []
-    
-    for feat, score in xgb_importances.items():
-        xgb_features.append(feat)
-        xgb_scores.append(score)
-    
-    xgb_importance = pd.DataFrame({
-        'Feature': xgb_features,
-        'Importance_XGB': xgb_scores
-    }).sort_values(by='Importance_XGB', ascending=False)
-    
-    # Adicionar features ausentes
-    missing_features = set(numeric_cols) - set(xgb_importance['Feature'])
-    for feat in missing_features:
-        xgb_importance = pd.concat([xgb_importance, 
-                                   pd.DataFrame({'Feature': [feat], 'Importance_XGB': [0]})],
-                                  ignore_index=True)
-    
-    print("\nMétricas médias da validação cruzada (XGBoost):")
-    for key, values in xgb_metrics.items():
-        print(f"  {key.upper()}: {np.mean(values):.4f} (±{np.std(values):.4f})")
-    
-    print("\nTop 15 features (XGBoost):")
-    print(xgb_importance.head(15))
-    
-except Exception as e:
-    print(f"Erro ao executar XGBoost: {e}")
-    print("Criando dataframe de importância vazio para XGBoost")
-    # Criar dataframe vazio em caso de erro
-    xgb_importance = pd.DataFrame({
-        'Feature': numeric_cols,
-        'Importance_XGB': [0] * len(numeric_cols)
-    })
-
-# 9 - Combinando importâncias de múltiplos modelos
-print("\nCombinando resultados de diferentes métodos...")
-
-# Normalizar importâncias para comparabilidade
-for df_imp, col in [(rf_importance, 'Importance_RF'), 
-                    (lgb_importance, 'Importance_LGB'), 
-                    (xgb_importance, 'Importance_XGB')]:
-    if df_imp[col].sum() > 0:  # Evitar divisão por zero
-        df_imp[col] = df_imp[col] / df_imp[col].sum() * 100
-
-# Mesclar resultados
-try:
-    combined = pd.merge(rf_importance, lgb_importance, on='Feature', how='outer')
-    combined = pd.merge(combined, xgb_importance, on='Feature', how='outer')
-    combined = combined.fillna(0)
-except Exception as e:
-    print(f"Erro ao combinar resultados: {e}")
-    # Alternativa: usar apenas o modelo que funcionou
-    if rf_importance['Importance_RF'].sum() > 0:
-        combined = rf_importance.copy()
-        if 'Importance_LGB' not in combined.columns:
-            combined['Importance_LGB'] = 0
-        if 'Importance_XGB' not in combined.columns:
-            combined['Importance_XGB'] = 0
-    elif lgb_importance['Importance_LGB'].sum() > 0:
-        combined = lgb_importance.copy()
-        if 'Importance_RF' not in combined.columns:
-            combined['Importance_RF'] = 0
-        if 'Importance_XGB' not in combined.columns:
-            combined['Importance_XGB'] = 0
-    else:
-        combined = xgb_importance.copy()
-        if 'Importance_RF' not in combined.columns:
-            combined['Importance_RF'] = 0
-        if 'Importance_LGB' not in combined.columns:
-            combined['Importance_LGB'] = 0
-
-# Calcular média e desvio padrão das importâncias
-combined['Mean_Importance'] = combined[['Importance_RF', 'Importance_LGB', 'Importance_XGB']].mean(axis=1)
-combined['Std_Importance'] = combined[['Importance_RF', 'Importance_LGB', 'Importance_XGB']].std(axis=1)
-combined['CV'] = combined['Std_Importance'] / combined['Mean_Importance'].replace(0, 1e-10)
-
-# Ordenar por importância média
-final_importance = combined.sort_values(by='Mean_Importance', ascending=False)
-
-print("\nImportância combinada (top 20 features):")
-print(final_importance[['Feature', 'Mean_Importance', 'Std_Importance', 'CV']].head(20))
-
-# Salvar importância das features
-final_importance.to_csv(os.path.join(analysis_dir, 'feature_importance_combined.csv'), index=False)
-print(f"\nImportância das features salva em {os.path.join(analysis_dir, 'feature_importance_combined.csv')}")
-
-# 10 - Análise de Robustez entre Lançamentos
-if launch_col and df[launch_col].nunique() >= 2:
-    print("\n--- Análise de Robustez entre Lançamentos ---")
-    
-    # Verificar se as colunas de lançamento foram renomeadas
-    if launch_col in rename_dict:
-        launch_col = rename_dict[launch_col]
-    
-    launch_imp_results = {}
-    
-    # Selecionar os principais lançamentos para análise (top 6)
-    main_launches = df[launch_col].value_counts().nlargest(6).index.tolist()
-    
-    for launch in main_launches:
-        launch_mask = df[launch_col] == launch
-        if launch_mask.sum() < 100:  # Pular lançamentos muito pequenos
-            print(f"Pulando lançamento {launch} (menos de 100 amostras)")
-            continue
-            
-        print(f"\nAnalisando lançamento: {launch} ({launch_mask.sum()} amostras)")
-        
-        # Separar dados deste lançamento
-        X_launch = X[launch_mask]
-        y_launch = y[launch_mask]
-        
-        # Verificar se há amostras positivas suficientes
-        n_pos = y_launch.sum()
-        if n_pos < 5:
-            print(f"  Pulando: apenas {n_pos} amostras positivas")
-            continue
-            
-        # Criar split proporcional a quantidade de dados
-        test_size = min(0.2, 100/len(y_launch))
-        X_tr, X_vl, y_tr, y_vl = train_test_split(X_launch, y_launch, 
-                                                  test_size=test_size, 
-                                                  random_state=42,
-                                                  stratify=y_launch)
-        
-        # Tentar RandomForest (mais robusto a erros)
         try:
-            # Calcular class_weight
-            n_samples = len(y_tr)
-            n_pos = y_tr.sum()
-            n_neg = n_samples - n_pos
-            weight_pos = (n_samples / (2 * n_pos)) if n_pos > 0 else 1.0
-            weight_neg = (n_samples / (2 * n_neg)) if n_neg > 0 else 1.0
+            # Tentar carregar em chunks se o arquivo for muito grande
+            file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
             
-            # Treinar modelo apenas para este lançamento
-            rf_model_launch = RandomForestClassifier(
-                n_estimators=50, 
-                class_weight={0: weight_neg, 1: weight_pos},
-                max_depth=6,
-                random_state=42,
-                n_jobs=-1
-            )
-            rf_model_launch.fit(X_tr, y_tr)
+            if file_size_mb > 500:  # Se maior que 500MB
+                logger.info(f"Arquivo {dataset_name}.csv grande ({file_size_mb:.1f}MB), carregando em chunks...")
+                
+                # Ler em chunks e concatenar
+                chunks = []
+                for chunk in pd.read_csv(file_path, chunksize=args.batch_size):
+                    chunks.append(chunk)
+                
+                datasets[dataset_name] = pd.concat(chunks, ignore_index=True)
+            else:
+                datasets[dataset_name] = pd.read_csv(file_path)
             
-            # Obter importância
-            launch_imp = pd.DataFrame({
-                'Feature': numeric_cols,
-                f'Imp_{launch}': rf_model_launch.feature_importances_
-            })
+            logger.info(f"Dataset {dataset_name} carregado: {datasets[dataset_name].shape}")
             
-            # Normalizar importância
-            if launch_imp[f'Imp_{launch}'].sum() > 0:
-                launch_imp[f'Imp_{launch}'] = launch_imp[f'Imp_{launch}'] / launch_imp[f'Imp_{launch}'].sum() * 100
-            
-            # Guardar resultados
-            launch_imp_results[launch] = launch_imp
         except Exception as e:
-            print(f"  Erro ao analisar lançamento {launch}: {e}")
+            logger.error(f"Erro ao carregar {dataset_name}: {e}")
+            raise
     
-    # Combinar resultados de diferentes lançamentos
-    if launch_imp_results:
-        combined_launch_imp = launch_imp_results[list(launch_imp_results.keys())[0]].copy()
-        
-        for launch, imp_df in list(launch_imp_results.items())[1:]:
-            combined_launch_imp = pd.merge(combined_launch_imp, imp_df, on='Feature', how='outer')
-        
-        combined_launch_imp = combined_launch_imp.fillna(0)
-        
-        # Calcular média e desvio padrão entre lançamentos
-        imp_cols = [col for col in combined_launch_imp.columns if col.startswith('Imp_')]
-        combined_launch_imp['Mean_Launch_Imp'] = combined_launch_imp[imp_cols].mean(axis=1)
-        combined_launch_imp['Std_Launch_Imp'] = combined_launch_imp[imp_cols].std(axis=1)
-        combined_launch_imp['CV_Launch'] = combined_launch_imp['Std_Launch_Imp'] / combined_launch_imp['Mean_Launch_Imp'].replace(0, 1e-10)
-        
-        # Ordenar por importância média
-        launch_importance = combined_launch_imp.sort_values(by='Mean_Launch_Imp', ascending=False)
-        
-        print("\nImportância média entre lançamentos (top 15 features):")
-        print(launch_importance[['Feature', 'Mean_Launch_Imp', 'Std_Launch_Imp', 'CV_Launch']].head(15))
-        
-        # Identificar features com alta variabilidade entre lançamentos
-        unstable_features = launch_importance[
-            (launch_importance['CV_Launch'] > 1.2) & 
-            (launch_importance['Mean_Launch_Imp'] > 0.5)
-        ].sort_values(by='CV_Launch', ascending=False)
-        
-        print("\nFeatures com alta variabilidade entre lançamentos:")
-        print(unstable_features[['Feature', 'Mean_Launch_Imp', 'CV_Launch']].head(10))
-        
-        # Merge com importância geral para comparação
-        launch_vs_global = pd.merge(
-            launch_importance[['Feature', 'Mean_Launch_Imp', 'CV_Launch']],
-            final_importance[['Feature', 'Mean_Importance']],
-            on='Feature', how='inner'
-        )
-        
-        # Identificar features consistentemente importantes
-        consistent_features = launch_vs_global[
-            (launch_vs_global['Mean_Launch_Imp'] > launch_vs_global['Mean_Launch_Imp'].median()) &
-            (launch_vs_global['Mean_Importance'] > launch_vs_global['Mean_Importance'].median()) &
-            (launch_vs_global['CV_Launch'] < 1.0)
-        ].sort_values(by='Mean_Importance', ascending=False)
-        
-        print("\nFeatures consistentemente importantes entre lançamentos:")
-        print(consistent_features[['Feature', 'Mean_Importance', 'Mean_Launch_Imp', 'CV_Launch']].head(15))
-        
-        # Salvar análise de robustez
-        launch_vs_global.to_csv(os.path.join(analysis_dir, 'feature_robustness_analysis.csv'), index=False)
-        print(f"\nAnálise de robustez entre lançamentos salva em {os.path.join(analysis_dir, 'feature_robustness_analysis.csv')}")
-else:
-    print("\nAnálise de robustez entre lançamentos não realizada (coluna de lançamento não identificada ou insuficiente)")
+    return datasets['train'], datasets['validation'], datasets['test']
 
-# 11 - Identificar features potencialmente irrelevantes
-print("\nIdentificando features potencialmente irrelevantes...")
-
-# Critérios para considerar uma feature como potencialmente irrelevante:
-# 1. Baixa importância média (< 0.1% da importância total média)
-threshold_importance = 0.1
-irrelevant_by_importance = final_importance[final_importance['Mean_Importance'] < threshold_importance]
-
-# 2. Alta variabilidade entre modelos (coef. variação > 1.5)
-threshold_cv = 1.5
-irrelevant_by_variance = final_importance[(final_importance['CV'] > threshold_cv) & 
-                                         (final_importance['Mean_Importance'] < final_importance['Mean_Importance'].median())]
-
-# 3. Features altamente correlacionadas com outras mais importantes
-irrelevant_by_correlation = []
-for pair in high_corr_pairs:
-    f1, f2 = pair['feature1'], pair['feature2']
-    f1_imp = final_importance[final_importance['Feature'] == f1]['Mean_Importance'].values[0] if f1 in final_importance['Feature'].values else 0
-    f2_imp = final_importance[final_importance['Feature'] == f2]['Mean_Importance'].values[0] if f2 in final_importance['Feature'].values else 0
-    
-    # A feature menos importante é considerada irrelevante
-    if f1_imp < f2_imp:
-        irrelevant_by_correlation.append({
-            'Feature': f1, 
-            'Correlation_With': f2, 
-            'Correlation': pair['correlation'],
-            'Mean_Importance': f1_imp,
-            'Better_Feature_Importance': f2_imp
-        })
-    else:
-        irrelevant_by_correlation.append({
-            'Feature': f2, 
-            'Correlation_With': f1, 
-            'Correlation': pair['correlation'],
-            'Mean_Importance': f2_imp,
-            'Better_Feature_Importance': f1_imp
-        })
-
-# Converter para DataFrame
-irrelevant_by_correlation_df = pd.DataFrame(irrelevant_by_correlation)
-
-# Combinando critérios
-potentially_irrelevant = pd.concat([
-    irrelevant_by_importance[['Feature', 'Mean_Importance', 'CV']],
-    irrelevant_by_variance[['Feature', 'Mean_Importance', 'CV']]
-]).drop_duplicates().sort_values(by='Mean_Importance')
-
-print(f"\nFeatures potencialmente irrelevantes ({len(potentially_irrelevant)}):")
-print(potentially_irrelevant[['Feature', 'Mean_Importance', 'CV']].head(20))
-
-if len(potentially_irrelevant) > 20:
-    print(f"... e mais {len(potentially_irrelevant) - 20} features.")
-
-# 12 - Análise específica de features textuais
-if text_derived_cols:
-    print("\n--- Análise Específica de Features Textuais ---")
-    
-    # Extrair apenas features textuais do dataframe de importância
-    text_importance = final_importance[final_importance['Feature'].isin(text_derived_cols)].copy()
-    
-    # Agrupar por tipo de feature textual
-    text_feature_types = {
-        'Comprimento Texto': [col for col in text_derived_cols if '_length' in col or '_word_count' in col],
-        'Sentimento': [col for col in text_derived_cols if '_sentiment' in col],
-        'Motivação': [col for col in text_derived_cols if '_motiv_' in col],
-        'Características': [col for col in text_derived_cols if '_has_' in col],
-        'TF-IDF': [col for col in text_derived_cols if '_tfidf_' in col]
+def save_configuration(args, output_info):
+    """Salvar configuração usada e informações de output."""
+    config = {
+        'timestamp': datetime.now().isoformat(),
+        'arguments': vars(args),
+        'output_info': output_info,
+        'project_root': PROJECT_ROOT,
+        'python_version': sys.version,
+        'modules_used': 'project' if USE_PROJECT_MODULES else 'local'
     }
     
-    print("\nImportância das features textuais por categoria:")
-    for category, cols in text_feature_types.items():
-        if cols:
-            category_importance = text_importance[text_importance['Feature'].isin(cols)]
-            avg_importance = category_importance['Mean_Importance'].mean() if not category_importance.empty else 0
-            print(f"{category}: {len(cols)} features, importância média: {avg_importance:.2f}")
-            
-            # Top 3 features nesta categoria
-            top_features = category_importance.head(3)
-            if not top_features.empty:
-                print("  Top features nesta categoria:")
-                for i, row in top_features.iterrows():
-                    print(f"    - {row['Feature']}: {row['Mean_Importance']:.2f}")
+    config_path = os.path.join(args.analysis_dir, 'feature_selection_config.json')
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2)
     
-    # Top 10 features textuais gerais
-    print("\nTop 10 features textuais:")
-    print(text_importance[['Feature', 'Mean_Importance']].head(10))
+    logger.info(f"Configuração salva em {config_path}")
+
+def remove_perfect_correlations(X, threshold=0.999):
+    """
+    Remove features com correlação perfeita ou quase perfeita.
+    Mantém a primeira de cada par.
+    """
+    # Calcular matriz de correlação
+    corr_matrix = X.corr().abs()
     
-    # Proporção de importância das features textuais
-    text_importance_sum = text_importance['Mean_Importance'].sum()
-    total_importance_sum = final_importance['Mean_Importance'].sum()
-    text_proportion = (text_importance_sum / total_importance_sum) * 100 if total_importance_sum > 0 else 0
+    # Máscara triangular superior
+    upper = corr_matrix.where(
+        np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
+    )
     
-    print(f"\nContribuição total das features textuais: {text_proportion:.2f}% da importância total")
+    # Encontrar features para remover
+    to_drop = [column for column in upper.columns if any(upper[column] >= threshold)]
     
-    # Salvar análise de features textuais
-    text_importance.to_csv(os.path.join(analysis_dir, 'text_features_importance.csv'), index=False)
-    print(f"Análise de features textuais salva em {os.path.join(analysis_dir, 'text_features_importance.csv')}")
-
-# 13 - Recomendações finais e criação da lista de features não recomendadas com justificativas
-print("\n--- Preparando Recomendações Finais e Documentação ---")
-
-# Definir um limiar de importância
-importance_threshold = final_importance['Mean_Importance'].sum() * 0.001  # 0.1% da importância total
-
-# Filtrar features relevantes e não redundantes
-relevant_features = final_importance[final_importance['Mean_Importance'] > importance_threshold]['Feature'].tolist()
-
-# Remover uma feature de cada par altamente correlacionado (manter a mais importante)
-features_to_remove_corr = []
-if high_corr_pairs:
-    for pair in high_corr_pairs:
-        f1, f2 = pair['feature1'], pair['feature2']
-        if f1 in relevant_features and f2 in relevant_features:
-            f1_imp = final_importance[final_importance['Feature'] == f1]['Mean_Importance'].values[0] 
-            f2_imp = final_importance[final_importance['Feature'] == f2]['Mean_Importance'].values[0]
-            # Remover a feature menos importante
-            if f1_imp < f2_imp and f1 in relevant_features:
-                relevant_features.remove(f1)
-                features_to_remove_corr.append((f1, f2, pair['correlation'], f1_imp, f2_imp))
-            elif f2 in relevant_features:
-                relevant_features.remove(f2)
-                features_to_remove_corr.append((f2, f1, pair['correlation'], f2_imp, f1_imp))
-
-# Criar conjunto de features recomendadas
-# Converter para dicionário para facilitar a conversão de volta aos nomes originais
-reverse_rename_dict = {v: k for k, v in rename_dict.items()}
-
-# Recuperar os nomes originais das features relevantes
-original_relevant_features = [reverse_rename_dict.get(feature, feature) for feature in relevant_features]
-
-# Salvar lista de features recomendadas
-with open(os.path.join(analysis_dir, 'recommended_features.txt'), 'w') as f:
-    for feature in original_relevant_features:
-        f.write(f"{feature}\n")
-
-print(f"\nLista de {len(original_relevant_features)} features recomendadas salva em {os.path.join(analysis_dir, 'recommended_features.txt')}")
-
-# Criar lista e documentação de features não recomendadas
-unrecommended_features = set(numeric_cols) - set(relevant_features)
-unrecommended_features_original = [reverse_rename_dict.get(feature, feature) for feature in unrecommended_features]
-
-# Preparar justificativas para cada feature não recomendada
-unrecommended_with_reasons = []
-
-for feature in unrecommended_features:
-    original_feature = reverse_rename_dict.get(feature, feature)
-    reasons = []
+    if to_drop:
+        logger.info(f"Removendo {len(to_drop)} features com correlação >= {threshold}")
+        logger.info(f"Exemplos: {to_drop[:5]}")
     
-    # Verificar se tem baixa importância
-    if feature in irrelevant_by_importance['Feature'].values:
-        imp = final_importance[final_importance['Feature'] == feature]['Mean_Importance'].values[0]
-        reasons.append(f"Baixa importância preditiva ({imp:.4f})")
+    return X.drop(columns=to_drop), to_drop
+
+def fast_feature_selection(X, y, n_features=500):
+    """
+    Seleção rápida de features usando RandomForest + estatísticas básicas.
+    """
+    logger.info(f"\nModo rápido: selecionando top {n_features} features")
     
-    # Verificar se tem alta variabilidade entre modelos
-    if feature in irrelevant_by_variance['Feature'].values:
-        cv = final_importance[final_importance['Feature'] == feature]['CV'].values[0]
-        reasons.append(f"Alta variabilidade entre modelos (CV={cv:.2f})")
+    # 1. Remover features com baixa variância
+    selector = VarianceThreshold(threshold=0.01)
+    X_var = pd.DataFrame(
+        selector.fit_transform(X),
+        columns=X.columns[selector.get_support()],
+        index=X.index
+    )
+    logger.info(f"Features após filtro de variância: {X_var.shape[1]}")
     
-    # Verificar se é redundante com outra feature
-    redundant_with = None
-    for f, better_f, corr, imp, better_imp in features_to_remove_corr:
-        if f == feature:
-            original_better_f = reverse_rename_dict.get(better_f, better_f)
-            reasons.append(f"Altamente correlacionada (r={corr:.2f}) com {original_better_f} que tem maior importância ({better_imp:.4f} vs {imp:.4f})")
-            redundant_with = original_better_f
-            break
-    
-    # Se não encontrou razão específica
-    if not reasons:
-        reasons.append("Baixa contribuição geral para o modelo")
-    
-    unrecommended_with_reasons.append({
-        'Feature': original_feature,
-        'Reasons': "; ".join(reasons),
-        'Redundant_With': redundant_with,
-        'Importance': final_importance[final_importance['Feature'] == feature]['Mean_Importance'].values[0] if feature in final_importance['Feature'].values else 0
-    })
-
-# Converter para DataFrame e salvar
-unrecommended_df = pd.DataFrame(unrecommended_with_reasons)
-unrecommended_df = unrecommended_df.sort_values('Importance', ascending=False)
-unrecommended_df.to_csv(os.path.join(analysis_dir, 'unrecommended_features.csv'), index=False)
-
-# Criar arquivo de texto com explicações detalhadas
-with open(os.path.join(analysis_dir, 'unrecommended_features_explanation.txt'), 'w') as f:
-    f.write("# Features Não Recomendadas e Justificativas\n\n")
-    f.write(f"Total de features analisadas: {len(numeric_cols)}\n")
-    f.write(f"Features recomendadas: {len(relevant_features)}\n")
-    f.write(f"Features não recomendadas: {len(unrecommended_features)}\n\n")
-    
-    f.write("## Razões para remoção:\n\n")
-    f.write("1. **Baixa importância preditiva**: Features com importância menor que 0.1% da importância total.\n")
-    f.write("2. **Alta variabilidade entre modelos**: Features cujo coeficiente de variação entre diferentes modelos é maior que 1.5.\n")
-    f.write("3. **Redundância**: Features altamente correlacionadas (r > 0.8) com outras de maior importância.\n\n")
-    
-    f.write("## Lista de features não recomendadas:\n\n")
-    
-    for i, row in unrecommended_df.iterrows():
-        f.write(f"### {i+1}. {row['Feature']}\n")
-        f.write(f"   - **Razões**: {row['Reasons']}\n")
-        if pd.notna(row['Redundant_With']):
-            f.write(f"   - **Redundante com**: {row['Redundant_With']}\n")
-        f.write(f"   - **Importância**: {row['Importance']:.6f}\n\n")
-
-print(f"Documentação detalhada de features não recomendadas salva em {os.path.join(analysis_dir, 'unrecommended_features_explanation.txt')}")
-
-# 14 - Aplicar a seleção de features aos datasets de entrada
-print("\n--- Aplicando seleção de features a todos os datasets ---")
-
-# Verificar se existem features que aparecem em alguns datasets mas não em outros
-print("Verificando consistência das features entre os datasets...")
-train_columns = set(train_df.columns)
-val_columns = set(val_df.columns)
-test_columns = set(test_df.columns)
-
-# Features exclusivas de cada dataset
-train_only = train_columns - (val_columns.union(test_columns))
-val_only = val_columns - (train_columns.union(test_columns))
-test_only = test_columns - (train_columns.union(val_columns))
-
-# Encontrar features comuns a todos os datasets
-common_features = train_columns.intersection(val_columns).intersection(test_columns)
-
-# Features selecionadas em comum
-selected_common_features = [f for f in original_relevant_features if f in common_features]
-
-if train_only:
-    print(f"Features encontradas apenas no dataset de treino ({len(train_only)}):")
-    print(f"  {sorted(list(train_only))[:5]}{'...' if len(train_only) > 5 else ''}")
-
-if val_only:
-    print(f"Features encontradas apenas no dataset de validação ({len(val_only)}):")
-    print(f"  {sorted(list(val_only))[:5]}{'...' if len(val_only) > 5 else ''}")
-
-if test_only:
-    print(f"Features encontradas apenas no dataset de teste ({len(test_only)}):")
-    print(f"  {sorted(list(test_only))[:5]}{'...' if len(test_only) > 5 else ''}")
-
-# Resolver o problema garantindo consistência entre datasets
-print(f"\nGarantindo consistência entre datasets...")
-print(f"Features selecionadas originalmente: {len(original_relevant_features)}")
-print(f"Features comuns a todos os datasets: {len(common_features)}")
-print(f"Features selecionadas comuns a todos os datasets: {len(selected_common_features)}")
-
-# Função para aplicar seleção de features a um DataFrame
-def apply_features_selection(df, selected_features, target_col):
-    """Aplica a seleção de features a um DataFrame"""
-    # Selecionamos apenas as features que existem no DataFrame
-    available_features = [col for col in selected_features if col in df.columns]
-    
-    # Selecionar colunas
-    if target_col in df.columns:
-        selected_columns = available_features + [target_col]
+    # 2. F-score para ranking inicial rápido
+    if X_var.shape[1] > n_features * 2:
+        selector = SelectKBest(f_classif, k=min(n_features * 2, X_var.shape[1]))
+        X_f = pd.DataFrame(
+            selector.fit_transform(X_var, y),
+            columns=X_var.columns[selector.get_support()],
+            index=X_var.index
+        )
+        logger.info(f"Features após F-score: {X_f.shape[1]}")
     else:
-        selected_columns = available_features
+        X_f = X_var
     
-    # Criar novo DataFrame
-    return df[selected_columns]
+    # 3. RandomForest para importância final
+    rf = RandomForestClassifier(
+        n_estimators=100,
+        max_depth=10,
+        n_jobs=-1,
+        random_state=42,
+        class_weight='balanced'
+    )
+    
+    # Usar amostra se dataset muito grande
+    if len(X_f) > 50000:
+        X_sample, _, y_sample, _ = train_test_split(
+            X_f, y, train_size=50000/len(X_f), stratify=y, random_state=42
+        )
+        rf.fit(X_sample, y_sample)
+    else:
+        rf.fit(X_f, y)
+    
+    # Criar DataFrame de importância
+    importance_df = pd.DataFrame({
+        'feature': X_f.columns,
+        'importance': rf.feature_importances_
+    }).sort_values('importance', ascending=False)
+    
+    # Selecionar top N
+    selected_features = importance_df.head(n_features)['feature'].tolist()
+    
+    return selected_features, importance_df
 
-# Aplicar seleção a cada dataset usando APENAS as features que existem em todos os datasets
-print(f"Aplicando seleção a {len(selected_common_features)} features comuns a todos os datasets...")
+def handle_multicollinearity(X, y, numeric_cols, correlation_threshold=0.95):
+    """
+    Remove features altamente correlacionadas antes da análise.
+    Para pares correlacionados, mantém a que tem maior correlação com target.
+    """
+    logger.info(f"\nRemovendo features com correlação > {correlation_threshold}")
+    start_time = time.time()
+    
+    # Primeiro, remover correlações perfeitas (mais rápido)
+    X_cleaned, perfect_corr_removed = remove_perfect_correlations(X, threshold=0.999)
+    numeric_cols = [col for col in numeric_cols if col in X_cleaned.columns]
+    
+    # Calcular correlações apenas se necessário
+    if correlation_threshold < 0.999:
+        corr_matrix = X_cleaned.corr().abs()
+        upper = corr_matrix.where(
+            np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
+        )
+        
+        # Calcular correlação com target
+        target_corr = X_cleaned.corrwith(y).abs()
+        
+        features_to_remove = set()
+        correlation_groups = {}
+        
+        # Encontrar pares com alta correlação
+        high_corr_indices = np.where(upper > correlation_threshold)
+        
+        for idx in range(len(high_corr_indices[0])):
+            i = high_corr_indices[0][idx]
+            j = high_corr_indices[1][idx]
+            
+            col1 = corr_matrix.columns[i]
+            col2 = corr_matrix.columns[j]
+            corr_value = upper.iloc[i, j]
+            
+            # Para alta correlação (não perfeita), manter a com maior correlação com target
+            if target_corr[col1] < target_corr[col2]:
+                features_to_remove.add(col1)
+            else:
+                features_to_remove.add(col2)
+            
+            # Registrar para análise
+            key = tuple(sorted([col1, col2]))
+            correlation_groups[key] = {
+                'correlation': corr_value,
+                'target_corr_1': target_corr[col1],
+                'target_corr_2': target_corr[col2]
+            }
+        
+        # Remover features adicionais
+        if features_to_remove:
+            X_cleaned = X_cleaned.drop(columns=list(features_to_remove))
+            numeric_cols = [col for col in numeric_cols if col not in features_to_remove]
+    else:
+        features_to_remove = set()
+        correlation_groups = {}
+    
+    total_removed = len(perfect_corr_removed) + len(features_to_remove)
+    elapsed_time = time.time() - start_time
+    
+    logger.info(f"Correlações processadas em {elapsed_time:.1f} segundos")
+    logger.info(f"Features removidas: {total_removed} (perfeitas: {len(perfect_corr_removed)}, altas: {len(features_to_remove)})")
+    logger.info(f"Features restantes: {len(numeric_cols)}")
+    
+    return X_cleaned, numeric_cols, features_to_remove.union(set(perfect_corr_removed)), correlation_groups
 
-# Processar dataset de treino
-train_selected = apply_features_selection(train_df, selected_common_features, target_col)
-print(f"Dataset de treino: {train_df.shape[1]} colunas -> {train_selected.shape[1]} colunas selecionadas")
+def main():
+    """Função principal."""
+    total_start_time = time.time()
+    
+    # Parse argumentos
+    args = parse_arguments()
+    
+    logger.info("=== INICIANDO FEATURE SELECTION ===")
+    logger.info(f"Input: {args.input_dir}")
+    logger.info(f"Output: {args.output_dir}")
+    logger.info(f"Modo: {'RÁPIDO' if args.fast_mode else 'COMPLETO'}")
+    
+    # Criar diretórios
+    create_directories(args)
+    
+    # Carregar datasets
+    logger.info("\nCarregando datasets...")
+    train_df, val_df, test_df = load_datasets(args)
+    
+    # Usar dataset de treino para análise
+    df = train_df
+    
+    # Identificar coluna de lançamento
+    launch_col = identify_launch_column(df) if not args.skip_launch_analysis else None
+    
+    # Identificar coluna target
+    target_col = identify_target_column(df)
+    
+    # Selecionar features numéricas
+    logger.info("\nPreparando dados para análise...")
+    numeric_cols = select_numeric_features(df, target_col)
+    initial_n_features = len(numeric_cols)
+    
+    # Identificar features de texto
+    text_derived_cols = identify_text_derived_columns(numeric_cols)
+    logger.info(f"Features derivadas de texto: {len(text_derived_cols)}")
+    
+    # Sanitizar nomes se necessário
+    rename_dict = sanitize_column_names(numeric_cols)
+    if rename_dict:
+        logger.info(f"Renomeando {len(rename_dict)} colunas")
+        df = df.rename(columns=rename_dict)
+        numeric_cols = [rename_dict.get(col, col) for col in numeric_cols]
+        text_derived_cols = [rename_dict.get(col, col) for col in text_derived_cols]
+        if launch_col and launch_col in rename_dict:
+            launch_col = rename_dict[launch_col]
+    
+    # Preparar dados
+    X = df[numeric_cols].fillna(0)
+    y = df[target_col]
+    
+    logger.info(f"Analisando {len(numeric_cols)} features")
+    logger.info(f"Distribuição do target: {y.value_counts(normalize=True) * 100}")
+    
+    # PASSO 1: Remover correlações altas (ANTES de qualquer análise)
+    X_cleaned, numeric_cols_cleaned, removed_features, corr_groups = \
+        handle_multicollinearity(X, y, numeric_cols, args.correlation_threshold)
+    
+    X = X_cleaned
+    numeric_cols = numeric_cols_cleaned
+    text_derived_cols = [col for col in text_derived_cols if col in numeric_cols]
+    
+    # Salvar features removidas
+    if removed_features:
+        removed_path = os.path.join(args.analysis_dir, 'removed_correlations.txt')
+        with open(removed_path, 'w') as f:
+            f.write(f"Total removidas por correlação: {len(removed_features)}\n\n")
+            for feat in sorted(removed_features):
+                f.write(f"- {feat}\n")
+    
+    # PASSO 2: Análise de importância
+    if args.fast_mode:
+        # Modo rápido
+        selected_features, importance_df = fast_feature_selection(X, y, args.max_features)
+        
+        # Criar estrutura compatível
+        final_importance = pd.DataFrame({
+            'Feature': importance_df['feature'],
+            'Mean_Importance': importance_df['importance'] * 100,
+            'Importance_RF': importance_df['importance'] * 100,
+            'Importance_LGB': 0,
+            'Importance_XGB': 0,
+            'Std_Importance': 0,
+            'CV': 0
+        })
+        
+    else:
+        # Modo completo - verificar cache primeiro
+        cache_path = os.path.join(args.analysis_dir, 'importance_cache.pkl')
+        
+        if args.use_cache and os.path.exists(cache_path):
+            try:
+                import joblib
+                cache_data = joblib.load(cache_path)
+                logger.info("Cache carregado com sucesso")
+                final_importance = cache_data.get('final_importance')
+                
+                # Filtrar apenas features que ainda existem
+                final_importance = final_importance[final_importance['Feature'].isin(numeric_cols)]
+                
+            except Exception as e:
+                logger.warning(f"Erro ao carregar cache: {e}")
+                args.use_cache = False
+        
+        if not args.use_cache or 'final_importance' not in locals():
+            # Separar dados
+            X_train, X_val, y_train, y_val = train_test_split(
+                X, y, test_size=0.2, random_state=42, stratify=y
+            )
+            
+            # Análise com múltiplos modelos
+            logger.info("\nIniciando análise de importância com múltiplos modelos...")
+            
+            # RandomForest
+            rf_importance, rf_metrics = analyze_rf_importance(
+                X_train, y_train, numeric_cols, n_folds=args.n_folds
+            )
+            
+            # LightGBM
+            lgb_importance, lgb_metrics = analyze_lgb_importance(
+                X_train, y_train, numeric_cols, n_folds=args.n_folds
+            )
+            
+            # XGBoost
+            xgb_importance, xgb_metrics = analyze_xgb_importance(
+                X_train, y_train, numeric_cols, n_folds=args.n_folds
+            )
+            
+            # Combinar resultados
+            final_importance = combine_importance_results(
+                rf_importance, lgb_importance, xgb_importance
+            )
+            
+            # Salvar cache
+            if not args.fast_mode:
+                try:
+                    import joblib
+                    cache_data = {
+                        'final_importance': final_importance,
+                        'timestamp': datetime.now()
+                    }
+                    joblib.dump(cache_data, cache_path)
+                    logger.info("Cache salvo com sucesso")
+                except Exception as e:
+                    logger.warning(f"Erro ao salvar cache: {e}")
+    
+    # Salvar importância das features
+    importance_path = os.path.join(args.analysis_dir, 'feature_importance_combined.csv')
+    final_importance.to_csv(importance_path, index=False)
+    logger.info(f"Importância das features salva em {importance_path}")
+    
+    # PASSO 3: Seleção final
+    if not args.keep_all_features:
+        # Converter corr_groups para formato esperado
+        high_corr_pairs = []
+        for (feat1, feat2), info in corr_groups.items():
+            high_corr_pairs.append({
+                'feature1': feat1,
+                'feature2': feat2,
+                'correlation': info['correlation']
+            })
+        
+        # Selecionar features finais
+        original_relevant_features, features_to_remove_corr, unrecommended_features = \
+            select_final_features(
+                final_importance, high_corr_pairs, numeric_cols,
+                rename_dict, importance_threshold=args.importance_threshold/100
+            )
+        
+        # Limitar ao número máximo se especificado
+        if len(original_relevant_features) > args.max_features:
+            logger.info(f"Limitando de {len(original_relevant_features)} para {args.max_features} features")
+            # Pegar as top N baseado na importância
+            top_features_df = final_importance[final_importance['Feature'].isin(
+                [rename_dict.get(f, f) for f in original_relevant_features]
+            )].head(args.max_features)
+            
+            # Converter de volta para nomes originais
+            original_relevant_features = []
+            for feat in top_features_df['Feature']:
+                original_name = feat
+                for orig, renamed in rename_dict.items():
+                    if renamed == feat:
+                        original_name = orig
+                        break
+                original_relevant_features.append(original_name)
+        
+        # Documentar seleções
+        document_feature_selections(
+            original_relevant_features, unrecommended_features,
+            final_importance, high_corr_pairs, rename_dict,
+            output_dir=args.analysis_dir
+        )
+        
+        logger.info(f"\nFeatures selecionadas: {len(original_relevant_features)}")
+        logger.info(f"Features removidas: {initial_n_features - len(original_relevant_features)}")
+        
+        # Aplicar seleção aos datasets
+        logger.info("\nAplicando seleção de features aos datasets...")
+        
+        # Garantir consistência entre datasets
+        train_cols = set(train_df.columns)
+        val_cols = set(val_df.columns)
+        test_cols = set(test_df.columns)
+        common_cols = train_cols.intersection(val_cols).intersection(test_cols)
+        
+        # Features selecionadas que existem em todos os datasets
+        selected_common_features = [f for f in original_relevant_features if f in common_cols]
+        
+        logger.info(f"Features comuns selecionadas: {len(selected_common_features)}")
+        
+        # Aplicar seleção
+        for df_name, df_data in [('train', train_df), ('validation', val_df), ('test', test_df)]:
+            # Selecionar colunas
+            selected_cols = [col for col in selected_common_features if col in df_data.columns]
+            if target_col in df_data.columns:
+                selected_cols.append(target_col)
+            
+            # Criar dataset selecionado
+            df_selected = df_data[selected_cols]
+            
+            # Salvar
+            output_path = os.path.join(args.output_dir, f"{df_name}.csv")
+            df_selected.to_csv(output_path, index=False)
+            
+            logger.info(f"{df_name}: {df_data.shape[1]} → {df_selected.shape[1]} colunas")
+        
+        # Informações de output
+        output_info = {
+            'features_selected': len(selected_common_features),
+            'features_removed': initial_n_features - len(selected_common_features),
+            'original_features': initial_n_features,
+            'common_features': len(common_cols),
+            'datasets_processed': ['train', 'validation', 'test'],
+            'mode': 'fast' if args.fast_mode else 'complete'
+        }
+    else:
+        logger.info("\nModo --keep-all-features ativado. Apenas gerando análise.")
+        output_info = {
+            'analysis_only': True,
+            'total_features': len(numeric_cols),
+            'text_features': len(text_derived_cols)
+        }
+    
+    # Análise de features textuais
+    if text_derived_cols and not args.fast_mode:
+        text_importance = analyze_text_features(final_importance, text_derived_cols)
+        if text_importance is not None:
+            text_path = os.path.join(args.analysis_dir, 'text_features_importance.csv')
+            text_importance.to_csv(text_path, index=False)
+    
+    # Sumarizar categorias
+    if not args.fast_mode:
+        summarize_feature_categories(numeric_cols, final_importance, text_derived_cols)
+    
+    # Salvar configuração
+    save_configuration(args, output_info)
+    
+    # Tempo total
+    total_time = time.time() - total_start_time
+    logger.info(f"\n=== FEATURE SELECTION CONCLUÍDO EM {total_time:.1f} SEGUNDOS ===")
+    logger.info(f"Resultados salvos em: {args.analysis_dir}")
+    if not args.keep_all_features:
+        logger.info(f"Datasets selecionados salvos em: {args.output_dir}")
 
-# Processar dataset de validação
-val_selected = apply_features_selection(val_df, selected_common_features, target_col)
-print(f"Dataset de validação: {val_df.shape[1]} colunas -> {val_selected.shape[1]} colunas selecionadas")
-
-# Processar dataset de teste
-test_selected = apply_features_selection(test_df, selected_common_features, target_col)
-print(f"Dataset de teste: {test_df.shape[1]} colunas -> {test_selected.shape[1]} colunas selecionadas")
-
-# Verificar se todos os datasets agora têm o mesmo número de colunas
-if train_selected.shape[1] == val_selected.shape[1] == test_selected.shape[1]:
-    print(f"Sucesso! Todos os datasets agora têm exatamente {train_selected.shape[1]} colunas.")
-else:
-    print("AVISO: Os datasets ainda têm números diferentes de colunas:")
-    print(f"  - Treino: {train_selected.shape[1]} colunas")
-    print(f"  - Validação: {val_selected.shape[1]} colunas")
-    print(f"  - Teste: {test_selected.shape[1]} colunas")
-
-# 15 - Salvar os datasets processados
-print("\n--- Salvando datasets com features selecionadas ---")
-
-# Salvar datasets
-train_selected.to_csv(os.path.join(output_dir, "train.csv"), index=False)
-val_selected.to_csv(os.path.join(output_dir, "validation.csv"), index=False)
-test_selected.to_csv(os.path.join(output_dir, "test.csv"), index=False)
-
-print(f"Datasets com features selecionadas salvos em: {output_dir}")
-
-# 16 - Resumo das análises realizadas
-print("\n=== RESUMO DAS ANÁLISES ===")
-print(f"Total de features analisadas: {len(numeric_cols)}")
-print(f"Features textuais processadas: {len(text_derived_cols)}")
-print(f"Pares de features altamente correlacionadas: {len(high_corr_pairs)}")
-print(f"Features potencialmente irrelevantes: {len(potentially_irrelevant)}")
-print(f"Features recomendadas após filtragem: {len(relevant_features)}")
-print(f"Features comuns a todos os datasets: {len(common_features)}")
-print(f"Features selecionadas e comuns a todos os datasets: {len(selected_common_features)}")
-
-# Exibir top 10 features mais importantes
-print("\nTop 10 features mais importantes para previsão de conversão:")
-for i, row in final_importance.head(10).iterrows():
-    print(f"{i+1}. {row['Feature']}: {row['Mean_Importance']:.2f}")
-
-# Categorizar features por tipo
-feature_categories = {
-    'Features Textuais': text_derived_cols,
-    'UTM/Campaign': [col for col in numeric_cols if any(term in col.lower() for term in ['utm', 'campaign', 'camp'])],
-    'Dados Geográficos': [col for col in numeric_cols if any(term in col.lower() for term in ['country', 'pais'])],
-    'Tempo/Data': [col for col in numeric_cols if any(term in col.lower() for term in ['time', 'hour', 'day', 'month', 'year'])],
-    'Demografia': [col for col in numeric_cols if any(term in col.lower() for term in ['age', 'gender', 'edad'])],
-    'Profissão': [col for col in numeric_cols if any(term in col.lower() for term in ['profes', 'profession', 'work'])]
-}
-
-# Calcular importância por categoria
-categories_importance = {}
-for category, cols in feature_categories.items():
-    category_features = [col for col in cols if col in final_importance['Feature'].values]
-    if category_features:
-        category_importance = final_importance[final_importance['Feature'].isin(category_features)]['Mean_Importance'].sum()
-        categories_importance[category] = category_importance
-
-# Ordenar categorias por importância
-sorted_categories = sorted(categories_importance.items(), key=lambda x: x[1], reverse=True)
-
-print("\nImportância por categoria de features:")
-for category, importance in sorted_categories:
-    category_pct = (importance / final_importance['Mean_Importance'].sum()) * 100
-    print(f"{category}: {importance:.2f} ({category_pct:.1f}%)")
-
-print("\nAnálise de importância de features concluída com sucesso!")
-print(f"Resultados de análise salvos em: {analysis_dir}")
-print(f"Datasets com features selecionadas salvos em: {output_dir}")
+if __name__ == "__main__":
+    main()
