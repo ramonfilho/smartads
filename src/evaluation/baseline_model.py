@@ -72,6 +72,13 @@ def convert_integer_columns_to_float(train_df, val_df=None):
 def prepare_data_for_training(train_path, val_path=None):
     """
     Load and prepare data for training a baseline model.
+    
+    Args:
+        train_path: Path to training dataset
+        val_path: Path to validation dataset (optional)
+        
+    Returns:
+        Dictionary with prepared data components
     """
     print("Carregando datasets...")
     
@@ -82,6 +89,7 @@ def prepare_data_for_training(train_path, val_path=None):
     if val_path:
         val_df = pd.read_csv(val_path)
     else:
+        # If no validation set provided, we'll split the training data later
         val_df = None
     
     # Sanitize column names
