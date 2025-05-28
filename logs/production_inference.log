@@ -312,3 +312,905 @@ ESTATÍSTICAS FINAIS:
 2025-05-28 14:17:27,609 - INFO - 
   Leads no decil 1 (top 10%): 70 (0.5%)
 2025-05-28 14:17:27,609 - INFO -   Leads nos decis 1-3 (top 30%): 1,955 (14.6%)
+2025-05-28 15:26:58,043 - INFO - ================================================================================
+2025-05-28 15:26:58,047 - INFO - INICIANDO INFERÊNCIA PARA PRODUÇÃO - LANÇAMENTO L24
+2025-05-28 15:26:58,047 - INFO - ================================================================================
+2025-05-28 15:26:58,047 - INFO - Início: 2025-05-28 15:26:58
+2025-05-28 15:26:58,047 - INFO - ================================================================================
+2025-05-28 15:26:58,047 - INFO - CARREGANDO DADOS DE PRODUÇÃO L24
+2025-05-28 15:26:58,047 - INFO - ================================================================================
+2025-05-28 15:26:58,047 - INFO - Carregando UTMs de: /Users/ramonmoreira/desktop/smart_ads/data/L24/L24_UTMS.csv
+2025-05-28 15:26:58,188 - INFO -   Removidas 11 colunas 'Unnamed'
+2025-05-28 15:26:58,189 - INFO -   UTMs carregadas: 56,060 registros, 8 colunas
+2025-05-28 15:26:58,189 - INFO - Carregando pesquisas de: /Users/ramonmoreira/desktop/smart_ads/data/L24/Pesquisa_L24.csv
+2025-05-28 15:26:58,259 - INFO -   Pesquisas carregadas: 13,415 registros, 23 colunas
+2025-05-28 15:26:58,259 - INFO - 
+================================================================================
+2025-05-28 15:26:58,259 - INFO - INTEGRANDO DADOS
+2025-05-28 15:26:58,260 - INFO - ================================================================================
+2025-05-28 15:26:58,260 - INFO - Normalizando colunas da pesquisa...
+2025-05-28 15:26:58,272 - INFO - Normalizando emails...
+2025-05-28 15:26:58,314 - INFO - UTMs antes da deduplicação: 56,060
+2025-05-28 15:26:58,320 - INFO - UTMs após deduplicação: 55,817
+2025-05-28 15:26:58,321 - INFO - Mesclando dados de pesquisa com UTM...
+2025-05-28 15:26:58,339 - INFO - Dados integrados: 13,415 registros, 32 colunas
+2025-05-28 15:26:58,351 - INFO - 
+================================================================================
+2025-05-28 15:26:58,351 - INFO - CARREGANDO PARÂMETROS DE PRÉ-PROCESSAMENTO
+2025-05-28 15:26:58,351 - INFO - ================================================================================
+2025-05-28 15:26:58,408 - INFO - ✓ Parâmetros do script 02 carregados
+2025-05-28 15:26:58,412 - INFO - ✓ Parâmetros do script 03 carregados
+2025-05-28 15:26:58,412 - INFO - 
+================================================================================
+2025-05-28 15:26:58,412 - INFO - APLICANDO PRÉ-PROCESSAMENTO
+2025-05-28 15:26:58,412 - INFO - ================================================================================
+2025-05-28 15:26:58,418 - INFO - 1. Normalizando emails...
+2025-05-28 15:26:58,419 - INFO - 2. Consolidando colunas de qualidade...
+2025-05-28 15:26:58,427 - INFO - 3. Tratando valores ausentes...
+2025-05-28 15:26:58,447 - INFO - 4. Tratando outliers...
+2025-05-28 15:26:58,455 - INFO - 5. Normalizando valores numéricos...
+2025-05-28 15:26:58,459 - INFO - 6. Convertendo tipos de dados...
+2025-05-28 15:26:58,489 - INFO - Colunas de texto identificadas: 8
+2025-05-28 15:26:58,491 - INFO - 7. Aplicando feature engineering não-textual...
+2025-05-28 15:26:59,681 - INFO - 8. Processando features textuais...
+2025-05-28 15:27:03,348 - INFO - 9. Aplicando feature engineering avançada...
+2025-05-28 15:27:03,567 - INFO - Pré-processamento concluído: (13415, 803)
+2025-05-28 15:27:03,568 - INFO - 
+================================================================================
+2025-05-28 15:27:03,568 - INFO - APLICANDO FEATURES PROFISSIONAIS (SCRIPT 03)
+2025-05-28 15:27:03,568 - INFO - ================================================================================
+2025-05-28 15:27:03,568 - INFO - Colunas de texto encontradas: 3
+2025-05-28 15:27:03,568 - INFO - 1. Aplicando features profissionais básicas...
+2025-05-28 15:27:06,865 - INFO - 2. Aplicando TF-IDF refinado...
+2025-05-28 15:27:06,940 - INFO - 3. Criando embeddings de texto...
+2025-05-28 15:27:07,270 - INFO - 4. Aplicando modelagem de tópicos (LDA)...
+2025-05-28 15:27:11,016 - INFO - Features profissionais completas aplicadas: (13415, 868)
+2025-05-28 15:27:11,017 - INFO - Features de tópicos criadas: 15
+2025-05-28 15:27:11,017 - INFO - Exemplos: ['Cuando_hables_inglés_con_fluid_topic_1', 'Cuando_hables_inglés_con_fluid_topic_2', 'Cuando_hables_inglés_con_fluid_topic_3', 'Cuando_hables_inglés_con_fluid_topic_4', 'Cuando_hables_inglés_con_fluid_topic_5']
+2025-05-28 15:27:11,017 - INFO - 
+================================================================================
+2025-05-28 15:27:11,017 - INFO - CARREGANDO FEATURES SELECIONADAS
+2025-05-28 15:27:11,017 - INFO - ================================================================================
+2025-05-28 15:27:11,017 - INFO - ✓ 300 features selecionadas carregadas
+2025-05-28 15:27:11,017 - INFO - 
+================================================================================
+2025-05-28 15:27:11,017 - INFO - VALIDANDO E CORRIGINDO FEATURES
+2025-05-28 15:27:11,017 - INFO - ================================================================================
+2025-05-28 15:27:11,018 - INFO - Features existentes: 223/300
+2025-05-28 15:27:11,018 - WARNING - Features ausentes: 77
+2025-05-28 15:27:11,018 - WARNING -   tfidf: 68 features ausentes
+2025-05-28 15:27:11,018 - WARNING -     Exemplos: ['déjame_un_mensaje_tfidf_quiero', 'qué_esperas_aprender_en_el_tfidf_pueda', 'qué_esperas_aprender_en_el_tfidf_hablarlo']
+2025-05-28 15:27:11,018 - WARNING -   other: 9 features ausentes
+2025-05-28 15:27:11,018 - WARNING -     Exemplos: ['UTM_SOURCE_freq', 'Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_has_any_high_conv_term', 'Déjame un mensaje_has_any_low_conv_term']
+2025-05-28 15:27:11,061 - INFO - Preenchendo features ausentes com valores apropriados...
+2025-05-28 15:27:11,111 - INFO - 
+Validando valores das features:
+2025-05-28 15:27:11,116 - WARNING -   ⚠️  70 features estão completamente zeradas
+2025-05-28 15:27:11,116 - WARNING -     Exemplos: ['déjame_un_mensaje_tfidf_estoy', 'cuando_hables_inglés_con_fluid_career_tfidf_score', 'déjame_un_mensaje_tfidf_me', 'qué_esperas_aprender_en_el_tfidf_aprendizaje', 'déjame_un_mensaje_tfidf_que']
+2025-05-28 15:27:11,116 - INFO - 
+Estatísticas das features:
+2025-05-28 15:27:11,123 - INFO -   Média geral: 1.5973
+2025-05-28 15:27:11,140 - INFO -   Desvio padrão médio: 1.3065
+2025-05-28 15:27:11,143 - INFO -   Valores NaN: 43822
+2025-05-28 15:27:11,143 - INFO - 
+DataFrame final: (13415, 300)
+2025-05-28 15:27:11,143 - INFO - 
+================================================================================
+2025-05-28 15:27:11,143 - INFO - FAZENDO PREDIÇÕES
+2025-05-28 15:27:11,143 - INFO - ================================================================================
+2025-05-28 15:27:11,143 - INFO - Carregando modelo de: /Users/ramonmoreira/desktop/smart_ads/models/artifacts/lightgbm_direct_ranking.joblib
+2025-05-28 15:27:11,326 - INFO - Gerando probabilidades...
+2025-05-28 15:27:11,366 - INFO - ✓ Limiares de decis carregados do arquivo .pkl
+2025-05-28 15:27:11,366 - INFO -   Limiares: [0.00524785 0.01170815 0.02155099 0.03593944 0.0577897  0.09347356
+ 0.15549475 0.25659115 0.40992528]
+2025-05-28 15:27:11,367 - INFO - 
+================================================================================
+2025-05-28 15:27:11,367 - INFO - GERANDO ARQUIVOS DE SAÍDA
+2025-05-28 15:27:11,367 - INFO - ================================================================================
+2025-05-28 15:27:11,556 - INFO - ✓ Predições salvas em: /Users/ramonmoreira/desktop/smart_ads/predictions/L24/L24_predictions_20250528_152711.csv
+2025-05-28 15:27:11,561 - INFO - 
+RESUMO POR DECIL:
+2025-05-28 15:27:11,561 - INFO - ------------------------------------------------------------
+2025-05-28 15:27:11,561 - INFO -         count  avg_prob  min_prob  max_prob  pct_of_total
+decile                                                   
+1         211    0.0040    0.0008    0.0052          1.57
+2         938    0.0087    0.0052    0.0117          6.99
+3        1579    0.0164    0.0117    0.0215         11.77
+4        1498    0.0279    0.0216    0.0359         11.17
+5        1388    0.0457    0.0359    0.0578         10.35
+6        1574    0.0747    0.0578    0.0935         11.73
+7        1870    0.1221    0.0935    0.1554         13.94
+8        1997    0.2018    0.1556    0.2564         14.89
+9        1571    0.3249    0.2566    0.4099         11.71
+10        789    0.5089    0.4103    0.8191          5.88
+2025-05-28 15:27:11,575 - INFO - 
+TOP 10 CAMPANHAS POR PROBABILIDADE MÉDIA:
+2025-05-28 15:27:11,575 - INFO - --------------------------------------------------------------------------------
+2025-05-28 15:27:11,575 - INFO -                                                     total_leads  avg_probability  top_30_percent_count  top_30_percent_rate
+UTM_CAMPAING                                                                                                               
+[L24] [LEADS] - [ESPANHA] [IG] — SEMANA DE CERO...            3           0.5320                     0                 0.00
+[V] [L24] [F1] [COLD] [ESP] [PAG 1] [VID] [ABER...            1           0.3517                     0                 0.00
+[L24] [LEADS] - [ESTADOS UNIDOS] [IG] — SEMANA ...           14           0.3456                     0                 0.00
+[L24] [LEADS] - [ESPANHA] [IG] — SEMANA DE CERO...            1           0.3396                     0                 0.00
+[L24] [LEADS] - [ESTADOS UNIDOS] [IG] — SEMANA ...            4           0.3347                     0                 0.00
+[V] [L24] [F1] [COLD] [USA] [PAG 1] [VID] [INTE...            5           0.3275                     0                 0.00
+[L24] [LEADS] - [COLOMBIA] [IG] — SEMANA DE CER...            2           0.3145                     1                50.00
+[L24] [LEADS] - [COLOMBIA] [IG] — SEMANA DE CER...           96           0.2824                     1                 1.04
+[L24] [LEADS] - [ESTADOS UNIDOS] [IG] — SEMANA ...            2           0.2816                     0                 0.00
+[L24] [LEADS] - [ESTADOS UNIDOS] [IG] — SEMANA ...            6           0.2801                     0                 0.00
+2025-05-28 15:27:11,579 - INFO - 
+COMPARAÇÃO COM TREINO:
+2025-05-28 15:27:11,579 - INFO -   Probabilidade média TREINO: 0.1390
+2025-05-28 15:27:11,579 - INFO -   Probabilidade média PRODUÇÃO: 0.1342
+2025-05-28 15:27:11,579 - INFO -   Razão PROD/TREINO: 0.97x
+2025-05-28 15:27:11,579 - INFO - 
+================================================================================
+2025-05-28 15:27:11,579 - INFO - INFERÊNCIA CONCLUÍDA COM SUCESSO!
+2025-05-28 15:27:11,579 - INFO - ================================================================================
+2025-05-28 15:27:11,579 - INFO - Tempo total: 13.5 segundos
+2025-05-28 15:27:11,579 - INFO - Total de predições: 13,415
+2025-05-28 15:27:11,579 - INFO - Arquivos salvos em: /Users/ramonmoreira/desktop/smart_ads/predictions/L24
+2025-05-28 15:27:11,579 - INFO - 
+ESTATÍSTICAS FINAIS:
+2025-05-28 15:27:11,579 - INFO -   Probabilidade média: 0.1342
+2025-05-28 15:27:11,580 - INFO -   Probabilidade mediana: 0.0814
+2025-05-28 15:27:11,580 - INFO -   Probabilidade mínima: 0.0008
+2025-05-28 15:27:11,580 - INFO -   Probabilidade máxima: 0.8191
+2025-05-28 15:27:11,581 - INFO - 
+  Leads no decil 1 (top 10%): 211 (1.6%)
+2025-05-28 15:27:11,581 - INFO -   Leads nos decis 1-3 (top 30%): 2,728 (20.3%)
+2025-05-28 16:48:01,400 - INFO - ================================================================================
+2025-05-28 16:48:01,402 - INFO - INICIANDO INFERÊNCIA PARA PRODUÇÃO - LANÇAMENTO L24
+2025-05-28 16:48:01,402 - INFO - ================================================================================
+2025-05-28 16:48:01,402 - INFO - Início: 2025-05-28 16:48:01
+2025-05-28 16:48:01,402 - INFO - ================================================================================
+2025-05-28 16:48:01,402 - INFO - CARREGANDO DADOS DE PRODUÇÃO L24
+2025-05-28 16:48:01,402 - INFO - ================================================================================
+2025-05-28 16:48:01,402 - INFO - Carregando UTMs de: /Users/ramonmoreira/desktop/smart_ads/data/L24/L24_UTMS.csv
+2025-05-28 16:48:01,538 - INFO -   Removidas 11 colunas 'Unnamed'
+2025-05-28 16:48:01,538 - INFO -   UTMs carregadas: 56,060 registros, 8 colunas
+2025-05-28 16:48:01,538 - INFO - Carregando pesquisas de: /Users/ramonmoreira/desktop/smart_ads/data/L24/Pesquisa_L24.csv
+2025-05-28 16:48:01,605 - INFO -   Pesquisas carregadas: 13,415 registros, 23 colunas
+2025-05-28 16:48:01,605 - INFO - 
+================================================================================
+2025-05-28 16:48:01,605 - INFO - INTEGRANDO DADOS
+2025-05-28 16:48:01,605 - INFO - ================================================================================
+2025-05-28 16:48:01,605 - INFO - Normalizando colunas da pesquisa...
+2025-05-28 16:48:01,619 - INFO - Normalizando emails...
+2025-05-28 16:48:01,661 - INFO - UTMs antes da deduplicação: 56,060
+2025-05-28 16:48:01,668 - INFO - UTMs após deduplicação: 55,817
+2025-05-28 16:48:01,668 - INFO - Mesclando dados de pesquisa com UTM...
+2025-05-28 16:48:01,687 - INFO - Dados integrados: 13,415 registros, 32 colunas
+2025-05-28 16:48:01,710 - INFO - 
+================================================================================
+2025-05-28 16:48:01,710 - INFO - CARREGANDO PARÂMETROS DE PRÉ-PROCESSAMENTO
+2025-05-28 16:48:01,710 - INFO - ================================================================================
+2025-05-28 16:48:01,767 - INFO - ✓ Parâmetros do script 02 carregados
+2025-05-28 16:48:01,771 - INFO - ✓ Parâmetros do script 03 carregados
+2025-05-28 16:48:01,771 - INFO - 
+================================================================================
+2025-05-28 16:48:01,771 - INFO - APLICANDO PRÉ-PROCESSAMENTO (CORRIGIDO)
+2025-05-28 16:48:01,771 - INFO - ================================================================================
+2025-05-28 16:48:01,778 - INFO - 1. Normalizando emails...
+2025-05-28 16:48:01,778 - INFO - 2. Consolidando colunas de qualidade...
+2025-05-28 16:48:01,786 - INFO - 3. Tratando valores ausentes...
+2025-05-28 16:48:01,805 - INFO - 4. Tratando outliers...
+2025-05-28 16:48:01,814 - INFO - 5. Normalizando valores numéricos...
+2025-05-28 16:48:01,818 - INFO - 6. Convertendo tipos de dados...
+2025-05-28 16:48:01,847 - INFO - Colunas de texto identificadas: 8
+2025-05-28 16:48:01,849 - INFO - 7. Aplicando feature engineering não-textual...
+2025-05-28 16:48:02,979 - INFO - 8. Processando features textuais...
+2025-05-28 16:48:06,512 - INFO - 9. Aplicando feature engineering avançada...
+2025-05-28 16:48:06,765 - INFO - 
+📊 VALIDAÇÃO - Features TF-IDF criadas pelo script 02: 600
+2025-05-28 16:48:06,765 - INFO - Distribuição por coluna base:
+2025-05-28 16:48:06,765 - INFO -   Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?: 200 termos
+2025-05-28 16:48:06,766 - INFO -   Déjame un mensaje: 200 termos
+2025-05-28 16:48:06,766 - INFO -   ¿Qué esperas aprender en el evento Cero a Inglés Fluido?: 200 termos
+2025-05-28 16:48:06,766 - INFO - 
+Pré-processamento concluído: (13415, 803)
+2025-05-28 16:48:06,766 - INFO - 
+================================================================================
+2025-05-28 16:48:06,766 - INFO - APLICANDO FEATURES PROFISSIONAIS (SCRIPT 03) - CORRIGIDO
+2025-05-28 16:48:06,766 - INFO - ================================================================================
+2025-05-28 16:48:06,766 - INFO - Criando colunas normalizadas...
+2025-05-28 16:48:06,767 - INFO -   ✓ Criada: Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti? → cuando_hables_inglés_con_fluid
+2025-05-28 16:48:06,767 - INFO -   ✓ Criada: Déjame un mensaje → déjame_un_mensaje
+2025-05-28 16:48:06,768 - INFO -   ✓ Criada: ¿Qué esperas aprender en el evento Cero a Inglés Fluido? → qué_esperas_aprender_en_el
+2025-05-28 16:48:06,768 - INFO - Total de colunas normalizadas criadas: 3
+2025-05-28 16:48:06,768 - INFO - Colunas originais disponíveis: 3
+2025-05-28 16:48:06,768 - INFO - Colunas normalizadas disponíveis: 3
+2025-05-28 16:48:06,768 - INFO - 1. Aplicando features profissionais básicas...
+2025-05-28 16:48:09,655 - INFO - 2. Aplicando TF-IDF refinado...
+2025-05-28 16:48:09,718 - INFO - 3. Criando embeddings de texto...
+2025-05-28 16:48:09,737 - INFO - 4. Aplicando modelagem de tópicos (LDA)...
+2025-05-28 16:48:09,760 - INFO - 
+📊 VALIDAÇÃO - Features criadas pelo script 03:
+2025-05-28 16:48:09,760 - INFO -   Total de features TF-IDF: 600
+2025-05-28 16:48:09,760 - INFO -   Features de carreira: 10
+2025-05-28 16:48:09,760 - INFO -   Features de tópicos: 0
+2025-05-28 16:48:09,760 - INFO - 
+Verificando features específicas:
+2025-05-28 16:48:09,760 - WARNING -   ✗ déjame_un_mensaje_tfidf_quiero ainda ausente
+2025-05-28 16:48:09,760 - WARNING -   ✗ qué_esperas_aprender_en_el_tfidf_pueda ainda ausente
+2025-05-28 16:48:09,760 - WARNING -   ✗ cuando_hables_inglés_con_fluid_career_tfidf_score ainda ausente
+2025-05-28 16:48:09,760 - INFO - 
+Features profissionais completas aplicadas: (13415, 841)
+2025-05-28 16:48:09,760 - INFO - 
+================================================================================
+2025-05-28 16:48:09,760 - INFO - CARREGANDO FEATURES SELECIONADAS
+2025-05-28 16:48:09,760 - INFO - ================================================================================
+2025-05-28 16:48:09,761 - INFO - ✓ 300 features selecionadas carregadas
+2025-05-28 16:48:09,761 - INFO - 
+================================================================================
+2025-05-28 16:48:09,761 - INFO - VALIDANDO E CORRIGINDO FEATURES
+2025-05-28 16:48:09,761 - INFO - ================================================================================
+2025-05-28 16:48:09,761 - INFO - Features existentes: 205/300
+2025-05-28 16:48:09,761 - WARNING - Features ausentes: 95
+2025-05-28 16:48:09,761 - WARNING -   tfidf: 68 features ausentes
+2025-05-28 16:48:09,761 - WARNING -     Exemplos: ['cuando_hables_inglés_con_fluid_tfidf_viajes', 'cuando_hables_inglés_con_fluid_tfidf_más', 'qué_esperas_aprender_en_el_tfidf_idioma']
+2025-05-28 16:48:09,761 - WARNING -   topic: 15 features ausentes
+2025-05-28 16:48:09,761 - WARNING -     Exemplos: ['Déjame_un_mensaje_topic_5', 'Déjame_un_mensaje_topic_3', 'Cuando_hables_inglés_con_fluid_topic_3']
+2025-05-28 16:48:09,761 - WARNING -   other: 12 features ausentes
+2025-05-28 16:48:09,761 - WARNING -     Exemplos: ['Qué_esperas_aprender_en_el_eve_dominant_topic', 'utm_month_freq', 'Déjame un mensaje_has_any_low_conv_term']
+2025-05-28 16:48:09,772 - INFO - Preenchendo features ausentes com valores apropriados...
+2025-05-28 16:48:09,790 - INFO - 
+Validando valores das features:
+2025-05-28 16:48:09,794 - WARNING -   ⚠️  42025 valores NaN encontrados - preenchendo com 0
+2025-05-28 16:48:09,808 - WARNING -   ⚠️  82 features estão completamente zeradas
+2025-05-28 16:48:09,808 - WARNING -     Exemplos: ['UTM_SOURCE_freq', 'déjame_un_mensaje_tfidf_estoy', 'cuando_hables_inglés_con_fluid_career_tfidf_score', 'déjame_un_mensaje_tfidf_me', 'Déjame un mensaje_num_high_conv_terms']
+2025-05-28 16:48:09,808 - INFO - 
+Estatísticas das features:
+2025-05-28 16:48:09,813 - INFO -   Média geral: 1.5360
+2025-05-28 16:48:09,838 - INFO -   Desvio padrão médio: 1.2792
+2025-05-28 16:48:09,842 - INFO -   Valores NaN: 0
+2025-05-28 16:48:09,842 - INFO - 
+DataFrame final: (13415, 300)
+2025-05-28 16:48:09,842 - INFO - 
+================================================================================
+2025-05-28 16:48:09,843 - INFO - FAZENDO PREDIÇÕES
+2025-05-28 16:48:09,843 - INFO - ================================================================================
+2025-05-28 16:48:09,843 - INFO - Carregando modelo de: /Users/ramonmoreira/desktop/smart_ads/models/artifacts/lightgbm_direct_ranking.joblib
+2025-05-28 16:48:09,985 - INFO - Gerando probabilidades...
+2025-05-28 16:48:10,046 - INFO - ✓ Limiares de decis carregados do arquivo .pkl
+2025-05-28 16:48:10,046 - INFO -   Limiares: [0.00524785 0.01170815 0.02155099 0.03593944 0.0577897  0.09347356
+ 0.15549475 0.25659115 0.40992528]
+2025-05-28 16:48:10,047 - INFO - 
+================================================================================
+2025-05-28 16:48:10,047 - INFO - GERANDO ARQUIVOS DE SAÍDA
+2025-05-28 16:48:10,047 - INFO - ================================================================================
+2025-05-28 16:48:10,278 - INFO - ✓ Predições salvas em: /Users/ramonmoreira/desktop/smart_ads/predictions/L24/L24_predictions_20250528_164810.csv
+2025-05-28 16:48:10,283 - INFO - 
+RESUMO POR DECIL:
+2025-05-28 16:48:10,284 - INFO - ------------------------------------------------------------
+2025-05-28 16:48:10,284 - INFO -         count  avg_prob  min_prob  max_prob  pct_of_total
+decile                                                   
+2          20    0.0105    0.0067    0.0117          0.15
+3         338    0.0173    0.0119    0.0215          2.52
+4         493    0.0284    0.0216    0.0359          3.67
+5         613    0.0473    0.0360    0.0578          4.57
+6         952    0.0760    0.0578    0.0934          7.10
+7        1964    0.1249    0.0935    0.1555         14.64
+8        2414    0.2004    0.1555    0.2566         17.99
+9        1573    0.3238    0.2566    0.4096         11.73
+10       5048    0.6160    0.4100    0.8585         37.63
+2025-05-28 16:48:10,298 - INFO - 
+TOP 10 CAMPANHAS POR PROBABILIDADE MÉDIA:
+2025-05-28 16:48:10,299 - INFO - --------------------------------------------------------------------------------
+2025-05-28 16:48:10,299 - INFO -                                                     total_leads  avg_probability  top_30_percent_count  top_30_percent_rate
+UTM_CAMPAING                                                                                                               
+[V] [L24] [F1] [COLD] [ESP] [PAG 1] [VID] [ABER...            1           0.7359                     0                  0.0
+[L24] [LEADS] - [ESTADOS UNIDOS] [IG] — SEMANA ...            2           0.7308                     0                  0.0
+[L24] [LEADS] - [EUROPA] [IG] — SEMANA DE CERO ...            1           0.7296                     0                  0.0
+[L24] [LEADS] - [ESPANHA] [IG] — SEMANA DE CERO...            1           0.7219                     0                  0.0
+[V] [L24] [F1] [COLD] [USA] [PAG 1] [VID] [ABER...            1           0.6935                     0                  0.0
+[L24] [LEADS] - [ESPANHA] [IG] — SEMANA DE CERO...            1           0.6813                     0                  0.0
+[V] [L24] [F1] [HOT] [ESP] [PAG 1] [VID] - WIN ...           40           0.6515                     0                  0.0
+[L24] [LEADS] - [EUROPA] [IG] — SEMANA DE CERO ...            2           0.6500                     0                  0.0
+[L24] [LEADS] - [ESTADOS UNIDOS] [IG] — SEMANA ...            2           0.6475                     0                  0.0
+[V] [L24] [F1] [COLD] [ESP] [PAG 0] [VID] [ABER...           17           0.6383                     0                  0.0
+2025-05-28 16:48:10,304 - INFO - 
+COMPARAÇÃO COM TREINO:
+2025-05-28 16:48:10,304 - INFO -   Probabilidade média TREINO: 0.1390
+2025-05-28 16:48:10,304 - INFO -   Probabilidade média PRODUÇÃO: 0.3332
+2025-05-28 16:48:10,304 - INFO -   Razão PROD/TREINO: 2.40x
+2025-05-28 16:48:10,305 - WARNING -   ⚠️  Distribuição significativamente diferente do treino!
+2025-05-28 16:48:10,305 - INFO - 
+================================================================================
+2025-05-28 16:48:10,305 - INFO - INFERÊNCIA CONCLUÍDA COM SUCESSO!
+2025-05-28 16:48:10,305 - INFO - ================================================================================
+2025-05-28 16:48:10,305 - INFO - Tempo total: 8.9 segundos
+2025-05-28 16:48:10,305 - INFO - Total de predições: 13,415
+2025-05-28 16:48:10,305 - INFO - Arquivos salvos em: /Users/ramonmoreira/desktop/smart_ads/predictions/L24
+2025-05-28 16:48:10,305 - INFO - 
+ESTATÍSTICAS FINAIS:
+2025-05-28 16:48:10,305 - INFO -   Probabilidade média: 0.3332
+2025-05-28 16:48:10,306 - INFO -   Probabilidade mediana: 0.2516
+2025-05-28 16:48:10,306 - INFO -   Probabilidade mínima: 0.0067
+2025-05-28 16:48:10,306 - INFO -   Probabilidade máxima: 0.8585
+2025-05-28 16:48:10,306 - INFO - 
+  Leads no decil 1 (top 10%): 0 (0.0%)
+2025-05-28 16:48:10,306 - INFO -   Leads nos decis 1-3 (top 30%): 358 (2.7%)
+2025-05-28 17:01:31,476 - INFO - ================================================================================
+2025-05-28 17:01:31,479 - INFO - INICIANDO INFERÊNCIA PARA PRODUÇÃO - LANÇAMENTO L24
+2025-05-28 17:01:31,479 - INFO - ================================================================================
+2025-05-28 17:01:31,479 - INFO - Início: 2025-05-28 17:01:31
+2025-05-28 17:01:31,479 - INFO - ================================================================================
+2025-05-28 17:01:31,479 - INFO - CARREGANDO DADOS DE PRODUÇÃO L24
+2025-05-28 17:01:31,479 - INFO - ================================================================================
+2025-05-28 17:01:31,479 - INFO - Carregando UTMs de: /Users/ramonmoreira/desktop/smart_ads/data/L24/L24_UTMS.csv
+2025-05-28 17:01:31,624 - INFO -   Removidas 11 colunas 'Unnamed'
+2025-05-28 17:01:31,625 - INFO -   UTMs carregadas: 56,060 registros, 8 colunas
+2025-05-28 17:01:31,625 - INFO - Carregando pesquisas de: /Users/ramonmoreira/desktop/smart_ads/data/L24/Pesquisa_L24.csv
+2025-05-28 17:01:31,698 - INFO -   Pesquisas carregadas: 13,415 registros, 23 colunas
+2025-05-28 17:01:31,699 - INFO - 
+================================================================================
+2025-05-28 17:01:31,699 - INFO - INTEGRANDO DADOS
+2025-05-28 17:01:31,699 - INFO - ================================================================================
+2025-05-28 17:01:31,699 - INFO - Normalizando colunas da pesquisa...
+2025-05-28 17:01:31,713 - INFO - Normalizando emails...
+2025-05-28 17:01:31,756 - INFO - UTMs antes da deduplicação: 56,060
+2025-05-28 17:01:31,763 - INFO - UTMs após deduplicação: 55,817
+2025-05-28 17:01:31,763 - INFO - Mesclando dados de pesquisa com UTM...
+2025-05-28 17:01:31,784 - INFO - Dados integrados: 13,415 registros, 32 colunas
+2025-05-28 17:01:31,797 - INFO - 
+================================================================================
+2025-05-28 17:01:31,797 - INFO - CARREGANDO PARÂMETROS DE PRÉ-PROCESSAMENTO
+2025-05-28 17:01:31,797 - INFO - ================================================================================
+2025-05-28 17:01:31,856 - INFO - ✓ Parâmetros do script 02 carregados
+2025-05-28 17:01:31,862 - INFO - ✓ Parâmetros do script 03 carregados
+2025-05-28 17:01:31,864 - INFO - ✓ Vetorizadores TF-IDF carregados: 2 vetorizadores
+2025-05-28 17:01:31,864 - INFO -   ✓ Vetorizador 'Cuando_hables_inglés_con_fluid' integrado
+2025-05-28 17:01:31,864 - INFO -   ✓ Vetorizador 'Déjame_un_mensaje' integrado
+2025-05-28 17:01:31,872 - INFO - ✓ Modelos LDA carregados
+2025-05-28 17:01:31,872 - INFO - 
+📋 Estrutura dos parâmetros carregados:
+2025-05-28 17:01:31,872 - INFO -   - professional.professional_motivation
+2025-05-28 17:01:31,872 - INFO -     - work_keywords
+2025-05-28 17:01:31,873 - INFO -   - professional.aspiration_sentiment
+2025-05-28 17:01:31,873 - INFO -     - aspiration_phrases
+2025-05-28 17:01:31,873 - INFO -   - professional.commitment
+2025-05-28 17:01:31,873 - INFO -     - commitment_phrases
+2025-05-28 17:01:31,873 - INFO -   - professional.career_terms
+2025-05-28 17:01:31,873 - INFO -     - career_terms
+2025-05-28 17:01:31,873 - INFO -   - professional.career_tfidf
+2025-05-28 17:01:31,873 - INFO -     - Cuando_hables_inglés_con_fluid
+2025-05-28 17:01:31,873 - INFO -     - Qué_esperas_aprender_en_el_eve
+2025-05-28 17:01:31,873 - INFO -     - Déjame_un_mensaje
+2025-05-28 17:01:31,873 - INFO -   - professional.lda
+2025-05-28 17:01:31,873 - INFO -     - Cuando_hables_inglés_con_fluid
+2025-05-28 17:01:31,873 - INFO -     - Qué_esperas_aprender_en_el_eve
+2025-05-28 17:01:31,873 - INFO -     - Déjame_un_mensaje
+2025-05-28 17:01:31,873 - INFO -   - professional.vectorizers
+2025-05-28 17:01:31,873 - INFO -     - career_tfidf
+2025-05-28 17:01:31,873 - INFO - 
+================================================================================
+2025-05-28 17:01:31,873 - INFO - APLICANDO PRÉ-PROCESSAMENTO (CORRIGIDO)
+2025-05-28 17:01:31,873 - INFO - ================================================================================
+2025-05-28 17:01:31,879 - INFO - 1. Normalizando emails...
+2025-05-28 17:01:31,879 - INFO - 2. Consolidando colunas de qualidade...
+2025-05-28 17:01:31,888 - INFO - 3. Tratando valores ausentes...
+2025-05-28 17:01:31,913 - INFO - 4. Tratando outliers...
+2025-05-28 17:01:31,923 - INFO - 5. Normalizando valores numéricos...
+2025-05-28 17:01:31,927 - INFO - 6. Convertendo tipos de dados...
+2025-05-28 17:01:31,957 - INFO - Colunas de texto identificadas: 8
+2025-05-28 17:01:31,959 - INFO - 7. Aplicando feature engineering não-textual...
+2025-05-28 17:01:33,150 - INFO - 8. Processando features textuais...
+2025-05-28 17:01:36,677 - INFO - 9. Aplicando feature engineering avançada...
+2025-05-28 17:01:36,851 - INFO - 
+📊 VALIDAÇÃO - Features TF-IDF criadas pelo script 02: 600
+2025-05-28 17:01:36,851 - INFO - Distribuição por coluna base:
+2025-05-28 17:01:36,851 - INFO -   Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?: 200 termos
+2025-05-28 17:01:36,851 - INFO -   Déjame un mensaje: 200 termos
+2025-05-28 17:01:36,851 - INFO -   ¿Qué esperas aprender en el evento Cero a Inglés Fluido?: 200 termos
+2025-05-28 17:01:36,851 - INFO - 
+Pré-processamento concluído: (13415, 803)
+2025-05-28 17:01:36,851 - INFO - 
+================================================================================
+2025-05-28 17:01:36,851 - INFO - APLICANDO FEATURES PROFISSIONAIS (SCRIPT 03) - CORRIGIDO
+2025-05-28 17:01:36,851 - INFO - ================================================================================
+2025-05-28 17:01:36,851 - INFO - Criando colunas normalizadas...
+2025-05-28 17:01:36,851 - INFO -   ✓ Criada: Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti? → cuando_hables_inglés_con_fluid
+2025-05-28 17:01:36,852 - INFO -   ✓ Criada: Déjame un mensaje → déjame_un_mensaje
+2025-05-28 17:01:36,852 - INFO -   ✓ Criada: ¿Qué esperas aprender en el evento Cero a Inglés Fluido? → qué_esperas_aprender_en_el
+2025-05-28 17:01:36,852 - INFO - Total de colunas normalizadas criadas: 3
+2025-05-28 17:01:36,852 - INFO - Colunas originais disponíveis: 3
+2025-05-28 17:01:36,852 - INFO - Colunas normalizadas disponíveis: 3
+2025-05-28 17:01:36,852 - INFO - 1. Aplicando features profissionais básicas...
+2025-05-28 17:01:39,950 - INFO - 2. Aplicando TF-IDF refinado...
+2025-05-28 17:01:40,010 - INFO - 3. Criando embeddings de texto...
+2025-05-28 17:01:40,029 - INFO - 4. Aplicando modelagem de tópicos (LDA)...
+2025-05-28 17:01:40,051 - INFO - 
+📊 VALIDAÇÃO - Features criadas pelo script 03:
+2025-05-28 17:01:40,051 - INFO -   Total de features TF-IDF: 600
+2025-05-28 17:01:40,051 - INFO -   Features de carreira: 10
+2025-05-28 17:01:40,051 - INFO -   Features de tópicos: 0
+2025-05-28 17:01:40,051 - INFO - 
+Verificando features específicas:
+2025-05-28 17:01:40,051 - WARNING -   ✗ déjame_un_mensaje_tfidf_quiero ainda ausente
+2025-05-28 17:01:40,051 - WARNING -   ✗ qué_esperas_aprender_en_el_tfidf_pueda ainda ausente
+2025-05-28 17:01:40,051 - WARNING -   ✗ cuando_hables_inglés_con_fluid_career_tfidf_score ainda ausente
+2025-05-28 17:01:40,051 - INFO - 
+Features profissionais completas aplicadas: (13415, 841)
+2025-05-28 17:01:40,051 - INFO - 
+================================================================================
+2025-05-28 17:01:40,051 - INFO - CARREGANDO FEATURES SELECIONADAS
+2025-05-28 17:01:40,051 - INFO - ================================================================================
+2025-05-28 17:01:40,052 - INFO - ✓ 300 features selecionadas carregadas
+2025-05-28 17:01:40,052 - INFO - 
+================================================================================
+2025-05-28 17:01:40,052 - INFO - VALIDANDO E CORRIGINDO FEATURES
+2025-05-28 17:01:40,052 - INFO - ================================================================================
+2025-05-28 17:01:40,052 - INFO - Features existentes: 205/300
+2025-05-28 17:01:40,052 - WARNING - Features ausentes: 95
+2025-05-28 17:01:40,052 - WARNING -   tfidf: 68 features ausentes
+2025-05-28 17:01:40,052 - WARNING -     Exemplos: ['qué_esperas_aprender_en_el_tfidf_espero', 'déjame_un_mensaje_tfidf_muchas gracias', 'qué_esperas_aprender_en_el_career_tfidf_score']
+2025-05-28 17:01:40,052 - WARNING -   topic: 15 features ausentes
+2025-05-28 17:01:40,052 - WARNING -     Exemplos: ['Qué_esperas_aprender_en_el_eve_topic_2', 'Cuando_hables_inglés_con_fluid_topic_1', 'Qué_esperas_aprender_en_el_eve_topic_3']
+2025-05-28 17:01:40,052 - WARNING -   other: 12 features ausentes
+2025-05-28 17:01:40,052 - WARNING -     Exemplos: ['¿Qué esperas aprender en el evento Cero a Inglés Fluido?_num_low_conv_terms', 'Déjame_un_mensaje_dominant_topic', 'Cuando_hables_inglés_con_fluid_dominant_topic']
+2025-05-28 17:01:40,058 - INFO - Preenchendo features ausentes com valores apropriados...
+2025-05-28 17:01:40,075 - INFO - 
+Validando valores das features:
+2025-05-28 17:01:40,080 - WARNING -   ⚠️  42025 valores NaN encontrados - preenchendo com 0
+2025-05-28 17:01:40,092 - WARNING -   ⚠️  82 features estão completamente zeradas
+2025-05-28 17:01:40,092 - WARNING -     Exemplos: ['UTM_SOURCE_freq', 'déjame_un_mensaje_tfidf_estoy', 'cuando_hables_inglés_con_fluid_career_tfidf_score', 'déjame_un_mensaje_tfidf_me', 'Déjame un mensaje_num_high_conv_terms']
+2025-05-28 17:01:40,092 - INFO - 
+Estatísticas das features:
+2025-05-28 17:01:40,097 - INFO -   Média geral: 1.5360
+2025-05-28 17:01:40,120 - INFO -   Desvio padrão médio: 1.2792
+2025-05-28 17:01:40,126 - INFO -   Valores NaN: 0
+2025-05-28 17:01:40,126 - INFO - 
+DataFrame final: (13415, 300)
+2025-05-28 17:01:40,126 - INFO - 
+================================================================================
+2025-05-28 17:01:40,126 - INFO - FAZENDO PREDIÇÕES
+2025-05-28 17:01:40,126 - INFO - ================================================================================
+2025-05-28 17:01:40,126 - INFO - Carregando modelo de: /Users/ramonmoreira/desktop/smart_ads/models/artifacts/lightgbm_direct_ranking.joblib
+2025-05-28 17:01:40,251 - INFO - Gerando probabilidades...
+2025-05-28 17:01:40,296 - INFO - ✓ Limiares de decis carregados do arquivo .pkl
+2025-05-28 17:01:40,296 - INFO -   Limiares: [0.00524785 0.01170815 0.02155099 0.03593944 0.0577897  0.09347356
+ 0.15549475 0.25659115 0.40992528]
+2025-05-28 17:01:40,297 - INFO - 
+================================================================================
+2025-05-28 17:01:40,297 - INFO - GERANDO ARQUIVOS DE SAÍDA
+2025-05-28 17:01:40,297 - INFO - ================================================================================
+2025-05-28 17:01:40,509 - INFO - ✓ Predições salvas em: /Users/ramonmoreira/desktop/smart_ads/predictions/L24/L24_predictions_20250528_170140.csv
+2025-05-28 17:01:40,513 - INFO - 
+RESUMO POR DECIL:
+2025-05-28 17:01:40,513 - INFO - ------------------------------------------------------------
+2025-05-28 17:01:40,513 - INFO -         count  avg_prob  min_prob  max_prob  pct_of_total
+decile                                                   
+2          20    0.0105    0.0067    0.0117          0.15
+3         338    0.0173    0.0119    0.0215          2.52
+4         493    0.0284    0.0216    0.0359          3.67
+5         613    0.0473    0.0360    0.0578          4.57
+6         952    0.0760    0.0578    0.0934          7.10
+7        1964    0.1249    0.0935    0.1555         14.64
+8        2414    0.2004    0.1555    0.2566         17.99
+9        1573    0.3238    0.2566    0.4096         11.73
+10       5048    0.6160    0.4100    0.8585         37.63
+2025-05-28 17:01:40,535 - INFO - 
+TOP 10 CAMPANHAS POR PROBABILIDADE MÉDIA:
+2025-05-28 17:01:40,535 - INFO - --------------------------------------------------------------------------------
+2025-05-28 17:01:40,535 - INFO -                                                     total_leads  avg_probability  top_30_percent_count  top_30_percent_rate
+UTM_CAMPAING                                                                                                               
+[V] [L24] [F1] [COLD] [ESP] [PAG 1] [VID] [ABER...            1           0.7359                     0                  0.0
+[L24] [LEADS] - [ESTADOS UNIDOS] [IG] — SEMANA ...            2           0.7308                     0                  0.0
+[L24] [LEADS] - [EUROPA] [IG] — SEMANA DE CERO ...            1           0.7296                     0                  0.0
+[L24] [LEADS] - [ESPANHA] [IG] — SEMANA DE CERO...            1           0.7219                     0                  0.0
+[V] [L24] [F1] [COLD] [USA] [PAG 1] [VID] [ABER...            1           0.6935                     0                  0.0
+[L24] [LEADS] - [ESPANHA] [IG] — SEMANA DE CERO...            1           0.6813                     0                  0.0
+[V] [L24] [F1] [HOT] [ESP] [PAG 1] [VID] - WIN ...           40           0.6515                     0                  0.0
+[L24] [LEADS] - [EUROPA] [IG] — SEMANA DE CERO ...            2           0.6500                     0                  0.0
+[L24] [LEADS] - [ESTADOS UNIDOS] [IG] — SEMANA ...            2           0.6475                     0                  0.0
+[V] [L24] [F1] [COLD] [ESP] [PAG 0] [VID] [ABER...           17           0.6383                     0                  0.0
+2025-05-28 17:01:40,543 - INFO - 
+COMPARAÇÃO COM TREINO:
+2025-05-28 17:01:40,543 - INFO -   Probabilidade média TREINO: 0.1390
+2025-05-28 17:01:40,543 - INFO -   Probabilidade média PRODUÇÃO: 0.3332
+2025-05-28 17:01:40,543 - INFO -   Razão PROD/TREINO: 2.40x
+2025-05-28 17:01:40,543 - WARNING -   ⚠️  Distribuição significativamente diferente do treino!
+2025-05-28 17:01:40,543 - INFO - 
+================================================================================
+2025-05-28 17:01:40,544 - INFO - INFERÊNCIA CONCLUÍDA COM SUCESSO!
+2025-05-28 17:01:40,544 - INFO - ================================================================================
+2025-05-28 17:01:40,544 - INFO - Tempo total: 9.1 segundos
+2025-05-28 17:01:40,544 - INFO - Total de predições: 13,415
+2025-05-28 17:01:40,544 - INFO - Arquivos salvos em: /Users/ramonmoreira/desktop/smart_ads/predictions/L24
+2025-05-28 17:01:40,544 - INFO - 
+ESTATÍSTICAS FINAIS:
+2025-05-28 17:01:40,544 - INFO -   Probabilidade média: 0.3332
+2025-05-28 17:01:40,544 - INFO -   Probabilidade mediana: 0.2516
+2025-05-28 17:01:40,545 - INFO -   Probabilidade mínima: 0.0067
+2025-05-28 17:01:40,545 - INFO -   Probabilidade máxima: 0.8585
+2025-05-28 17:01:40,545 - INFO - 
+  Leads no decil 1 (top 10%): 0 (0.0%)
+2025-05-28 17:01:40,545 - INFO -   Leads nos decis 1-3 (top 30%): 358 (2.7%)
+2025-05-28 18:24:49,594 - INFO - ================================================================================
+2025-05-28 18:24:49,599 - INFO - INICIANDO INFERÊNCIA PARA PRODUÇÃO - LANÇAMENTO L24
+2025-05-28 18:24:49,599 - INFO - ================================================================================
+2025-05-28 18:24:49,599 - INFO - Início: 2025-05-28 18:24:49
+2025-05-28 18:24:49,599 - INFO - ================================================================================
+2025-05-28 18:24:49,599 - INFO - CARREGANDO DADOS DE PRODUÇÃO L24
+2025-05-28 18:24:49,599 - INFO - ================================================================================
+2025-05-28 18:24:49,599 - INFO - Carregando UTMs de: /Users/ramonmoreira/desktop/smart_ads/data/L24/L24_UTMS.csv
+2025-05-28 18:24:49,759 - INFO -   Removidas 11 colunas 'Unnamed'
+2025-05-28 18:24:49,759 - INFO -   UTMs carregadas: 56,060 registros, 8 colunas
+2025-05-28 18:24:49,759 - INFO - Carregando pesquisas de: /Users/ramonmoreira/desktop/smart_ads/data/L24/Pesquisa_L24.csv
+2025-05-28 18:24:49,829 - INFO -   Pesquisas carregadas: 13,415 registros, 23 colunas
+2025-05-28 18:24:49,829 - INFO - 
+================================================================================
+2025-05-28 18:24:49,829 - INFO - INTEGRANDO DADOS
+2025-05-28 18:24:49,829 - INFO - ================================================================================
+2025-05-28 18:24:49,829 - INFO - Normalizando colunas da pesquisa...
+2025-05-28 18:24:49,844 - INFO - Normalizando emails...
+2025-05-28 18:24:49,888 - INFO - UTMs antes da deduplicação: 56,060
+2025-05-28 18:24:49,895 - INFO - UTMs após deduplicação: 55,817
+2025-05-28 18:24:49,895 - INFO - Mesclando dados de pesquisa com UTM...
+2025-05-28 18:24:49,913 - INFO - Dados integrados: 13,415 registros, 32 colunas
+2025-05-28 18:24:49,926 - INFO - 
+================================================================================
+2025-05-28 18:24:49,926 - INFO - CARREGANDO PARÂMETROS DE PRÉ-PROCESSAMENTO
+2025-05-28 18:24:49,926 - INFO - ================================================================================
+2025-05-28 18:24:49,986 - INFO - ✓ Parâmetros do script 02 carregados
+2025-05-28 18:24:49,990 - INFO - ✓ Parâmetros do script 03 carregados
+2025-05-28 18:24:49,992 - INFO - ✓ Vetorizadores TF-IDF carregados: 2 vetorizadores
+2025-05-28 18:24:49,992 - ERROR - ERRO durante a execução: 'TfidfVectorizer' object has no attribute 'get'
+2025-05-28 18:24:49,992 - ERROR - Detalhes do erro:
+Traceback (most recent call last):
+  File "/Users/ramonmoreira/Desktop/smart_ads/scripts/08_ranking_production.py", line 761, in main
+    params = load_preprocessing_params()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ramonmoreira/Desktop/smart_ads/scripts/08_ranking_production.py", line 247, in load_preprocessing_params
+    logger.info(f"  ✓ Vetorizador '{key}' com {len(vectorizer_data.get('feature_names', []))} features")
+                                                   ^^^^^^^^^^^^^^^^^^^
+AttributeError: 'TfidfVectorizer' object has no attribute 'get'
+2025-05-28 18:26:35,827 - INFO - ================================================================================
+2025-05-28 18:26:35,831 - INFO - INICIANDO INFERÊNCIA PARA PRODUÇÃO - LANÇAMENTO L24
+2025-05-28 18:26:35,831 - INFO - ================================================================================
+2025-05-28 18:26:35,831 - INFO - Início: 2025-05-28 18:26:35
+2025-05-28 18:26:35,831 - INFO - ================================================================================
+2025-05-28 18:26:35,831 - INFO - CARREGANDO DADOS DE PRODUÇÃO L24
+2025-05-28 18:26:35,831 - INFO - ================================================================================
+2025-05-28 18:26:35,831 - INFO - Carregando UTMs de: /Users/ramonmoreira/desktop/smart_ads/data/L24/L24_UTMS.csv
+2025-05-28 18:26:35,967 - INFO -   Removidas 11 colunas 'Unnamed'
+2025-05-28 18:26:35,967 - INFO -   UTMs carregadas: 56,060 registros, 8 colunas
+2025-05-28 18:26:35,967 - INFO - Carregando pesquisas de: /Users/ramonmoreira/desktop/smart_ads/data/L24/Pesquisa_L24.csv
+2025-05-28 18:26:36,034 - INFO -   Pesquisas carregadas: 13,415 registros, 23 colunas
+2025-05-28 18:26:36,034 - INFO - 
+================================================================================
+2025-05-28 18:26:36,034 - INFO - INTEGRANDO DADOS
+2025-05-28 18:26:36,035 - INFO - ================================================================================
+2025-05-28 18:26:36,035 - INFO - Normalizando colunas da pesquisa...
+2025-05-28 18:26:36,053 - INFO - Normalizando emails...
+2025-05-28 18:26:36,100 - INFO - UTMs antes da deduplicação: 56,060
+2025-05-28 18:26:36,110 - INFO - UTMs após deduplicação: 55,817
+2025-05-28 18:26:36,110 - INFO - Mesclando dados de pesquisa com UTM...
+2025-05-28 18:26:36,136 - INFO - Dados integrados: 13,415 registros, 32 colunas
+2025-05-28 18:26:36,151 - INFO - 
+================================================================================
+2025-05-28 18:26:36,151 - INFO - CARREGANDO PARÂMETROS DE PRÉ-PROCESSAMENTO
+2025-05-28 18:26:36,151 - INFO - ================================================================================
+2025-05-28 18:26:36,219 - INFO - ✓ Parâmetros do script 02 carregados
+2025-05-28 18:26:36,224 - INFO - ✓ Parâmetros do script 03 carregados
+2025-05-28 18:26:36,226 - INFO - ✓ Vetorizadores TF-IDF carregados: 2 vetorizadores
+2025-05-28 18:26:36,226 - INFO -   ✓ Vetorizador 'Cuando_hables_inglés_con_fluid' com 150 features
+2025-05-28 18:26:36,226 - INFO -   ✓ Vetorizador 'Déjame_un_mensaje' com 150 features
+2025-05-28 18:26:36,233 - INFO - ✓ Modelos LDA carregados: 2 modelos
+2025-05-28 18:26:36,233 - INFO -   ✓ Modelo LDA 'Cuando_hables_inglés_con_fluid' carregado
+2025-05-28 18:26:36,233 - INFO -   ✓ Modelo LDA 'Déjame_un_mensaje' carregado
+2025-05-28 18:26:36,233 - INFO - 
+📋 Estrutura dos parâmetros carregados:
+2025-05-28 18:26:36,233 - INFO -   preprocessing:
+2025-05-28 18:26:36,234 - INFO -     - quality_columns
+2025-05-28 18:26:36,234 - INFO -     - missing_values
+2025-05-28 18:26:36,234 - INFO -     - outliers
+2025-05-28 18:26:36,234 - INFO -     - normalization
+2025-05-28 18:26:36,234 - INFO -     - feature_engineering
+2025-05-28 18:26:36,234 - INFO -     - text_processing
+2025-05-28 18:26:36,234 - INFO -     - advanced_features
+2025-05-28 18:26:36,234 - INFO -   professional:
+2025-05-28 18:26:36,234 - INFO -     - professional_motivation
+2025-05-28 18:26:36,234 - INFO -     - aspiration_sentiment
+2025-05-28 18:26:36,234 - INFO -     - commitment
+2025-05-28 18:26:36,234 - INFO -     - career_terms
+2025-05-28 18:26:36,234 - INFO -     - career_tfidf
+2025-05-28 18:26:36,234 - INFO -       Total: 3 vetorizadores
+2025-05-28 18:26:36,234 - INFO -     - lda
+2025-05-28 18:26:36,234 - INFO -       Total: 3 modelos
+2025-05-28 18:26:36,234 - INFO -     - vectorizers
+2025-05-28 18:26:36,234 - INFO -       - career_tfidf: 2 items
+2025-05-28 18:26:36,234 - INFO - 
+================================================================================
+2025-05-28 18:26:36,234 - INFO - APLICANDO PRÉ-PROCESSAMENTO (CORRIGIDO)
+2025-05-28 18:26:36,234 - INFO - ================================================================================
+2025-05-28 18:26:36,240 - INFO - 1. Normalizando emails...
+2025-05-28 18:26:36,240 - INFO - 2. Consolidando colunas de qualidade...
+2025-05-28 18:26:36,249 - INFO - 3. Tratando valores ausentes...
+2025-05-28 18:26:36,269 - INFO - 4. Tratando outliers...
+2025-05-28 18:26:36,278 - INFO - 5. Normalizando valores numéricos...
+2025-05-28 18:26:36,283 - INFO - 6. Convertendo tipos de dados...
+2025-05-28 18:26:36,316 - INFO - Colunas de texto identificadas: 8
+2025-05-28 18:26:36,319 - INFO - 7. Aplicando feature engineering não-textual...
+2025-05-28 18:26:37,586 - INFO - 8. Processando features textuais...
+2025-05-28 18:26:41,426 - INFO - 9. Aplicando feature engineering avançada...
+2025-05-28 18:26:41,694 - INFO - 
+📊 VALIDAÇÃO - Features TF-IDF criadas pelo script 02: 600
+2025-05-28 18:26:41,694 - INFO - Distribuição por coluna base:
+2025-05-28 18:26:41,694 - INFO -   Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?: 200 termos
+2025-05-28 18:26:41,694 - INFO -   Déjame un mensaje: 200 termos
+2025-05-28 18:26:41,694 - INFO -   ¿Qué esperas aprender en el evento Cero a Inglés Fluido?: 200 termos
+2025-05-28 18:26:41,694 - INFO - 
+Pré-processamento concluído: (13415, 803)
+2025-05-28 18:26:41,694 - INFO - 
+================================================================================
+2025-05-28 18:26:41,694 - INFO - APLICANDO FEATURES PROFISSIONAIS (SCRIPT 03) - CORRIGIDO
+2025-05-28 18:26:41,694 - INFO - ================================================================================
+2025-05-28 18:26:41,694 - INFO - Criando colunas normalizadas...
+2025-05-28 18:26:41,695 - INFO -   ✓ Criada: Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti? → cuando_hables_inglés_con_fluid
+2025-05-28 18:26:41,695 - INFO -   ✓ Criada: Déjame un mensaje → déjame_un_mensaje
+2025-05-28 18:26:41,696 - INFO -   ✓ Criada: ¿Qué esperas aprender en el evento Cero a Inglés Fluido? → qué_esperas_aprender_en_el
+2025-05-28 18:26:41,696 - INFO - Total de colunas normalizadas criadas: 3
+2025-05-28 18:26:41,696 - INFO - Colunas originais disponíveis: 3
+2025-05-28 18:26:41,696 - INFO - Colunas normalizadas disponíveis: 3
+2025-05-28 18:26:41,696 - INFO - 1. Aplicando features profissionais básicas...
+2025-05-28 18:26:44,502 - INFO - 2. Aplicando TF-IDF refinado...
+2025-05-28 18:26:44,502 - INFO -    Verificando parâmetros career_tfidf: True
+2025-05-28 18:26:44,502 - INFO -    Usando career_tfidf direto: 3 vetorizadores
+2025-05-28 18:26:44,577 - INFO - 3. Aplicando TF-IDF refinado (versão _fixed)...
+2025-05-28 18:26:44,577 - INFO - 4. Criando embeddings de texto...
+2025-05-28 18:26:44,577 - INFO - 5. Aplicando modelagem de tópicos (LDA)...
+2025-05-28 18:26:44,577 - INFO -    Modelos LDA disponíveis: ['Cuando_hables_inglés_con_fluid', 'Qué_esperas_aprender_en_el_eve', 'Déjame_un_mensaje']
+2025-05-28 18:26:44,577 - INFO - 
+📊 VALIDAÇÃO - Features criadas pelo script 03:
+2025-05-28 18:26:44,577 - INFO -   Total de features TF-IDF: 0
+2025-05-28 18:26:44,577 - INFO -   Features de carreira: 0
+2025-05-28 18:26:44,577 - INFO -   Features de tópicos: 0
+2025-05-28 18:26:44,577 - INFO - 
+  Distribuição TF-IDF por coluna:
+2025-05-28 18:26:44,577 - INFO - 
+Verificando features específicas:
+2025-05-28 18:26:44,577 - WARNING -   ✗ déjame_un_mensaje_tfidf_quiero ainda ausente
+2025-05-28 18:26:44,577 - WARNING -   ✗ qué_esperas_aprender_en_el_tfidf_pueda ainda ausente
+2025-05-28 18:26:44,577 - WARNING -   ✗ cuando_hables_inglés_con_fluid_career_tfidf_score ainda ausente
+2025-05-28 18:26:44,577 - INFO - 
+Encontradas 0/3 features críticas
+2025-05-28 18:26:44,577 - INFO - 
+Features profissionais completas aplicadas: (13415, 0)
+2025-05-28 18:26:44,577 - INFO - 
+================================================================================
+2025-05-28 18:26:44,577 - INFO - CARREGANDO FEATURES SELECIONADAS
+2025-05-28 18:26:44,577 - INFO - ================================================================================
+2025-05-28 18:26:44,579 - INFO - ✓ 300 features selecionadas carregadas
+2025-05-28 18:26:44,579 - INFO - 
+================================================================================
+2025-05-28 18:26:44,579 - INFO - VALIDANDO E CORRIGINDO FEATURES
+2025-05-28 18:26:44,579 - INFO - ================================================================================
+2025-05-28 18:26:44,579 - INFO - Features existentes: 0/300
+2025-05-28 18:26:44,579 - WARNING - Features ausentes: 300
+2025-05-28 18:26:44,579 - WARNING -   tfidf: 184 features ausentes
+2025-05-28 18:26:44,579 - WARNING -     Exemplos: ['¿Qué esperas aprender en el evento Cero a Inglés Fluido?_tfidf_cuando', '¿Qué esperas aprender en el evento Cero a Inglés Fluido?_tfidf_aprender inglés', 'déjame_un_mensaje_tfidf_quiero']
+2025-05-28 18:26:44,579 - WARNING -   topic: 15 features ausentes
+2025-05-28 18:26:44,579 - WARNING -     Exemplos: ['Déjame_un_mensaje_topic_2', 'Qué_esperas_aprender_en_el_eve_topic_1', 'Qué_esperas_aprender_en_el_eve_topic_4']
+2025-05-28 18:26:44,579 - WARNING -   professional: 1 features ausentes
+2025-05-28 18:26:44,579 - WARNING -     Exemplos: ['professional_motivation_score']
+2025-05-28 18:26:44,579 - WARNING -   career: 2 features ausentes
+2025-05-28 18:26:44,579 - WARNING -     Exemplos: ['cuando_hables_inglés_con_fluid_career_term_count', 'cuando_hables_inglés_con_fluid_has_career_terms']
+2025-05-28 18:26:44,579 - WARNING -   other: 98 features ausentes
+2025-05-28 18:26:44,579 - WARNING -     Exemplos: ['¿Qué esperas aprender en el evento Cero a Inglés Fluido?_motiv_improvement_norm', 'month_x_desired_salary_encoded', 'Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?_length']
+2025-05-28 18:26:44,580 - INFO - Preenchendo features ausentes com valores apropriados...
+2025-05-28 18:26:44,617 - INFO - 
+Validando valores das features:
+2025-05-28 18:26:44,627 - WARNING -   ⚠️  285 features estão completamente zeradas
+2025-05-28 18:26:44,627 - WARNING -     Exemplos: ['age_x_current_salary_encoded', 'age_x_desired_salary_encoded', 'current_salary_encoded_country_deviation', 'country_freq', 'age_encoded_country_deviation']
+2025-05-28 18:26:44,627 - INFO - 
+Estatísticas das features:
+2025-05-28 18:26:44,633 - INFO -   Média geral: 0.0100
+2025-05-28 18:26:44,642 - INFO -   Desvio padrão médio: 0.0000
+2025-05-28 18:26:44,646 - INFO -   Valores NaN: 0
+2025-05-28 18:26:44,646 - INFO - 
+DataFrame final: (13415, 300)
+2025-05-28 18:26:44,647 - INFO - 
+================================================================================
+2025-05-28 18:26:44,647 - INFO - FAZENDO PREDIÇÕES
+2025-05-28 18:26:44,647 - INFO - ================================================================================
+2025-05-28 18:26:44,647 - INFO - Carregando modelo de: /Users/ramonmoreira/desktop/smart_ads/models/artifacts/lightgbm_direct_ranking.joblib
+2025-05-28 18:26:44,767 - INFO - Gerando probabilidades...
+2025-05-28 18:26:44,795 - INFO - ✓ Limiares de decis carregados do arquivo .pkl
+2025-05-28 18:26:44,795 - INFO -   Limiares: [0.00524785 0.01170815 0.02155099 0.03593944 0.0577897  0.09347356
+ 0.15549475 0.25659115 0.40992528]
+2025-05-28 18:26:44,795 - INFO - 
+================================================================================
+2025-05-28 18:26:44,795 - INFO - GERANDO ARQUIVOS DE SAÍDA
+2025-05-28 18:26:44,795 - INFO - ================================================================================
+2025-05-28 18:26:44,958 - INFO - ✓ Predições salvas em: /Users/ramonmoreira/desktop/smart_ads/predictions/L24/L24_predictions_20250528_182644.csv
+2025-05-28 18:26:44,962 - INFO - 
+RESUMO POR DECIL:
+2025-05-28 18:26:44,963 - INFO - ------------------------------------------------------------
+2025-05-28 18:26:44,963 - INFO -         count  avg_prob  min_prob  max_prob  pct_of_total
+decile                                                   
+2       13415    0.0098    0.0098    0.0098         100.0
+2025-05-28 18:26:44,975 - INFO - 
+TOP 10 CAMPANHAS POR PROBABILIDADE MÉDIA:
+2025-05-28 18:26:44,975 - INFO - --------------------------------------------------------------------------------
+2025-05-28 18:26:44,975 - INFO -                                                     total_leads  avg_probability  top_30_percent_count  top_30_percent_rate
+UTM_CAMPAING                                                                                                               
+[L24]                                                         1           0.0098                     1                100.0
+[V] [L24] [F1] [COLD] [ESP] [PAG 2] [VID] - NOV...            4           0.0098                     4                100.0
+[V] [L24] [F1] [COLD] [ESP] [PAG 1] [VID] [ABER...            2           0.0098                     2                100.0
+[V] [L24] [F1] [COLD] [ESP] [PAG 1] [VID] [ABER...            1           0.0098                     1                100.0
+[V] [L24] [F1] [COLD] [ESP] [PAG 1] [VID] [INTE...           70           0.0098                    70                100.0
+[V] [L24] [F1] [COLD] [ESP] [PAG 1] [VID] [INTE...           72           0.0098                    72                100.0
+[V] [L24] [F1] [COLD] [ESP] [PAG 1] [VID] [LL 2...            2           0.0098                     2                100.0
+[V] [L24] [F1] [COLD] [ESP] [PAG 1] [VID] [LL 2...           79           0.0098                    79                100.0
+[V] [L24] [F1] [COLD] [ESP] [PAG 1] [VID] [LL] ...           67           0.0098                    67                100.0
+[V] [L24] [F1] [COLD] [ESP] [PAG 2] [VID] [ABER...            2           0.0098                     2                100.0
+2025-05-28 18:26:44,979 - INFO - 
+COMPARAÇÃO COM TREINO:
+2025-05-28 18:26:44,979 - INFO -   Probabilidade média TREINO: 0.1390
+2025-05-28 18:26:44,979 - INFO -   Probabilidade média PRODUÇÃO: 0.0098
+2025-05-28 18:26:44,979 - INFO -   Razão PROD/TREINO: 0.07x
+2025-05-28 18:26:44,979 - INFO - 
+================================================================================
+2025-05-28 18:26:44,979 - INFO - INFERÊNCIA CONCLUÍDA COM SUCESSO!
+2025-05-28 18:26:44,979 - INFO - ================================================================================
+2025-05-28 18:26:44,980 - INFO - Tempo total: 9.2 segundos
+2025-05-28 18:26:44,980 - INFO - Total de predições: 13,415
+2025-05-28 18:26:44,980 - INFO - Arquivos salvos em: /Users/ramonmoreira/desktop/smart_ads/predictions/L24
+2025-05-28 18:26:44,980 - INFO - 
+ESTATÍSTICAS FINAIS:
+2025-05-28 18:26:44,980 - INFO -   Probabilidade média: 0.0098
+2025-05-28 18:26:44,980 - INFO -   Probabilidade mediana: 0.0098
+2025-05-28 18:26:44,980 - INFO -   Probabilidade mínima: 0.0098
+2025-05-28 18:26:44,980 - INFO -   Probabilidade máxima: 0.0098
+2025-05-28 18:26:44,980 - INFO - 
+  Leads no decil 1 (top 10%): 0 (0.0%)
+2025-05-28 18:26:44,980 - INFO -   Leads nos decis 1-3 (top 30%): 13,415 (100.0%)
+2025-05-28 18:32:10,297 - INFO - ================================================================================
+2025-05-28 18:32:10,300 - INFO - INICIANDO INFERÊNCIA PARA PRODUÇÃO - LANÇAMENTO L24
+2025-05-28 18:32:10,301 - INFO - ================================================================================
+2025-05-28 18:32:10,301 - INFO - Início: 2025-05-28 18:32:10
+2025-05-28 18:32:10,301 - INFO - ================================================================================
+2025-05-28 18:32:10,301 - INFO - CARREGANDO DADOS DE PRODUÇÃO L24
+2025-05-28 18:32:10,301 - INFO - ================================================================================
+2025-05-28 18:32:10,301 - INFO - Carregando UTMs de: /Users/ramonmoreira/desktop/smart_ads/data/L24/L24_UTMS.csv
+2025-05-28 18:32:10,437 - INFO -   Removidas 11 colunas 'Unnamed'
+2025-05-28 18:32:10,437 - INFO -   UTMs carregadas: 56,060 registros, 8 colunas
+2025-05-28 18:32:10,438 - INFO - Carregando pesquisas de: /Users/ramonmoreira/desktop/smart_ads/data/L24/Pesquisa_L24.csv
+2025-05-28 18:32:10,518 - INFO -   Pesquisas carregadas: 13,415 registros, 23 colunas
+2025-05-28 18:32:10,518 - INFO - 
+================================================================================
+2025-05-28 18:32:10,518 - INFO - INTEGRANDO DADOS
+2025-05-28 18:32:10,518 - INFO - ================================================================================
+2025-05-28 18:32:10,518 - INFO - Normalizando colunas da pesquisa...
+2025-05-28 18:32:10,533 - INFO - Normalizando emails...
+2025-05-28 18:32:10,575 - INFO - UTMs antes da deduplicação: 56,060
+2025-05-28 18:32:10,581 - INFO - UTMs após deduplicação: 55,817
+2025-05-28 18:32:10,581 - INFO - Mesclando dados de pesquisa com UTM...
+2025-05-28 18:32:10,599 - INFO - Dados integrados: 13,415 registros, 32 colunas
+2025-05-28 18:32:10,611 - INFO - 
+================================================================================
+2025-05-28 18:32:10,611 - INFO - CARREGANDO PARÂMETROS DE PRÉ-PROCESSAMENTO
+2025-05-28 18:32:10,611 - INFO - ================================================================================
+2025-05-28 18:32:10,668 - INFO - ✓ Parâmetros do script 02 carregados
+2025-05-28 18:32:10,673 - INFO - ✓ Parâmetros do script 03 carregados
+2025-05-28 18:32:10,673 - INFO - 
+================================================================================
+2025-05-28 18:32:10,673 - INFO - APLICANDO PRÉ-PROCESSAMENTO
+2025-05-28 18:32:10,673 - INFO - ================================================================================
+2025-05-28 18:32:10,680 - INFO - 1. Normalizando emails...
+2025-05-28 18:32:10,680 - INFO - 2. Consolidando colunas de qualidade...
+2025-05-28 18:32:10,689 - INFO - 3. Tratando valores ausentes...
+2025-05-28 18:32:10,709 - INFO - 4. Tratando outliers...
+2025-05-28 18:32:10,719 - INFO - 5. Normalizando valores numéricos...
+2025-05-28 18:32:10,723 - INFO - 6. Convertendo tipos de dados...
+2025-05-28 18:32:10,753 - INFO - Colunas de texto identificadas: 8
+2025-05-28 18:32:10,755 - INFO - 7. Aplicando feature engineering não-textual...
+2025-05-28 18:32:11,908 - INFO - 8. Processando features textuais...
+2025-05-28 18:32:15,464 - INFO - 9. Aplicando feature engineering avançada...
+2025-05-28 18:32:15,682 - INFO - Pré-processamento concluído: (13415, 803)
+2025-05-28 18:32:15,682 - INFO - 
+================================================================================
+2025-05-28 18:32:15,682 - INFO - APLICANDO FEATURES PROFISSIONAIS (SCRIPT 03)
+2025-05-28 18:32:15,682 - INFO - ================================================================================
+2025-05-28 18:32:15,682 - INFO - Colunas de texto encontradas: 3
+2025-05-28 18:32:15,682 - INFO - 1. Aplicando features profissionais básicas...
+2025-05-28 18:32:18,881 - INFO - 2. Aplicando TF-IDF refinado...
+2025-05-28 18:32:18,944 - INFO - 3. Criando embeddings de texto...
+2025-05-28 18:32:19,108 - INFO - 4. Aplicando modelagem de tópicos (LDA)...
+2025-05-28 18:32:22,985 - INFO - Features profissionais completas aplicadas: (13415, 868)
+2025-05-28 18:32:22,986 - INFO - Features de tópicos criadas: 15
+2025-05-28 18:32:22,986 - INFO - Exemplos: ['Cuando_hables_inglés_con_fluid_topic_1', 'Cuando_hables_inglés_con_fluid_topic_2', 'Cuando_hables_inglés_con_fluid_topic_3', 'Cuando_hables_inglés_con_fluid_topic_4', 'Cuando_hables_inglés_con_fluid_topic_5']
+2025-05-28 18:32:22,986 - INFO - 
+================================================================================
+2025-05-28 18:32:22,986 - INFO - CARREGANDO FEATURES SELECIONADAS
+2025-05-28 18:32:22,986 - INFO - ================================================================================
+2025-05-28 18:32:22,987 - INFO - ✓ 300 features selecionadas carregadas
+2025-05-28 18:32:22,987 - INFO - 
+================================================================================
+2025-05-28 18:32:22,987 - INFO - VALIDANDO E CORRIGINDO FEATURES
+2025-05-28 18:32:22,987 - INFO - ================================================================================
+2025-05-28 18:32:22,987 - INFO - Features existentes: 223/300
+2025-05-28 18:32:22,987 - WARNING - Features ausentes: 77
+2025-05-28 18:32:22,987 - WARNING -   tfidf: 68 features ausentes
+2025-05-28 18:32:22,987 - WARNING -     Exemplos: ['déjame_un_mensaje_tfidf_espero que', 'qué_esperas_aprender_en_el_tfidf_lo', 'déjame_un_mensaje_tfidf_aprender']
+2025-05-28 18:32:22,987 - WARNING -   other: 9 features ausentes
+2025-05-28 18:32:22,987 - WARNING -     Exemplos: ['Déjame un mensaje_low_conv_term_espero aprender', 'UTM_SOURCE_freq', 'Déjame un mensaje_num_high_conv_terms']
+2025-05-28 18:32:23,021 - INFO - Preenchendo features ausentes com valores apropriados...
+2025-05-28 18:32:23,076 - INFO - 
+Validando valores das features:
+2025-05-28 18:32:23,080 - WARNING -   ⚠️  70 features estão completamente zeradas
+2025-05-28 18:32:23,080 - WARNING -     Exemplos: ['déjame_un_mensaje_tfidf_estoy', 'cuando_hables_inglés_con_fluid_career_tfidf_score', 'déjame_un_mensaje_tfidf_me', 'qué_esperas_aprender_en_el_tfidf_aprendizaje', 'déjame_un_mensaje_tfidf_que']
+2025-05-28 18:32:23,080 - INFO - 
+Estatísticas das features:
+2025-05-28 18:32:23,087 - INFO -   Média geral: 1.5973
+2025-05-28 18:32:23,103 - INFO -   Desvio padrão médio: 1.3065
+2025-05-28 18:32:23,106 - INFO -   Valores NaN: 43822
+2025-05-28 18:32:23,106 - INFO - 
+DataFrame final: (13415, 300)
+2025-05-28 18:32:23,106 - INFO - 
+================================================================================
+2025-05-28 18:32:23,106 - INFO - FAZENDO PREDIÇÕES
+2025-05-28 18:32:23,106 - INFO - ================================================================================
+2025-05-28 18:32:23,106 - INFO - Carregando modelo de: /Users/ramonmoreira/desktop/smart_ads/models/artifacts/lightgbm_direct_ranking.joblib
+2025-05-28 18:32:23,242 - INFO - Gerando probabilidades...
+2025-05-28 18:32:23,288 - INFO - ✓ Limiares de decis carregados do arquivo .pkl
+2025-05-28 18:32:23,288 - INFO -   Limiares: [0.00524785 0.01170815 0.02155099 0.03593944 0.0577897  0.09347356
+ 0.15549475 0.25659115 0.40992528]
+2025-05-28 18:32:23,289 - INFO - 
+================================================================================
+2025-05-28 18:32:23,289 - INFO - GERANDO ARQUIVOS DE SAÍDA
+2025-05-28 18:32:23,289 - INFO - ================================================================================
+2025-05-28 18:32:23,495 - INFO - ✓ Predições salvas em: /Users/ramonmoreira/desktop/smart_ads/predictions/L24/L24_predictions_20250528_183223.csv
+2025-05-28 18:32:23,499 - INFO - 
+RESUMO POR DECIL:
+2025-05-28 18:32:23,499 - INFO - ------------------------------------------------------------
+2025-05-28 18:32:23,499 - INFO -         count  avg_prob  min_prob  max_prob  pct_of_total
+decile                                                   
+1         211    0.0040    0.0008    0.0052          1.57
+2         938    0.0087    0.0052    0.0117          6.99
+3        1579    0.0164    0.0117    0.0215         11.77
+4        1498    0.0279    0.0216    0.0359         11.17
+5        1388    0.0457    0.0359    0.0578         10.35
+6        1574    0.0747    0.0578    0.0935         11.73
+7        1870    0.1221    0.0935    0.1554         13.94
+8        1997    0.2018    0.1556    0.2564         14.89
+9        1571    0.3249    0.2566    0.4099         11.71
+10        789    0.5089    0.4103    0.8191          5.88
+2025-05-28 18:32:23,513 - INFO - 
+TOP 10 CAMPANHAS POR PROBABILIDADE MÉDIA:
+2025-05-28 18:32:23,513 - INFO - --------------------------------------------------------------------------------
+2025-05-28 18:32:23,513 - INFO -                                                     total_leads  avg_probability  top_30_percent_count  top_30_percent_rate
+UTM_CAMPAING                                                                                                               
+[L24] [LEADS] - [ESPANHA] [IG] — SEMANA DE CERO...            3           0.5320                     0                 0.00
+[V] [L24] [F1] [COLD] [ESP] [PAG 1] [VID] [ABER...            1           0.3517                     0                 0.00
+[L24] [LEADS] - [ESTADOS UNIDOS] [IG] — SEMANA ...           14           0.3456                     0                 0.00
+[L24] [LEADS] - [ESPANHA] [IG] — SEMANA DE CERO...            1           0.3396                     0                 0.00
+[L24] [LEADS] - [ESTADOS UNIDOS] [IG] — SEMANA ...            4           0.3347                     0                 0.00
+[V] [L24] [F1] [COLD] [USA] [PAG 1] [VID] [INTE...            5           0.3275                     0                 0.00
+[L24] [LEADS] - [COLOMBIA] [IG] — SEMANA DE CER...            2           0.3145                     1                50.00
+[L24] [LEADS] - [COLOMBIA] [IG] — SEMANA DE CER...           96           0.2824                     1                 1.04
+[L24] [LEADS] - [ESTADOS UNIDOS] [IG] — SEMANA ...            2           0.2816                     0                 0.00
+[L24] [LEADS] - [ESTADOS UNIDOS] [IG] — SEMANA ...            6           0.2801                     0                 0.00
+2025-05-28 18:32:23,518 - INFO - 
+COMPARAÇÃO COM TREINO:
+2025-05-28 18:32:23,518 - INFO -   Probabilidade média TREINO: 0.1390
+2025-05-28 18:32:23,519 - INFO -   Probabilidade média PRODUÇÃO: 0.1342
+2025-05-28 18:32:23,519 - INFO -   Razão PROD/TREINO: 0.97x
+2025-05-28 18:32:23,519 - INFO - 
+================================================================================
+2025-05-28 18:32:23,519 - INFO - INFERÊNCIA CONCLUÍDA COM SUCESSO!
+2025-05-28 18:32:23,519 - INFO - ================================================================================
+2025-05-28 18:32:23,519 - INFO - Tempo total: 13.2 segundos
+2025-05-28 18:32:23,519 - INFO - Total de predições: 13,415
+2025-05-28 18:32:23,519 - INFO - Arquivos salvos em: /Users/ramonmoreira/desktop/smart_ads/predictions/L24
+2025-05-28 18:32:23,519 - INFO - 
+ESTATÍSTICAS FINAIS:
+2025-05-28 18:32:23,519 - INFO -   Probabilidade média: 0.1342
+2025-05-28 18:32:23,520 - INFO -   Probabilidade mediana: 0.0814
+2025-05-28 18:32:23,520 - INFO -   Probabilidade mínima: 0.0008
+2025-05-28 18:32:23,520 - INFO -   Probabilidade máxima: 0.8191
+2025-05-28 18:32:23,520 - INFO - 
+  Leads no decil 1 (top 10%): 211 (1.6%)
+2025-05-28 18:32:23,520 - INFO -   Leads nos decis 1-3 (top 30%): 2,728 (20.3%)

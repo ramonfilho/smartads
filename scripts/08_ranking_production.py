@@ -63,13 +63,14 @@ from src.preprocessing.advanced_feature_engineering import (
    refine_tfidf_weights,
    create_text_embeddings_simple,
    perform_topic_modeling,
-   identify_text_columns
+   identify_text_columns,
+   # CORREÇÃO: Importar as funções _fixed daqui
+   refine_tfidf_weights_fixed,
+   create_text_embeddings_simple_fixed
 )
 
-# Importar as funções "_fixed" do script 03
+# Importar apenas a função que realmente existe no script 03
 from scripts.feature_engineering_03 import (
-   refine_tfidf_weights_fixed,
-   create_text_embeddings_simple_fixed,
    perform_topic_modeling_fixed
 )
 
@@ -285,11 +286,11 @@ def apply_professional_features_complete(df, params):
        logger.info("1. Aplicando features profissionais básicas...")
        df_result, _ = enhance_professional_features(df, text_columns, fit=False, params=professional_params)
        
-       # 2. TF-IDF refinado (versão _fixed do script 03)
+       # 2. TF-IDF refinado (versão _fixed do advanced_feature_engineering)
        logger.info("2. Aplicando TF-IDF refinado...")
        df_result, _ = refine_tfidf_weights_fixed(df_result, text_columns, fit=False, params=professional_params)
        
-       # 3. Embeddings simples (versão _fixed do script 03)
+       # 3. Embeddings simples (versão _fixed do advanced_feature_engineering)
        logger.info("3. Criando embeddings de texto...")
        df_result, _ = create_text_embeddings_simple_fixed(df_result, text_columns, fit=False, params=professional_params)
        
