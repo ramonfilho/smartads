@@ -12,7 +12,7 @@ PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "src"))
 
-from src.modeling.gmm_ranking_trainer import GMMRankingTrainer
+from experiments.gmm_ranking_trainer import GMMRankingTrainer
 
 # Configuração com os MELHORES parâmetros encontrados
 CONFIG = {

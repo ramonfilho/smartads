@@ -14,7 +14,7 @@ sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "src"))
 
 # Importar o trainer
-from src.modeling.gmm_ranking_trainer import GMMRankingTrainer
+from experiments.gmm_ranking_trainer import GMMRankingTrainer
 
 # Configuração
 CONFIG = {
