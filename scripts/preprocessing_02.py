@@ -91,8 +91,9 @@ def apply_preprocessing_pipeline(df, params=None, fit=False, preserve_text=True)
     text_cols = [
         col for col in df.columns 
         if df[col].dtype == 'object' and any(term in col for term in [
-            'mensaje', 'inglés', 'vida', 'oportunidades', 'esperas', 'aprender', 
-            'Semana', 'Inmersión', 'Déjame', 'fluidez'
+            'Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?',
+            "¿Qué esperas aprender en el evento Cero a Inglés Fluido?",
+            "Déjame un mensaje",
         ])
     ]
     print(f"Colunas de texto identificadas ({len(text_cols)}): {text_cols[:3]}...")
