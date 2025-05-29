@@ -16,8 +16,8 @@ PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
 
 # Diretórios a serem comparados
 DIRS = [
-    os.path.join(PROJECT_ROOT, "data/new/04_feature_engineering_2"),
-    os.path.join(PROJECT_ROOT, "data/old/04_feature_engineering_2"),
+    os.path.join(PROJECT_ROOT, "data/new/03_feature_engineering"),
+    os.path.join(PROJECT_ROOT, "data/unified_v1/03_all_features"),
 ]
 
 def get_dir_identifier(dir_path):

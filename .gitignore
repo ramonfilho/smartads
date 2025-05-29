@@ -41,6 +41,7 @@ data/
 
 # MLflow
 models/
+params/
 
 # Configurações locais
 .vscode/
