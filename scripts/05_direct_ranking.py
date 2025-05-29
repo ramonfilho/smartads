@@ -37,8 +37,8 @@ def clean_column_names(df):
 
 # Carregar dados
 print("Carregando dados...")
-train_df = pd.read_csv("/Users/ramonmoreira/desktop/smart_ads/data/new/04_feature_selection/train.csv")
-val_df = pd.read_csv("/Users/ramonmoreira/desktop/smart_ads/data/new/04_feature_selection/validation.csv")
+train_df = pd.read_csv("/Users/ramonmoreira/desktop/smart_ads/data/unified_v1/04_feature_selection/train.csv")
+val_df = pd.read_csv("/Users/ramonmoreira/desktop/smart_ads/data/unified_v1/04_feature_selection/validation.csv")
 
 print(f"Train shape: {train_df.shape}")
 print(f"Val shape: {val_df.shape}")
@@ -174,6 +174,6 @@ print("="*60)
 # Salvar modelo se for melhor
 if metrics['top_decile_lift'] > 2.85:
     import joblib
-    model_path = os.path.join(PROJECT_ROOT, "models/artifacts/lightgbm_direct_ranking.joblib")
+    model_path = os.path.join(PROJECT_ROOT, "models/artifacts/unified_v1/lightgbm_direct_ranking.joblib")
     joblib.dump(model, model_path)
     print(f"\n✅ Modelo salvo em: {model_path}")
