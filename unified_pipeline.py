@@ -1592,20 +1592,58 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     # ========================================================================
     # PARTE 2: DIVISÃO DOS DADOS (ANTES DO PRÉ-PROCESSAMENTO)
     # ========================================================================
-    
+
     print("\n=== PARTE 2: DIVISÃO DOS DADOS ===")
+    print("Splitting data into train/val/test sets...")
+
+    if final_data.shape[0] == 0:
+        print("WARNING: Empty dataset - cannot proceed.")
+        return None
 
     # CHECKPOINT 1: Verificar se já temos os dados divididos
     checkpoint_split = load_checkpoint_conditional('data_split')
     if checkpoint_split:
+        train_original_shape = train_df.shape
+        val_original_shape = val_df.shape
+        test_original_shape = test_df.shape
+
         print("✓ Usando checkpoint de divisão de dados")
         train_df = checkpoint_split['train']
         val_df = checkpoint_split['val']
         test_df = checkpoint_split['test']
     else:
-        # Código existente de split...
-        train_df, temp_df = train_test_split(...)
-        val_df, test_df = train_test_split(...)
+        # Verificar se temos target para estratificar
+        if 'target' in final_data.columns and final_data['target'].nunique() > 1:
+            print("   Using stratified split based on target variable")
+            strat_col = final_data['target']
+        else:
+            print("   Using random split (no stratification)")
+            strat_col = None
+        
+        # Primeira divisão: treino vs. (validação + teste)
+        train_df, temp_df = train_test_split(
+            final_data,
+            test_size=test_size,
+            random_state=random_state,
+            stratify=strat_col
+        )
+        
+        # Segunda divisão: validação vs. teste
+        if 'target' in temp_df.columns and temp_df['target'].nunique() > 1:
+            strat_col_temp = temp_df['target']
+        else:
+            strat_col_temp = None
+        
+        val_df, test_df = train_test_split(
+            temp_df,
+            test_size=val_size,
+            random_state=random_state,
+            stratify=strat_col_temp
+        )
+        
+        print(f"   Train set: {train_df.shape[0]} rows, {train_df.shape[1]} columns")
+        print(f"   Validation set: {val_df.shape[0]} rows, {val_df.shape[1]} columns")
+        print(f"   Test set: {test_df.shape[0]} rows, {test_df.shape[1]} columns")
         
         # Salvar checkpoint
         save_checkpoint({
@@ -1613,46 +1651,7 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
             'val': val_df,
             'test': test_df
         }, 'data_split')
-    
-    print("Splitting data into train/val/test sets...")
-    
-    if final_data.shape[0] == 0:
-        print("WARNING: Empty dataset - cannot proceed.")
-        return None
-    
-    # Verificar se temos target para estratificar
-    if 'target' in final_data.columns and final_data['target'].nunique() > 1:
-        print("   Using stratified split based on target variable")
-        strat_col = final_data['target']
-    else:
-        print("   Using random split (no stratification)")
-        strat_col = None
-    
-    # Primeira divisão: treino vs. (validação + teste)
-    train_df, temp_df = train_test_split(
-        final_data,
-        test_size=test_size,
-        random_state=random_state,
-        stratify=strat_col
-    )
-    
-    # Segunda divisão: validação vs. teste
-    if 'target' in temp_df.columns and temp_df['target'].nunique() > 1:
-        strat_col_temp = temp_df['target']
-    else:
-        strat_col_temp = None
-    
-    val_df, test_df = train_test_split(
-        temp_df,
-        test_size=val_size,
-        random_state=random_state,
-        stratify=strat_col_temp
-    )
-    
-    print(f"   Train set: {train_df.shape[0]} rows, {train_df.shape[1]} columns")
-    print(f"   Validation set: {val_df.shape[0]} rows, {val_df.shape[1]} columns")
-    print(f"   Test set: {test_df.shape[0]} rows, {test_df.shape[1]} columns")
-    
+
     # Guardar shapes originais para comparação
     train_original_shape = train_df.shape
     val_original_shape = val_df.shape
@@ -1667,6 +1666,9 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     # CHECKPOINT 2: Verificar se já temos dados pré-processados
     checkpoint_preproc = load_checkpoint_conditional('preprocessed')
     if checkpoint_preproc:
+        train_after_preproc_shape = train_processed.shape
+        val_after_preproc_shape = val_processed.shape
+        test_after_preproc_shape = test_processed.shape
         print("✓ Usando checkpoint de pré-processamento")
         train_processed = checkpoint_preproc['train']
         val_processed = checkpoint_preproc['val']
@@ -1714,10 +1716,9 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     checkpoint_prof = load_checkpoint_conditional('professional_features')
     if checkpoint_prof:
         print("✓ Usando checkpoint de features profissionais")
-        train_final = checkpoint_prof['train']
-        val_final = checkpoint_prof['val']
-        test_final = checkpoint_prof['test']
-        params = checkpoint_prof['params']
+        train_after_prof_shape = train_final.shape
+        val_after_prof_shape = val_final.shape
+        test_after_prof_shape = test_final.shape
     else:
         # 1. Aplicar features profissionais no conjunto de treinamento
         print("\n--- Aplicando features profissionais no conjunto de treinamento ---")
@@ -1943,7 +1944,12 @@ if __name__ == "__main__":
         importance_threshold=0.1,
         correlation_threshold=0.95,
         fast_mode=False,
-        n_folds=3
+        n_folds=3,
+        # NOVOS parâmetros de teste e checkpoint
+        test_mode=True,
+        max_samples=1000,
+        use_checkpoints=False,
+        clear_cache=True
     )
     
     if results:
@@ -1958,8 +1964,8 @@ if __name__ == "__main__":
         # Mostrar exemplo de como acessar os dados
         print("\nExemplo de uso:")
         print("train_df = results['train']")
-        print(f"print(f'Shape do treino: {{results['train'].shape}}')")
-        print(f"print(f'Colunas: {{list(results['train'].columns[:5])}} ...')")
+        print(f"print(f'Shape do treino: {{results[\"train\"].shape}}')")
+        print(f"print(f'Colunas: {{list(results[\"train\"].columns[:5])}} ...')")
         
         if 'feature_importance' in results:
             print("\n# Ver top 10 features mais importantes:")
