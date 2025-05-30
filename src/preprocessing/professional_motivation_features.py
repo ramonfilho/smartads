@@ -669,8 +669,8 @@ def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None):
                     valid_matrix[:, term_idx] *= 1.5  # Boost de 50%
             
             # Colocar valores nas posições corretas
-            for i, idx in enumerate(valid_indices):
-                result_matrix[idx - df.index[0]] = valid_matrix[i]
+            for i, (idx, _) in enumerate(valid_indices):
+                result_matrix[i] = valid_matrix[i]
         
         # Adicionar features ao DataFrame
         for i, term in enumerate(feature_names):

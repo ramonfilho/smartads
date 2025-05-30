@@ -794,7 +794,7 @@ def perform_topic_modeling_fixed(df, text_cols, n_topics=5, fit=True, params=Non
         
         print(f"  📊 Textos válidos: {len(valid_texts)} de {len(texts)} total")
         
-        if len(valid_texts) < 50:  # Reduzido de 10 para 50 para garantir qualidade
+        if len(valid_texts) < 50:
             print(f"  ⚠️ Poucos textos válidos para LDA. Pulando esta coluna.")
             continue
         
@@ -828,11 +828,16 @@ def perform_topic_modeling_fixed(df, text_cols, n_topics=5, fit=True, params=Non
                 # Transformar apenas textos válidos
                 topic_dist_valid = lda.fit_transform(doc_term_matrix)
                 
-                # Criar distribuição completa (zeros para textos inválidos)
+                # CORREÇÃO: Criar distribuição completa usando reset_index
                 topic_distribution = np.zeros((len(df), n_topics))
-                valid_indices = texts[texts.str.len() > 10].index
-                for idx, valid_idx in enumerate(valid_indices):
-                    topic_distribution[valid_idx] = topic_dist_valid[idx]
+                
+                # Resetar índice temporariamente para garantir compatibilidade
+                valid_mask = texts.str.len() > 10
+                valid_positions = np.where(valid_mask)[0]
+                
+                # Atribuir valores usando posições, não índices
+                for i, pos in enumerate(valid_positions):
+                    topic_distribution[pos] = topic_dist_valid[i]
                 
                 # Armazenar modelo
                 params['lda'][col_clean] = {
@@ -876,11 +881,13 @@ def perform_topic_modeling_fixed(df, text_cols, n_topics=5, fit=True, params=Non
                     doc_term_matrix = vectorizer.transform(valid_texts)
                     topic_dist_valid = lda.transform(doc_term_matrix)
                     
-                    # Criar distribuição completa
+                    # CORREÇÃO: Criar distribuição completa usando posições
                     topic_distribution = np.zeros((len(df), n_topics))
-                    valid_indices = texts[texts.str.len() > 10].index
-                    for idx, valid_idx in enumerate(valid_indices):
-                        topic_distribution[valid_idx] = topic_dist_valid[idx]
+                    valid_mask = texts.str.len() > 10
+                    valid_positions = np.where(valid_mask)[0]
+                    
+                    for i, pos in enumerate(valid_positions):
+                        topic_distribution[pos] = topic_dist_valid[i]
                     
                     # Adicionar features
                     for topic_idx in range(n_topics):
@@ -983,7 +990,8 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
             for motiv_col in motiv_df.columns:
                 if motiv_col not in df.columns:
                     df[motiv_col] = np.nan
-                df.loc[batch_start:batch_end-1, motiv_col] = motiv_df[motiv_col].values
+                # CORREÇÃO: Usar iloc em vez de loc
+                df.iloc[batch_start:batch_end, df.columns.get_loc(motiv_col)] = motiv_df[motiv_col].values
             
             # 2. Análise de sentimento de aspiração
             if batch_idx == 0:
@@ -1000,7 +1008,8 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
             for asp_col in asp_df.columns:
                 if asp_col not in df.columns:
                     df[asp_col] = np.nan
-                df.loc[batch_start:batch_end-1, asp_col] = asp_df[asp_col].values
+                # CORREÇÃO: Usar iloc em vez de loc
+                df.iloc[batch_start:batch_end, df.columns.get_loc(asp_col)] = asp_df[asp_col].values
             
             # 3. Detecção de expressões de compromisso
             if batch_idx == 0:
@@ -1017,7 +1026,8 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
             for comm_col in comm_df.columns:
                 if comm_col not in df.columns:
                     df[comm_col] = np.nan
-                df.loc[batch_start:batch_end-1, comm_col] = comm_df[comm_col].values
+                # CORREÇÃO: Usar iloc em vez de loc
+                df.iloc[batch_start:batch_end, df.columns.get_loc(comm_col)] = comm_df[comm_col].values
             
             # 4. Detector de termos de carreira
             if batch_idx == 0:
@@ -1034,7 +1044,8 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
             for career_col in career_df.columns:
                 if career_col not in df.columns:
                     df[career_col] = np.nan
-                df.loc[batch_start:batch_end-1, career_col] = career_df[career_col].values
+                # CORREÇÃO: Usar iloc em vez de loc
+                df.iloc[batch_start:batch_end, df.columns.get_loc(career_col)] = career_df[career_col].values
             
             # Limpar memória após cada batch
             del batch_df

@@ -1,144 +1,64 @@
 #!/usr/bin/env python
-"""
-Script de diagnóstico para identificar inconsistências de nomes entre scripts
-"""
+"""Investigação mais profunda das features de topic"""
+
 import pandas as pd
-import joblib
 import os
-import sys
-import json
 
-PROJECT_ROOT = "/Users/ramonmoreira/desktop/smart_ads"
-sys.path.insert(0, PROJECT_ROOT)
+base_path = "/Users/ramonmoreira/desktop/smart_ads"
 
-def diagnose_feature_inconsistencies():
-    """Diagnostica problemas de nomes de features entre scripts"""
-    
-    print("=== DIAGNÓSTICO DE INCONSISTÊNCIAS DE FEATURES ===\n")
-    
-    # 1. Carregar dataset de treino final
-    train_path = os.path.join(PROJECT_ROOT, "data/new/04_feature_selection/train.csv")
-    train_df = pd.read_csv(train_path)
-    print(f"1. Dataset de treino carregado: {train_df.shape}")
-    
-    # 2. Carregar features recomendadas
-    features_path = os.path.join(PROJECT_ROOT, "reports/feature_importance_results/recommended_features.txt")
-    with open(features_path, 'r') as f:
-        recommended_features = [line.strip() for line in f.readlines()]
-    print(f"2. Features recomendadas: {len(recommended_features)}")
-    
-    # 3. Analisar parâmetros salvos
-    params_paths = {
-        'preprocessing': os.path.join(PROJECT_ROOT, "src/preprocessing/params/new/02_preprocessing_params/all_preprocessing_params.joblib"),
-        'professional': os.path.join(PROJECT_ROOT, "src/preprocessing/params/new/03_params/03_professional_features_params.joblib"),
-        'tfidf': os.path.join(PROJECT_ROOT, "src/preprocessing/params/new/03_params/03_tfidf_vectorizers.joblib"),
-        'lda': os.path.join(PROJECT_ROOT, "src/preprocessing/params/new/03_params/03_lda_models.joblib")
-    }
-    
-    params_info = {}
-    for name, path in params_paths.items():
-        if os.path.exists(path):
-            try:
-                data = joblib.load(path)
-                params_info[name] = {
-                    'exists': True,
-                    'type': type(data).__name__,
-                    'size': len(data) if hasattr(data, '__len__') else 'N/A'
-                }
-            except Exception as e:
-                params_info[name] = {'exists': True, 'error': str(e)}
-        else:
-            params_info[name] = {'exists': False}
-    
-    print("\n3. Status dos arquivos de parâmetros:")
-    for name, info in params_info.items():
-        print(f"   {name}: {info}")
-    
-    # 4. Analisar colunas de texto e suas transformações
-    text_patterns = {
-        'original': ['Cuando hables inglés con fluidez', '¿Qué esperas aprender', 'Déjame un mensaje'],
-        'sanitized': ['cuando_hables', 'que_esperas', 'dejame_un']
-    }
-    
-    print("\n4. Análise de colunas de texto:")
-    text_features = {}
-    
-    for col in train_df.columns:
-        # Identificar features derivadas de texto
-        if any(pattern in col for pattern in ['_tfidf_', '_topic_', '_motivation', '_sentiment', '_commitment']):
-            # Tentar identificar a coluna de origem
-            for pattern in text_patterns['original'] + text_patterns['sanitized']:
-                if pattern.lower() in col.lower():
-                    origin = pattern
-                    if origin not in text_features:
-                        text_features[origin] = []
-                    text_features[origin].append(col)
-                    break
-    
-    for origin, features in text_features.items():
-        print(f"\n   Origem: {origin[:50]}...")
-        print(f"   Features derivadas: {len(features)}")
-        print(f"   Exemplos: {features[:3]}")
-    
-    # 5. Verificar features ausentes
-    train_features = set(train_df.columns)
-    recommended_set = set(recommended_features)
-    
-    missing_in_train = recommended_set - train_features
-    extra_in_train = train_features - recommended_set - {'target'}
-    
-    print(f"\n5. Comparação com features recomendadas:")
-    print(f"   Features faltando no treino: {len(missing_in_train)}")
-    print(f"   Features extras no treino: {len(extra_in_train)}")
-    
-    # Categorizar features problemáticas
-    problematic_features = {
-        'tfidf': [],
-        'topic': [],
-        'professional': [],
-        'advanced': [],
-        'other': []
-    }
-    
-    for feat in list(missing_in_train) + list(extra_in_train):
-        if '_tfidf_' in feat:
-            problematic_features['tfidf'].append(feat)
-        elif '_topic_' in feat:
-            problematic_features['topic'].append(feat)
-        elif any(x in feat for x in ['motivation', 'commitment', 'career', 'aspiration']):
-            problematic_features['professional'].append(feat)
-        elif any(x in feat for x in ['embedding', 'refined', 'interaction']):
-            problematic_features['advanced'].append(feat)
-        else:
-            problematic_features['other'].append(feat)
-    
-    print("\n6. Features problemáticas por categoria:")
-    for category, features in problematic_features.items():
-        if features:
-            print(f"\n   {category.upper()} ({len(features)} features):")
-            for feat in features[:5]:
-                print(f"      - {feat}")
-            if len(features) > 5:
-                print(f"      ... e mais {len(features) - 5}")
-    
-    # Salvar relatório
-    report = {
-        'train_shape': train_df.shape,
-        'recommended_features_count': len(recommended_features),
-        'params_info': params_info,
-        'text_features_mapping': {k: len(v) for k, v in text_features.items()},
-        'missing_features': list(missing_in_train),
-        'extra_features': list(extra_in_train),
-        'problematic_by_category': {k: len(v) for k, v in problematic_features.items()}
-    }
-    
-    report_path = os.path.join(PROJECT_ROOT, "reports/feature_name_diagnostic.json")
-    with open(report_path, 'w') as f:
-        json.dump(report, f, indent=2)
-    
-    print(f"\n✅ Relatório completo salvo em: {report_path}")
-    
-    return report
+print("=== INVESTIGAÇÃO DETALHADA DAS FEATURES DE TOPIC ===\n")
 
-if __name__ == "__main__":
-    diagnose_feature_inconsistencies()
+# 1. Verificar o arquivo de importância combinada
+print("1. Verificando arquivo de importância combinada...")
+combined_path = os.path.join(base_path, "reports/feature_importance_results/feature_importance_combined.csv")
+if os.path.exists(combined_path):
+    combined_df = pd.read_csv(combined_path)
+    topic_in_combined = combined_df[combined_df['Feature'].str.contains('topic_|dominant_topic', na=False)]
+    print(f"   Features de topic em 'feature_importance_combined.csv': {len(topic_in_combined)}")
+    
+    if len(topic_in_combined) > 0:
+        print("\n   Top 5 features de topic por importância:")
+        for idx, row in topic_in_combined.sort_values('Mean_Importance', ascending=False).head().iterrows():
+            print(f"   - {row['Feature']}: {row['Mean_Importance']:.6f}")
+else:
+    print("   Arquivo não encontrado")
+
+# 2. Verificar datasets em diferentes estágios
+print("\n2. Rastreando features de topic através dos estágios:")
+
+stages = [
+    ("02_processed", "data/new/02_processed/train.csv"),
+    ("03_feature_engineering", "data/new/03_feature_engineering_1/train.csv"),
+    ("04_feature_selection", "data/new/04_feature_selection/train.csv")
+]
+
+for stage_name, path in stages:
+    full_path = os.path.join(base_path, path)
+    if os.path.exists(full_path):
+        df = pd.read_csv(full_path, nrows=1)
+        topic_cols = [col for col in df.columns if 'topic_' in col or 'dominant_topic' in col]
+        print(f"   {stage_name}: {len(topic_cols)} features de topic")
+    else:
+        print(f"   {stage_name}: arquivo não encontrado")
+
+# 3. Verificar ordem de processamento
+print("\n3. Análise da ordem de processamento:")
+print("   Se as features de topic aparecem apenas no estágio 03 ou depois,")
+print("   elas foram criadas APÓS a análise de importância do estágio 02.")
+
+# 4. Carregar lista completa de features recomendadas
+print("\n4. Features de topic recomendadas (detalhes):")
+with open(os.path.join(base_path, "reports/feature_importance_results/recommended_features.txt"), 'r') as f:
+    all_recommended = [line.strip() for line in f.readlines()]
+
+topic_features = sorted([f for f in all_recommended if 'topic_' in f or 'dominant_topic' in f])
+print(f"   Total: {len(topic_features)}")
+print("\n   Lista completa:")
+for feat in topic_features:
+    print(f"   - {feat}")
+
+print("\n" + "="*50)
+print("\nCONCLUSÃO PRELIMINAR:")
+print("As features de topic foram adicionadas ao pipeline mas não passaram")
+print("pela análise de feature importance. Elas foram incluídas diretamente")
+print("no conjunto final de features recomendadas.")
