@@ -42,6 +42,14 @@ warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 # ============================================================================
+# PADRONIZAÇÃO DE NOMES DE FEATURES
+# ============================================================================
+
+from src.utils.feature_naming import (
+    standardize_feature_name,
+    standardize_dataframe_columns)
+
+# ============================================================================
 # CKECKPOINTS FUNCTIONS DEFINITIONS
 # ============================================================================
 def get_cache_key(params):
@@ -884,13 +892,13 @@ def perform_topic_modeling_fixed(df, text_cols, n_topics=5, fit=True, params=Non
                 
                 # Adicionar features ao DataFrame
                 for topic_idx in range(n_topics):
-                    feature_name = f'{col_clean}_topic_{topic_idx+1}'
+                    feature_name = standardize_feature_name(f'{col_clean}_topic_{topic_idx+1}')
                     df_result[feature_name] = topic_distribution[:, topic_idx]
                     lda_features_created += 1
                     print(f"  ✓ Criada feature: {feature_name}")
                 
                 # Adicionar tópico dominante
-                dominant_topic_name = f'{col_clean}_dominant_topic'
+                dominant_topic_name = standardize_feature_name(f'{col_clean}_dominant_topic')
                 df_result[dominant_topic_name] = np.argmax(topic_distribution, axis=1) + 1
                 lda_features_created += 1
                 print(f"  ✓ Criada feature: {dominant_topic_name}")
@@ -926,12 +934,12 @@ def perform_topic_modeling_fixed(df, text_cols, n_topics=5, fit=True, params=Non
                     
                     # Adicionar features
                     for topic_idx in range(n_topics):
-                        feature_name = f'{col_clean}_topic_{topic_idx+1}'
+                        feature_name = standardize_feature_name(f'{col_clean}_topic_{topic_idx+1}')
                         df_result[feature_name] = topic_distribution[:, topic_idx]
                         lda_features_created += 1
                     
                     # Tópico dominante
-                    dominant_topic_name = f'{col_clean}_dominant_topic'
+                    dominant_topic_name = standardize_feature_name(f'{col_clean}_dominant_topic')
                     df_result[dominant_topic_name] = np.argmax(topic_distribution, axis=1) + 1
                     lda_features_created += 1
                     
@@ -1197,20 +1205,6 @@ def apply_feature_selection_pipeline(train_df, val_df, test_df, params=None,
                                    n_folds=3):
     """
     Aplica pipeline de feature selection nos datasets.
-    
-    Args:
-        train_df: DataFrame de treino
-        val_df: DataFrame de validação  
-        test_df: DataFrame de teste
-        params: Parâmetros de pré-processamento
-        max_features: Número máximo de features a selecionar
-        importance_threshold: Threshold mínimo de importância
-        correlation_threshold: Threshold para remover features correlacionadas
-        fast_mode: Se True, usa apenas RandomForest
-        n_folds: Número de folds para cross-validation
-        
-    Returns:
-        Tupla com DataFrames processados e informações de seleção
     """
     print("\n=== PARTE 5: FEATURE SELECTION ===")
     print(f"Configurações:")
@@ -1251,15 +1245,8 @@ def apply_feature_selection_pipeline(train_df, val_df, test_df, params=None,
     text_derived_cols = identify_text_derived_columns(numeric_cols)
     print(f"Features derivadas de texto: {len(text_derived_cols)}")
     
-    # Sanitizar nomes de colunas se necessário
-    rename_dict = sanitize_column_names(numeric_cols)
-    if rename_dict:
-        print(f"\nRenomeando {len(rename_dict)} colunas para evitar problemas")
-        train_df = train_df.rename(columns=rename_dict)
-        val_df = val_df.rename(columns=rename_dict)
-        test_df = test_df.rename(columns=rename_dict)
-        numeric_cols = [rename_dict.get(col, col) for col in numeric_cols]
-        text_derived_cols = [rename_dict.get(col, col) for col in text_derived_cols]
+    # NÃO precisamos mais sanitizar - já está padronizado!
+    # Apenas usar os nomes como estão
     
     # Preparar dados
     X_train = train_df[numeric_cols].fillna(0)
@@ -1375,33 +1362,32 @@ def apply_feature_selection_pipeline(train_df, val_df, test_df, params=None,
     else:
         top_features = important_features
     
-    selected_features_sanitized = top_features['Feature'].tolist()
+    # Usar diretamente os nomes das features selecionadas (já padronizados)
+    selected_features = top_features['Feature'].tolist()
     
-    # Converter de volta para nomes originais
-    if rename_dict:
-        reverse_rename_dict = {v: k for k, v in rename_dict.items()}
-        selected_features_original = []
-        for feat in selected_features_sanitized:
-            original_name = reverse_rename_dict.get(feat, feat)
-            selected_features_original.append(original_name)
-    else:
-        selected_features_original = selected_features_sanitized
-    
-    print(f"\n✅ {len(selected_features_original)} features selecionadas")
-    print(f"   Redução: {initial_n_features} → {len(selected_features_original)} "
-          f"({(1 - len(selected_features_original)/initial_n_features)*100:.1f}% removidas)")
+    print(f"\n✅ {len(selected_features)} features selecionadas")
+    print(f"   Redução: {initial_n_features} → {len(selected_features)} "
+          f"({(1 - len(selected_features)/initial_n_features)*100:.1f}% removidas)")
     
     # Top 10 features
     print("\nTop 10 features mais importantes:")
     for i, row in top_features.head(10).iterrows():
-        original_name = reverse_rename_dict.get(row['Feature'], row['Feature']) if rename_dict else row['Feature']
-        print(f"  {i+1}. {original_name}: {row['Mean_Importance']:.4f}")
+        print(f"  {i+1}. {row['Feature']}: {row['Mean_Importance']:.4f}")
     
     # PASSO 4: Aplicar seleção aos datasets
     print("\n--- Aplicando seleção aos datasets ---")
     
     # Adicionar target à lista de colunas a manter
-    columns_to_keep = selected_features_original + [target_col]
+    columns_to_keep = selected_features + [target_col]
+    
+    # Verificar quais colunas realmente existem
+    existing_columns = [col for col in columns_to_keep if col in train_df.columns]
+    missing_columns = [col for col in columns_to_keep if col not in train_df.columns]
+    
+    if missing_columns:
+        print(f"⚠️  AVISO: {len(missing_columns)} colunas selecionadas não encontradas")
+        print(f"   Usando apenas {len(existing_columns)} colunas existentes")
+        columns_to_keep = existing_columns
     
     # Filtrar datasets
     train_selected = train_df[columns_to_keep].copy()
@@ -1415,14 +1401,13 @@ def apply_feature_selection_pipeline(train_df, val_df, test_df, params=None,
     
     # Salvar informações de seleção nos parâmetros
     params['feature_selection'] = {
-        'selected_features': selected_features_original,
-        'n_features_selected': len(selected_features_original),
+        'selected_features': selected_features,
+        'n_features_selected': len(selected_features),
         'n_features_original': initial_n_features,
-        'features_removed': initial_n_features - len(selected_features_original),
+        'features_removed': initial_n_features - len(selected_features),
         'importance_threshold': importance_threshold,
         'correlation_threshold': correlation_threshold,
         'max_features': max_features,
-        'rename_dict': rename_dict,
         'feature_importance': final_importance.to_dict('records'),
         'high_corr_pairs': high_corr_pairs,
         'removed_by_correlation': to_drop
@@ -1697,6 +1682,11 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
         train_after_preproc_shape = train_processed.shape
         val_after_preproc_shape = val_processed.shape
         test_after_preproc_shape = test_processed.shape
+
+        # Garantir que os DataFrames finais têm a mesma nomeação de colunas
+        train_processed = standardize_dataframe_columns(train_processed)
+        val_processed = standardize_dataframe_columns(val_processed)
+        test_processed = standardize_dataframe_columns(test_processed)
     
         # Salvar checkpoint
         save_checkpoint({
@@ -1748,6 +1738,11 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
         train_after_prof_shape = train_final.shape
         val_after_prof_shape = val_final.shape
         test_after_prof_shape = test_final.shape
+
+        # Garantir que os DataFrames finais têm a mesma nomeação de colunas
+        train_final = standardize_dataframe_columns(train_final)
+        val_final = standardize_dataframe_columns(val_final)
+        test_final = standardize_dataframe_columns(test_final)
     
         # Salvar checkpoint
         save_checkpoint({

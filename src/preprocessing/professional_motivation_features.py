@@ -10,6 +10,7 @@ import re
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 from sklearn.feature_extraction.text import TfidfVectorizer
 import nltk
+from src.utils.feature_naming import standardize_feature_name
 
 # Garantir que os recursos NLTK necessários estejam disponíveis
 try:
@@ -149,8 +150,8 @@ def create_professional_motivation_score(df, text_columns, fit=True, params=None
     normalized_scores = motivation_scores / max_score
     
     # Adicionar features ao DataFrame
-    result_df['professional_motivation_score'] = normalized_scores
-    result_df['career_keyword_count'] = keyword_counts
+    result_df[standardize_feature_name('professional_motivation_score')] = normalized_scores
+    result_df[standardize_feature_name('career_keyword_count')] = keyword_counts
     
     return result_df, params
 
@@ -242,9 +243,9 @@ def analyze_aspiration_sentiment(df, text_columns, fit=True, params=None):
                 sentiment_scores.append({"pos": 0, "neg": 0, "neu": 0, "compound": 0})
         
         # Extrair componentes
-        result_df[f"{col_clean}_sentiment_pos"] = [score["pos"] for score in sentiment_scores]
-        result_df[f"{col_clean}_sentiment_neg"] = [score["neg"] for score in sentiment_scores]
-        result_df[f"{col_clean}_sentiment_compound"] = [score["compound"] for score in sentiment_scores]
+        result_df[standardize_feature_name(f"{col_clean}_sentiment_pos")] = [score["pos"] for score in sentiment_scores]
+        result_df[standardize_feature_name(f"{col_clean}_sentiment_neg")] = [score["neg"] for score in sentiment_scores]
+        result_df[standardize_feature_name(f"{col_clean}_sentiment_compound")] = [score["compound"] for score in sentiment_scores]
         
         # Detecção de aspiração
         aspiration_counts = []
@@ -253,10 +254,10 @@ def analyze_aspiration_sentiment(df, text_columns, fit=True, params=None):
             count = sum(text.count(phrase) for phrase in aspiration_phrases)
             aspiration_counts.append(count)
         
-        result_df[f"{col_clean}_aspiration_count"] = aspiration_counts
+        result_df[standardize_feature_name(f"{col_clean}_aspiration_count")] = aspiration_counts
         
         # Score de aspiração: combinação de sentimento positivo e frases de aspiração
-        result_df[f"{col_clean}_aspiration_score"] = np.array(aspiration_counts) * \
+        result_df[standardize_feature_name(f"{col_clean}_aspiration_score")] = np.array(aspiration_counts) * \
                                                   result_df[f"{col_clean}_sentiment_pos"]
     
     return result_df, params
@@ -401,9 +402,9 @@ def detect_commitment_expressions(df, text_columns, fit=True, params=None):
             commitment_counts.append(count)
         
         # Adicionar features ao dicionário
-        result_df[f"{col_clean}_commitment_score"] = commitment_scores
-        result_df[f"{col_clean}_has_commitment"] = has_commitment
-        result_df[f"{col_clean}_commitment_count"] = commitment_counts
+        result_df[standardize_feature_name(f"{col_clean}_commitment_score")] = commitment_scores
+        result_df[standardize_feature_name(f"{col_clean}_has_commitment")] = has_commitment
+        result_df[standardize_feature_name(f"{col_clean}_commitment_count")] = commitment_counts
     
     return result_df, params
 
@@ -541,9 +542,9 @@ def create_career_term_detector(df, text_columns, fit=True, params=None):
             career_term_counts.append(count)
         
         # Adicionar features ao DataFrame
-        result_df[f"{col_clean}_career_term_score"] = career_scores
-        result_df[f"{col_clean}_has_career_terms"] = has_career_terms
-        result_df[f"{col_clean}_career_term_count"] = career_term_counts
+        result_df[standardize_feature_name(f"{col_clean}_career_term_score")] = career_scores
+        result_df[standardize_feature_name(f"{col_clean}_has_career_terms")] = has_career_terms
+        result_df[standardize_feature_name(f"{col_clean}_career_term_count")] = career_term_counts
     
     return result_df, params
 
@@ -674,7 +675,7 @@ def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None):
         
         # Adicionar features ao DataFrame
         for i, term in enumerate(feature_names):
-            feature_name = f"{col_clean}_tfidf_{term}"
+            feature_name = standardize_feature_name(f"{col_clean}_tfidf_{term}")
             df_result[feature_name] = result_matrix[:, i]
     
     # Adicionar colunas com score agregado de carreira
@@ -692,7 +693,7 @@ def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None):
             career_cols = [c for c in tfidf_cols if any(term in c for term in career_terms)]
             
             if career_cols:
-                df_result[f"{col_clean}_career_tfidf_score"] = df_result[career_cols].mean(axis=1)
+                df_result[standardize_feature_name(f"{col_clean}_career_tfidf_score")] = df_result[career_cols].mean(axis=1)
     
     return df_result, params
 

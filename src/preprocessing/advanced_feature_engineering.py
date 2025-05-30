@@ -12,6 +12,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
 import warnings
 from src.preprocessing.text_processing import clean_text
+from src.utils.feature_naming import standardize_feature_name
 
 warnings.filterwarnings('ignore')
 
@@ -155,14 +156,14 @@ def refine_tfidf_weights_fixed(df, text_cols, fit=True, params=None):
                 # Preencher DataFrame original incluindo linhas que foram filtradas
                 for i, term in enumerate(feature_names):
                     # Inicializar coluna com zeros
-                    df_result[f'{col}_refined_tfidf_{term}'] = 0.0
+                    df_result[standardize_feature_name(f'{col}_refined_tfidf_{term}')] = 0.0
                     
                     # Preencher valores para textos não vazios
-                    df_result.loc[non_empty, f'{col}_refined_tfidf_{term}'] = tfidf_array[:, i]
+                    df_result.loc[non_empty, standardize_feature_name(f'{col}_refined_tfidf_{term}')] = tfidf_array[:, i]
                     
                     # Aumentar o peso se for um termo importante
                     if any(imp_term in term for imp_term in important_terms):
-                        df_result[f'{col}_refined_tfidf_{term}'] *= 2.0  # Dobrar o peso
+                        df_result[standardize_feature_name(f'{col}_refined_tfidf_{term}')] *= 2.0  # Dobrar o peso
                 
                 print(f"  Criadas {len(feature_names)} features TF-IDF para {col}")
                 
@@ -247,16 +248,16 @@ def create_text_embeddings_simple_fixed(df, text_cols, fit=True, params=None):
         
         try:
             # Dimensão 1: Média dos valores TF-IDF
-            df_result[f'{col}_embedding_mean'] = df_result[numeric_tfidf_cols].mean(axis=1)
+            df_result[standardize_feature_name(f'{col}_embedding_mean')] = df_result[numeric_tfidf_cols].mean(axis=1)
             
             # Dimensão 2: Máximo dos valores TF-IDF
-            df_result[f'{col}_embedding_max'] = df_result[numeric_tfidf_cols].max(axis=1)
+            df_result[standardize_feature_name(f'{col}_embedding_max')] = df_result[numeric_tfidf_cols].max(axis=1)
             
             # Dimensão 3: Desvio padrão
-            df_result[f'{col}_embedding_std'] = df_result[numeric_tfidf_cols].std(axis=1)
+            df_result[standardize_feature_name(f'{col}_embedding_std')] = df_result[numeric_tfidf_cols].std(axis=1)
             
             # Dimensão 4: Número de termos não-zero
-            df_result[f'{col}_embedding_nonzero'] = (df_result[numeric_tfidf_cols] > 0).sum(axis=1) / len(numeric_tfidf_cols)
+            df_result[standardize_feature_name(f'{col}_embedding_nonzero')] = (df_result[numeric_tfidf_cols] > 0).sum(axis=1) / len(numeric_tfidf_cols)
             
             if fit:
                 params['embeddings'][col] = {
@@ -663,10 +664,11 @@ def create_salary_features(df, fit=True, params=None):
     df_result['desired_salary_encoded'] = df_result['desired_salary_encoded'].fillna(0)
     
     # 1. Diferença simples
-    df_result['salary_diff'] = df_result['desired_salary_encoded'] - df_result['current_salary_encoded']
+    salary_diff_col = standardize_feature_name('salary_diff')
+    df_result[salary_diff_col] = df_result['desired_salary_encoded'] - df_result['current_salary_encoded']
     
     # 2. Razão (evitando divisão por zero)
-    df_result['salary_ratio'] = np.where(
+    df_result[standardize_feature_name('salary_ratio')] = np.where(
         df_result['current_salary_encoded'] > 0,
         df_result['desired_salary_encoded'] / df_result['current_salary_encoded'],
         df_result['desired_salary_encoded']
@@ -674,22 +676,22 @@ def create_salary_features(df, fit=True, params=None):
     
     # 3. Diferença logarítmica
     # Adicionar 1 antes do log para evitar log(0)
-    df_result['salary_log_diff'] = np.log1p(df_result['desired_salary_encoded']) - np.log1p(df_result['current_salary_encoded'])
+    df_result[standardize_feature_name('salary_log_diff')] = np.log1p(df_result['desired_salary_encoded']) - np.log1p(df_result['current_salary_encoded'])
     
     # 4. Features com transformação sigmoide para limitar outliers
-    df_result['salary_growth_potential'] = 2 / (1 + np.exp(-df_result['salary_diff'])) - 1
+    df_result[standardize_feature_name('salary_growth_potential')] = 2 / (1 + np.exp(-df_result[salary_diff_col])) - 1
     
     if fit:
         # Armazenar estatísticas para transformação
         params['salary_features'] = {
-            'mean_diff': df_result['salary_diff'].mean(),
-            'std_diff': df_result['salary_diff'].std(),
-            'mean_ratio': df_result['salary_ratio'].mean(),
-            'std_ratio': df_result['salary_ratio'].std()
+            'mean_diff': df_result[salary_diff_col].mean(),
+            'std_diff': df_result[salary_diff_col].std(),
+            'mean_ratio': df_result[standardize_feature_name('salary_ratio')].mean(),
+            'std_ratio': df_result[standardize_feature_name('salary_ratio')].std()
         }
     
     # 5. Z-score da diferença (normalizado)
-    df_result['salary_diff_zscore'] = (df_result['salary_diff'] - params['salary_features']['mean_diff']) / \
+    df_result[standardize_feature_name('salary_diff_zscore')] = (df_result[salary_diff_col] - params['salary_features']['mean_diff']) / \
                                      (params['salary_features']['std_diff'] if params['salary_features']['std_diff'] > 0 else 1)
     
     return df_result, params
@@ -730,7 +732,7 @@ def create_country_interaction_features(df, fit=True, params=None):
     
     for feature in interacting_features:
         # Criar interação multiplicativa com país
-        df_result[f'country_x_{feature}'] = df_result['country_encoded'] * df_result[feature]
+        df_result[standardize_feature_name(f'country_x_{feature}')] = df_result['country_encoded'] * df_result[feature]
         
         if fit:
             # Calcular estatísticas de cada país para cada feature
@@ -739,13 +741,13 @@ def create_country_interaction_features(df, fit=True, params=None):
         
         # Adicionar desvio em relação à média do país
         # Inicializar coluna com zeros
-        df_result[f'{feature}_country_deviation'] = 0
+        df_result[standardize_feature_name(f'{feature}_country_deviation')] = 0
         
         # Para cada país, calcular o desvio
         for country_code in params['country_interactions'][feature]['mean'].keys():
             country_mean = params['country_interactions'][feature]['mean'][country_code]
             mask = df_result['country_encoded'] == country_code
-            df_result.loc[mask, f'{feature}_country_deviation'] = df_result.loc[mask, feature] - country_mean
+            df_result.loc[mask, standardize_feature_name(f'{feature}_country_deviation')] = df_result.loc[mask, feature] - country_mean
     
     return df_result, params
 
@@ -790,7 +792,7 @@ def create_age_interaction_features(df, fit=True, params=None):
     
     for feature in interacting_features:
         # Criar interação multiplicativa com idade
-        df_result[f'age_x_{feature}'] = df_result['age_encoded'] * df_result[feature]
+        df_result[standardize_feature_name(f'age_x_{feature}')] = df_result['age_encoded'] * df_result[feature]
         
         if fit:
             # Calcular estatísticas de cada faixa etária para cada feature
@@ -800,15 +802,16 @@ def create_age_interaction_features(df, fit=True, params=None):
         # Adicionar índice de progressão (feature relativa à idade)
         if feature in ['current_salary_encoded', 'desired_salary_encoded']:
             # Calcular salário por idade (índice de progressão)
-            df_result[f'{feature}_per_age'] = np.where(
+            per_age_col = standardize_feature_name(f'{feature}_per_age')
+            df_result[per_age_col] = np.where(
                 df_result['age_encoded'] > 0,
                 df_result[feature] / df_result['age_encoded'],
                 df_result[feature]
             )
             
             # Normalizar (tanto no fit quanto transform)
-            feature_mean = df_result[f'{feature}_per_age'].mean()
-            feature_std = df_result[f'{feature}_per_age'].std()
+            feature_mean = df_result[per_age_col].mean()
+            feature_std = df_result[per_age_col].std()
             
             if fit:
                 params['age_interactions'][f'{feature}_per_age'] = {
@@ -817,7 +820,7 @@ def create_age_interaction_features(df, fit=True, params=None):
                 }
             
             # Calcular z-score
-            df_result[f'{feature}_per_age_zscore'] = (df_result[f'{feature}_per_age'] - 
+            df_result[standardize_feature_name(f'{feature}_per_age_zscore')] = (df_result[per_age_col] - 
                                                     params['age_interactions'][f'{feature}_per_age']['mean']) / \
                                                    (params['age_interactions'][f'{feature}_per_age']['std'] 
                                                     if params['age_interactions'][f'{feature}_per_age']['std'] > 0 else 1)
@@ -861,11 +864,11 @@ def create_temporal_interaction_features(df, fit=True, params=None):
         
         # Transformar em dummies (mais interpretável para o modelo)
         for period in ['early_morning', 'morning', 'afternoon', 'evening']:
-            df_result[f'period_{period}'] = (df_result['day_period'] == period).astype(int)
+            df_result[standardize_feature_name(f'period_{period}')] = (df_result['day_period'] == period).astype(int)
     
     # 2. Criar feature dia de semana vs. fim de semana
     if 'day_of_week' in df_result.columns:
-        df_result['is_weekend'] = (df_result['day_of_week'] >= 5).astype(int)
+        df_result[standardize_feature_name('is_weekend')] = (df_result['day_of_week'] >= 5).astype(int)
     
     # 3. Criar features combinadas de dia/período
     if 'hour' in df_result.columns and 'day_of_week' in df_result.columns:
@@ -883,7 +886,7 @@ def create_temporal_interaction_features(df, fit=True, params=None):
         # Criar coluna combinada para cada combinação possível
         for day_idx, day in enumerate(day_names):
             for period in periods:
-                col_name = f'{day}_{period}'
+                col_name = standardize_feature_name(f'{day}_{period}')
                 day_match = (df_result['day_of_week'] == day_idx)
                 period_match = (df_result['period_simple'] == period)
                 df_result[col_name] = (day_match & period_match).astype(int)
@@ -900,7 +903,7 @@ def create_temporal_interaction_features(df, fit=True, params=None):
     for temp_col in [col for col in temporal_cols if col in df_result.columns]:
         for feature in interacting_features:
             # Criar interação multiplicativa
-            df_result[f'{temp_col}_x_{feature}'] = df_result[temp_col] * df_result[feature]
+            df_result[standardize_feature_name(f'{temp_col}_x_{feature}')] = df_result[temp_col] * df_result[feature]
             
             if fit:
                 # Calcular estatísticas por período temporal
