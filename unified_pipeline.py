@@ -31,6 +31,8 @@ import nltk
 import logging
 from datetime import datetime
 from sklearn.model_selection import train_test_split
+import pickle
+import hashlib
 
 # Adicionar o diretório raiz do projeto ao sys.path
 project_root = "/Users/ramonmoreira/desktop/smart_ads"
@@ -38,6 +40,39 @@ sys.path.insert(0, project_root)
 
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+# ============================================================================
+# CKECKPOINTS FUNCTIONS DEFINITIONS
+# ============================================================================
+def get_cache_key(params):
+    """Gera chave única baseada nos parâmetros"""
+    param_str = str(sorted(params.items()))
+    return hashlib.md5(param_str.encode()).hexdigest()
+
+def save_checkpoint(data, stage_name, cache_dir="/Users/ramonmoreira/desktop/smart_ads/cache"):
+    """Salva checkpoint de um estágio"""
+    os.makedirs(cache_dir, exist_ok=True)
+    filepath = os.path.join(cache_dir, f"{stage_name}.pkl")
+    with open(filepath, 'wb') as f:
+        pickle.dump(data, f)
+    print(f"✓ Checkpoint salvo: {stage_name}")
+
+def load_checkpoint(stage_name, cache_dir="/Users/ramonmoreira/desktop/smart_ads/cache"):
+    """Carrega checkpoint se existir"""
+    filepath = os.path.join(cache_dir, f"{stage_name}.pkl")
+    if os.path.exists(filepath):
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
+        print(f"✓ Checkpoint carregado: {stage_name}")
+        return data
+    return None
+
+def clear_checkpoints(cache_dir="/Users/ramonmoreira/desktop/smart_ads/cache"):
+    """Remove todos os checkpoints"""
+    import shutil
+    if os.path.exists(cache_dir):
+        shutil.rmtree(cache_dir)
+        print("✓ Checkpoints removidos")
 
 # ============================================================================
 # IMPORTS DA PARTE 1 - COLETA E INTEGRAÇÃO
@@ -1417,7 +1452,23 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
                          importance_threshold=0.1,
                          correlation_threshold=0.95,
                          fast_mode=False,
-                         n_folds=3):
+                         n_folds=3,
+                         test_mode=False,
+                         max_samples=None,
+                         use_checkpoints=True, 
+                         clear_cache=False):
+    # Limpar cache se solicitado
+    if clear_cache:
+        clear_checkpoints()
+    
+    # NOVA FUNÇÃO INTERNA - não altera a load_checkpoint original
+    def load_checkpoint_conditional(stage_name):
+        """Wrapper que respeita a flag use_checkpoints"""
+        if use_checkpoints:
+            return load_checkpoint(stage_name)  # Chama a função original
+        else:
+            return None  # Ignora checkpoints se use_checkpoints=False
+    
     """
     Pipeline unificado que executa coleta, integração, pré-processamento, feature engineering e feature selection.
     
@@ -1524,6 +1575,11 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     # Validar compatibilidade com produção
     is_compatible, validation_report = validate_production_compatibility(final_data)
     
+    if test_mode and max_samples:
+        print(f"\n⚠️ MODO DE TESTE ATIVADO: Limitando a {max_samples} amostras")
+        if len(final_data) > max_samples:
+            final_data = final_data.sample(n=max_samples, random_state=random_state)
+
     # 11. Estatísticas finais da integração
     if 'target' in final_data.columns:
         target_counts = final_data['target'].value_counts()
@@ -1538,6 +1594,26 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     # ========================================================================
     
     print("\n=== PARTE 2: DIVISÃO DOS DADOS ===")
+
+    # CHECKPOINT 1: Verificar se já temos os dados divididos
+    checkpoint_split = load_checkpoint_conditional('data_split')
+    if checkpoint_split:
+        print("✓ Usando checkpoint de divisão de dados")
+        train_df = checkpoint_split['train']
+        val_df = checkpoint_split['val']
+        test_df = checkpoint_split['test']
+    else:
+        # Código existente de split...
+        train_df, temp_df = train_test_split(...)
+        val_df, test_df = train_test_split(...)
+        
+        # Salvar checkpoint
+        save_checkpoint({
+            'train': train_df,
+            'val': val_df,
+            'test': test_df
+        }, 'data_split')
+    
     print("Splitting data into train/val/test sets...")
     
     if final_data.shape[0] == 0:
@@ -1588,64 +1664,98 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     
     print("\n=== PARTE 3: PRÉ-PROCESSAMENTO ===")
     
-    # 1. Processar o conjunto de treinamento com fit=True para aprender parâmetros
-    print("\n--- Processando conjunto de treinamento ---")
-    train_processed, params = apply_preprocessing_pipeline(train_df, fit=True, preserve_text=preserve_text)
+    # CHECKPOINT 2: Verificar se já temos dados pré-processados
+    checkpoint_preproc = load_checkpoint_conditional('preprocessed')
+    if checkpoint_preproc:
+        print("✓ Usando checkpoint de pré-processamento")
+        train_processed = checkpoint_preproc['train']
+        val_processed = checkpoint_preproc['val']
+        test_processed = checkpoint_preproc['test']
+        params = checkpoint_preproc['params']
+    else:
+        # 1. Processar o conjunto de treinamento com fit=True para aprender parâmetros
+        print("\n--- Processando conjunto de treinamento ---")
+        train_processed, params = apply_preprocessing_pipeline(train_df, fit=True, preserve_text=preserve_text)
+        
+        # 2. Processar o conjunto de validação com fit=False para aplicar parâmetros aprendidos
+        print("\n--- Processando conjunto de validação ---")
+        val_processed, _ = apply_preprocessing_pipeline(val_df, params=params, fit=False, preserve_text=preserve_text)
+        
+        # 3. Garantir consistência de colunas com o treino
+        val_processed = ensure_column_consistency(train_processed, val_processed)
+        
+        # 4. Processar o conjunto de teste com fit=False para aplicar parâmetros aprendidos
+        print("\n--- Processando conjunto de teste ---")
+        test_processed, _ = apply_preprocessing_pipeline(test_df, params=params, fit=False, preserve_text=preserve_text)
+        
+        # 5. Garantir consistência de colunas com o treino
+        test_processed = ensure_column_consistency(train_processed, test_processed)
+        
+        # Guardar shapes após pré-processamento
+        train_after_preproc_shape = train_processed.shape
+        val_after_preproc_shape = val_processed.shape
+        test_after_preproc_shape = test_processed.shape
     
-    # 2. Processar o conjunto de validação com fit=False para aplicar parâmetros aprendidos
-    print("\n--- Processando conjunto de validação ---")
-    val_processed, _ = apply_preprocessing_pipeline(val_df, params=params, fit=False, preserve_text=preserve_text)
-    
-    # 3. Garantir consistência de colunas com o treino
-    val_processed = ensure_column_consistency(train_processed, val_processed)
-    
-    # 4. Processar o conjunto de teste com fit=False para aplicar parâmetros aprendidos
-    print("\n--- Processando conjunto de teste ---")
-    test_processed, _ = apply_preprocessing_pipeline(test_df, params=params, fit=False, preserve_text=preserve_text)
-    
-    # 5. Garantir consistência de colunas com o treino
-    test_processed = ensure_column_consistency(train_processed, test_processed)
-    
-    # Guardar shapes após pré-processamento
-    train_after_preproc_shape = train_processed.shape
-    val_after_preproc_shape = val_processed.shape
-    test_after_preproc_shape = test_processed.shape
-    
+        # Salvar checkpoint
+        save_checkpoint({
+            'train': train_processed,
+            'val': val_processed,
+            'test': test_processed,
+            'params': params
+        }, 'preprocessed')
+
     # ========================================================================
     # PARTE 4: FEATURE ENGINEERING PROFISSIONAL
     # ========================================================================
     
     print("\n=== PARTE 4: FEATURE ENGINEERING PROFISSIONAL ===")
     
-    # 1. Aplicar features profissionais no conjunto de treinamento
-    print("\n--- Aplicando features profissionais no conjunto de treinamento ---")
-    train_final, params = apply_professional_features_pipeline(
-        train_processed, params=params, fit=True, batch_size=batch_size
-    )
+    # CHECKPOINT 3: Verificar se já temos features profissionais
+    checkpoint_prof = load_checkpoint_conditional('professional_features')
+    if checkpoint_prof:
+        print("✓ Usando checkpoint de features profissionais")
+        train_final = checkpoint_prof['train']
+        val_final = checkpoint_prof['val']
+        test_final = checkpoint_prof['test']
+        params = checkpoint_prof['params']
+    else:
+        # 1. Aplicar features profissionais no conjunto de treinamento
+        print("\n--- Aplicando features profissionais no conjunto de treinamento ---")
+        train_final, params = apply_professional_features_pipeline(
+            train_processed, params=params, fit=True, batch_size=batch_size
+        )
+        
+        # 2. Aplicar features profissionais no conjunto de validação
+        print("\n--- Aplicando features profissionais no conjunto de validação ---")
+        val_final, _ = apply_professional_features_pipeline(
+            val_processed, params=params, fit=False, batch_size=batch_size
+        )
+        
+        # 3. Garantir consistência de colunas
+        val_final = ensure_column_consistency(train_final, val_final)
+        
+        # 4. Aplicar features profissionais no conjunto de teste
+        print("\n--- Aplicando features profissionais no conjunto de teste ---")
+        test_final, _ = apply_professional_features_pipeline(
+            test_processed, params=params, fit=False, batch_size=batch_size
+        )
+        
+        # 5. Garantir consistência de colunas
+        test_final = ensure_column_consistency(train_final, test_final)
+        
+        # Guardar shapes após feature engineering profissional
+        train_after_prof_shape = train_final.shape
+        val_after_prof_shape = val_final.shape
+        test_after_prof_shape = test_final.shape
     
-    # 2. Aplicar features profissionais no conjunto de validação
-    print("\n--- Aplicando features profissionais no conjunto de validação ---")
-    val_final, _ = apply_professional_features_pipeline(
-        val_processed, params=params, fit=False, batch_size=batch_size
-    )
-    
-    # 3. Garantir consistência de colunas
-    val_final = ensure_column_consistency(train_final, val_final)
-    
-    # 4. Aplicar features profissionais no conjunto de teste
-    print("\n--- Aplicando features profissionais no conjunto de teste ---")
-    test_final, _ = apply_professional_features_pipeline(
-        test_processed, params=params, fit=False, batch_size=batch_size
-    )
-    
-    # 5. Garantir consistência de colunas
-    test_final = ensure_column_consistency(train_final, test_final)
-    
-    # Guardar shapes após feature engineering profissional
-    train_after_prof_shape = train_final.shape
-    val_after_prof_shape = val_final.shape
-    test_after_prof_shape = test_final.shape
-    
+        # Salvar checkpoint
+        save_checkpoint({
+            'train': train_final,
+            'val': val_final,
+            'test': test_final,
+            'params': params
+        }, 'professional_features')
+
     # ========================================================================
     # PARTE 5: FEATURE SELECTION (OPCIONAL)
     # ========================================================================
@@ -1654,30 +1764,50 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     
     if apply_feature_selection:
         print("\n=== PARTE 5: FEATURE SELECTION ===")
-        
-        # Aplicar feature selection
-        train_final, val_final, test_final, feature_importance = apply_feature_selection_pipeline(
-            train_final, val_final, test_final,
-            params=params,
-            max_features=max_features,
-            importance_threshold=importance_threshold,
-            correlation_threshold=correlation_threshold,
-            fast_mode=fast_mode,
-            n_folds=n_folds
-        )
-        
-        # Salvar feature importance
-        if feature_importance is not None:
-            importance_path = os.path.join(params_output_dir, "feature_importance.csv")
-            feature_importance.to_csv(importance_path, index=False)
-            print(f"\nImportância das features salva em {importance_path}")
+
+        # CHECKPOINT 4: Verificar se já temos feature selection
+        checkpoint_selection = load_checkpoint_conditional('feature_selection')
+        if checkpoint_selection:
+            print("✓ Usando checkpoint de feature selection")
+            train_final = checkpoint_selection['train']
+            val_final = checkpoint_selection['val']
+            test_final = checkpoint_selection['test']
+            params = checkpoint_selection['params']
+            feature_importance = checkpoint_selection.get('feature_importance')
+        else:
+            # Aplicar feature selection
+            train_final, val_final, test_final, feature_importance = apply_feature_selection_pipeline(
+                train_final, val_final, test_final,
+                params=params,
+                max_features=max_features,
+                importance_threshold=importance_threshold,
+                correlation_threshold=correlation_threshold,
+                fast_mode=fast_mode,
+                n_folds=n_folds
+            )
             
-            # Salvar lista de features selecionadas
-            selected_features_path = os.path.join(params_output_dir, "selected_features.txt")
-            with open(selected_features_path, 'w') as f:
-                for feat in params['feature_selection']['selected_features']:
-                    f.write(f"{feat}\n")
-            print(f"Lista de features selecionadas salva em {selected_features_path}")
+            # Salvar feature importance
+            if feature_importance is not None:
+                importance_path = os.path.join(params_output_dir, "feature_importance.csv")
+                feature_importance.to_csv(importance_path, index=False)
+                print(f"\nImportância das features salva em {importance_path}")
+                
+                # Salvar lista de features selecionadas
+                selected_features_path = os.path.join(params_output_dir, "selected_features.txt")
+                with open(selected_features_path, 'w') as f:
+                    for feat in params['feature_selection']['selected_features']:
+                        f.write(f"{feat}\n")
+                print(f"Lista de features selecionadas salva em {selected_features_path}")
+            
+            # Salvar checkpoint
+            save_checkpoint({
+                'train': train_final,
+                'val': val_final,
+                'test': test_final,
+                'params': params,
+                'feature_importance': feature_importance
+            }, 'feature_selection')
+
     else:
         print("\n=== FEATURE SELECTION DESATIVADO ===")
         print("Mantendo todas as features criadas durante o processamento")
