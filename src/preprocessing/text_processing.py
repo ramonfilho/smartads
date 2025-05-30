@@ -4,6 +4,7 @@ import re
 from sklearn.feature_extraction.text import TfidfVectorizer
 import string
 from textblob import TextBlob
+from src.utils.feature_naming import standardize_feature_name
 
 def clean_text(text):
     """Limpa e normaliza texto.
@@ -62,19 +63,19 @@ def extract_basic_text_features(df, text_cols, fit=True, params=None):
     # Extrair features básicas
     for col in text_cols:
         # Comprimento do texto
-        df_result[f'{col}_length'] = df_result[col].str.len()
+        df_result[standardize_feature_name(f'{col}_length')] = df_result[col].str.len()
         
         # Contagem de palavras
-        df_result[f'{col}_word_count'] = df_result[col].apply(
+        df_result[standardize_feature_name(f'{col}_word_count')] = df_result[col].apply(
             lambda x: len(str(x).split()) if pd.notna(x) else 0
         )
         
         # Presença de caracteres específicos
-        df_result[f'{col}_has_question'] = df_result[col].str.contains('\?', regex=True, na=False).astype(int)
-        df_result[f'{col}_has_exclamation'] = df_result[col].str.contains('!', regex=True, na=False).astype(int)
+        df_result[standardize_feature_name(f'{col}_has_question')] = df_result[col].str.contains('\?', regex=True, na=False).astype(int)
+        df_result[standardize_feature_name(f'{col}_has_exclamation')] = df_result[col].str.contains('!', regex=True, na=False).astype(int)
         
         # Média do tamanho das palavras
-        df_result[f'{col}_avg_word_length'] = df_result[col].apply(
+        df_result[standardize_feature_name(f'{col}_avg_word_length')] = df_result[col].apply(
             lambda x: np.mean([len(w) for w in str(x).split()]) if pd.notna(x) and len(str(x).split()) > 0 else 0
         )
     
@@ -114,7 +115,7 @@ def extract_sentiment_features(df, text_cols, fit=True, params=None):
     
     # Aplicar análise de sentimento
     for col in text_cols:
-        df_result[f'{col}_sentiment'] = df_result[col].apply(get_sentiment)
+        df_result[standardize_feature_name(f'{col}_sentiment')] = df_result[col].apply(get_sentiment)
     
     return df_result, params
 
@@ -183,7 +184,7 @@ def extract_tfidf_features(df, text_cols, fit=True, params=None):
                 # Criar colunas para os principais termos
                 tfidf_df = pd.DataFrame(
                     tfidf_matrix.toarray(), 
-                    columns=[f'{col}_tfidf_{term}' for term in feature_names]
+                    columns=[standardize_feature_name(f'{col}_tfidf_{term}') for term in feature_names]
                 )
                 
                 # Adicionar colunas ao dataframe
@@ -206,7 +207,7 @@ def extract_tfidf_features(df, text_cols, fit=True, params=None):
                     # Criar colunas para os principais termos
                     tfidf_df = pd.DataFrame(
                         tfidf_matrix.toarray(), 
-                        columns=[f'{col}_tfidf_{term}' for term in feature_names]
+                        columns=[standardize_feature_name(f'{col}_tfidf_{term}') for term in feature_names]
                     )
                     
                     # Adicionar colunas ao dataframe
@@ -262,7 +263,7 @@ def extract_motivation_features(df, text_cols, fit=True, params=None):
         
         # Inicializar colunas de categorias de motivação
         for category in set(motivation_keywords.values()):
-            df_result[f'{col}_motiv_{category}'] = 0
+            df_result[standardize_feature_name(f'{col}_motiv_{category}')] = 0
         
         # Processar cada linha
         for i, (idx, text) in enumerate(df_result[clean_col].items()):
@@ -273,15 +274,15 @@ def extract_motivation_features(df, text_cols, fit=True, params=None):
             for keyword, category in motivation_keywords.items():
                 if keyword in text:
                     # Use .at para acesso seguro por índice
-                    df_result.at[idx, f'{col}_motiv_{category}'] += 1
+                    df_result.at[idx, standardize_feature_name(f'{col}_motiv_{category}')] += 1
         
         # Normalizar por comprimento do texto (para textos não vazios)
         word_count_col = f'{col}_word_count'
         if word_count_col in df_result.columns:
             mask = df_result[word_count_col] > 0
             for category in set(motivation_keywords.values()):
-                col_name = f'{col}_motiv_{category}'
-                df_result.loc[mask, f'{col_name}_norm'] = df_result.loc[mask, col_name] / df_result.loc[mask, word_count_col]
+                col_name = standardize_feature_name(f'{col}_motiv_{category}')
+                df_result.loc[mask, standardize_feature_name(f'{col_name}_norm')] = df_result.loc[mask, col_name] / df_result.loc[mask, word_count_col]
     
     return df_result, params
 
@@ -363,32 +364,32 @@ def extract_discriminative_features(df, text_cols, fit=True, params=None):
     for col, terms_dict in params['discriminative_terms'].items():
         # Termos positivos (associados à conversão)
         for term, lift in terms_dict.get('positive', []):
-            term_col = f'{col}_tfidf_{term}'
+            term_col = standardize_feature_name(f'{col}_tfidf_{term}')
             if term_col in df_result.columns:
                 # Criar feature binária para presença do termo
-                df_result[f'{col}_high_conv_term_{term}'] = (df_result[term_col] > 0).astype(int)
+                df_result[standardize_feature_name(f'{col}_high_conv_term_{term}')] = (df_result[term_col] > 0).astype(int)
         
         # Termos negativos (associados à não-conversão)
         for term, lift in terms_dict.get('negative', []):
-            term_col = f'{col}_tfidf_{term}'
+            term_col = standardize_feature_name(f'{col}_tfidf_{term}')
             if term_col in df_result.columns:
                 # Criar feature binária para presença do termo
-                df_result[f'{col}_low_conv_term_{term}'] = (df_result[term_col] > 0).astype(int)
+                df_result[standardize_feature_name(f'{col}_low_conv_term_{term}')] = (df_result[term_col] > 0).astype(int)
         
         # Criar feature agregada para presença de qualquer termo positivo ou negativo
         if terms_dict.get('positive', []):
-            pos_features = [f'{col}_high_conv_term_{term}' for term, _ in terms_dict['positive'] 
-                           if f'{col}_high_conv_term_{term}' in df_result.columns]
+            pos_features = [standardize_feature_name(f'{col}_high_conv_term_{term}') for term, _ in terms_dict['positive'] 
+                           if standardize_feature_name(f'{col}_high_conv_term_{term}') in df_result.columns]
             if pos_features:
-                df_result[f'{col}_has_any_high_conv_term'] = df_result[pos_features].max(axis=1)
-                df_result[f'{col}_num_high_conv_terms'] = df_result[pos_features].sum(axis=1)
+                df_result[standardize_feature_name(f'{col}_has_any_high_conv_term')] = df_result[pos_features].max(axis=1)
+                df_result[standardize_feature_name(f'{col}_num_high_conv_terms')] = df_result[pos_features].sum(axis=1)
         
         if terms_dict.get('negative', []):
-            neg_features = [f'{col}_low_conv_term_{term}' for term, _ in terms_dict['negative'] 
-                           if f'{col}_low_conv_term_{term}' in df_result.columns]
+            neg_features = [standardize_feature_name(f'{col}_low_conv_term_{term}') for term, _ in terms_dict['negative'] 
+                           if standardize_feature_name(f'{col}_low_conv_term_{term}') in df_result.columns]
             if neg_features:
-                df_result[f'{col}_has_any_low_conv_term'] = df_result[neg_features].max(axis=1)
-                df_result[f'{col}_num_low_conv_terms'] = df_result[neg_features].sum(axis=1)
+                df_result[standardize_feature_name(f'{col}_has_any_low_conv_term')] = df_result[neg_features].max(axis=1)
+                df_result[standardize_feature_name(f'{col}_num_low_conv_terms')] = df_result[neg_features].sum(axis=1)
     
     return df_result, params
 

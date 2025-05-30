@@ -18,3 +18,10 @@
 
 ### Futuras implementações:
 - Chamar LLM (langchain?) para determinar o vocabulário de palavras a serem usadas para criar as features de texto.
+- Tornar a pipeline robusta à linguagem
+- Criar função que reconhece os dados de produção em vez de "hardcodar" as colunas de produção no código.
+- Criar função que chama LLM para decidir se o arquivo é UTM, pesquisa ou compradores.
+ 
+### Sobre o software: 
+- Toda vez que um cliente criar uma conta, gera um bucket na Cloud Storage ou pasta no google drive para ele. 
+- Toda vez que ele adiciona um arquivo, perguntar se ainda existem mais arquivos, ou se ele já deseja começar o treinamento do modelo.
