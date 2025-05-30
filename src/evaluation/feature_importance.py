@@ -130,31 +130,6 @@ def identify_text_derived_columns(numeric_cols):
     
     return text_derived_cols
 
-def sanitize_column_names(columns):
-    """Sanitize column names to avoid issues with special characters."""
-    print("Sanitizando nomes das features para evitar problemas com caracteres especiais...")
-    rename_dict = {}
-    
-    for col in columns:
-        # Substituir caracteres especiais e espaços por underscores
-        new_col = re.sub(r'[^0-9a-zA-Z_]', '_', col)
-        # Garantir que não comece com número
-        if new_col[0].isdigit():
-            new_col = 'f_' + new_col
-        # Verificar se já existe esse novo nome
-        i = 1
-        temp_col = new_col
-        while temp_col in rename_dict.values():
-            temp_col = f"{new_col}_{i}"
-            i += 1
-        new_col = temp_col
-        
-        # Só adicionar ao dicionário se o nome mudou
-        if col != new_col:
-            rename_dict[col] = new_col
-    
-    return rename_dict
-
 def analyze_multicollinearity(X, threshold=0.8):
     """Identify pairs of features with high correlation."""
     print("--- Análise de Multicolinearidade ---")

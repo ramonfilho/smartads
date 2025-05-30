@@ -8,6 +8,7 @@ results = unified_data_pipeline(
     max_samples=1000,
     batch_size=500,  # Menor para teste
     apply_feature_selection=False  # Pular para economizar tempo
+    
 )
 
 print("\n✅ Pipeline executado com sucesso no modo de teste!")
