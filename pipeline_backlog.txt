@@ -6,11 +6,13 @@
 ### Script 01: 
 - Coluna de e-mail removida na função `prepare_final_dataset`. Alguma outra feature pode estar deixando de ser criada posteriormente em virtude disso? Ou seja, alguma parte do código depende dessa coluna específicamente para criar features?
 - Certificar por que a coluna "Data" está sendo removida junto com as `COLUMNS_REMOVED_FOR_PRODUCTION_COMPATIBILITY`.
+- Tirar excesso de prints
 
 ### Script 02:
 - Como a coluna de profissões está sendo tratada?  
 
 ### Perguntar sobre a estrutura geral da pipeline. Comparar com outras pipelines já vistas. Prós e contras e oportunidades de melhoria que não vão "quebrar" o pipeline. Considere o tipo de problema que estamos tratando e a natureza dos dados.
+ - Perguntar sobre feature selection se não mencionar, e sobre o tratamento dos dados no script 2
 
 ### Tornar o script reutilizável:
 - Atualize a função `apply_preprocessing_pipeline`, passo 6 do script 2, para detectar as colunas de texto usando uma lógica de verificação que identifique pelo conteúdo as features se ela é textual ou não.  Alguma variação no conteúdo da resposta somado a uma verificação de tipo na resposta pode ajudar a identificar as colunas de texto.

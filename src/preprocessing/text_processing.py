@@ -5,6 +5,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import string
 from textblob import TextBlob
 from src.utils.feature_naming import standardize_feature_name
+from src.utils.text_detection import detect_text_columns
 
 def clean_text(text):
     """Limpa e normaliza texto.
@@ -146,27 +147,24 @@ def extract_tfidf_features(df, text_cols, fit=True, params=None):
     text_cols = [col for col in text_cols if col in df_result.columns]
     
     for col in text_cols:
-        # Verificar se há texto suficiente para processar
         clean_col = f'{col}_clean'
         
         if clean_col not in df_result.columns or df_result[clean_col].str.len().sum() == 0:
             continue
         
         if fit:
-            # NOVOS PARÂMETROS MELHORADOS
             tfidf = TfidfVectorizer(
-                max_features=200,           # Aumentado de 50 para 200
-                min_df=5,                   # Mantido
-                max_df=0.95,                # NOVO: Remove termos muito comuns
-                ngram_range=(1, 3),         # Expandido para trigramas
-                stop_words=None,            # Removido - deixa min_df/max_df filtrar
-                use_idf=True,               # Explicitamente definido
-                norm='l2',                  # Normalização L2
-                sublinear_tf=True,          # NOVO: Aplica log(TF+1)
-                token_pattern=r'\b\w+\b|@\w+|\d+'  # NOVO: Captura mais padrões
+                max_features=200,
+                min_df=5,
+                max_df=0.95,
+                ngram_range=(1, 3),
+                stop_words=None,
+                use_idf=True,
+                norm='l2',
+                sublinear_tf=True,
+                token_pattern=r'\b\w+\b|@\w+|\d+'
             )
             
-            # Ajustar e transformar
             try:
                 print(f"  Processando TF-IDF para '{col}' com novos parâmetros...")
                 tfidf_matrix = tfidf.fit_transform(df_result[clean_col].fillna(''))
@@ -175,44 +173,41 @@ def extract_tfidf_features(df, text_cols, fit=True, params=None):
                 print(f"    - Features extraídas: {len(feature_names)}")
                 print(f"    - Exemplos de n-gramas: {list(feature_names[:10])}")
                 
-                # Armazenar o vetorizador e os nomes das features
                 params['tfidf'][col] = {
                     'vectorizer': tfidf,
                     'feature_names': feature_names.tolist()
                 }
                 
-                # Criar colunas para os principais termos
+                # CORREÇÃO: Usar o índice do df_result ao criar o DataFrame TF-IDF
                 tfidf_df = pd.DataFrame(
                     tfidf_matrix.toarray(), 
+                    index=df_result.index,  # IMPORTANTE: Manter o mesmo índice
                     columns=[standardize_feature_name(f'{col}_tfidf_{term}') for term in feature_names]
                 )
                 
-                # Adicionar colunas ao dataframe
-                for tfidf_col in tfidf_df.columns:
-                    df_result[tfidf_col] = tfidf_df[tfidf_col]
+                # CORREÇÃO: Concatenar as novas colunas ao invés de atribuir uma por uma
+                df_result = pd.concat([df_result, tfidf_df], axis=1)
                 
             except Exception as e:
                 print(f"Erro ao processar TF-IDF para '{col}': {e}")
                 
-        else:
-            # Usar vetorizador treinado anteriormente
+        else:  # transform mode
             if col in params['tfidf'] and 'vectorizer' in params['tfidf'][col]:
                 tfidf = params['tfidf'][col]['vectorizer']
                 feature_names = params['tfidf'][col]['feature_names']
                 
                 try:
-                    # Transformar usando o vetorizador existente
                     tfidf_matrix = tfidf.transform(df_result[clean_col].fillna(''))
                     
-                    # Criar colunas para os principais termos
+                    # CORREÇÃO: Usar o índice do df_result
                     tfidf_df = pd.DataFrame(
                         tfidf_matrix.toarray(), 
+                        index=df_result.index,  # IMPORTANTE: Manter o mesmo índice
                         columns=[standardize_feature_name(f'{col}_tfidf_{term}') for term in feature_names]
                     )
                     
-                    # Adicionar colunas ao dataframe
-                    for tfidf_col in tfidf_df.columns:
-                        df_result[tfidf_col] = tfidf_df[tfidf_col]
+                    # CORREÇÃO: Concatenar as novas colunas
+                    df_result = pd.concat([df_result, tfidf_df], axis=1)
                     
                 except Exception as e:
                     print(f"Erro ao transformar TF-IDF para '{col}': {e}")
@@ -394,29 +389,23 @@ def extract_discriminative_features(df, text_cols, fit=True, params=None):
     return df_result, params
 
 def text_feature_engineering(df, fit=True, params=None):
-    """Executa todo o pipeline de processamento de texto.
-    
-    Args:
-        df: DataFrame pandas
-        fit: Se True, aprende parâmetros, caso contrário usa parâmetros existentes
-        params: Dicionário com parâmetros aprendidos na fase de fit
-        
-    Returns:
-        DataFrame com features textuais adicionadas
-        Dicionário com parâmetros atualizados
-    """
-    # Inicializar parâmetros
+    """Executa todo o pipeline de processamento de texto."""
     if params is None:
         params = {}
     
-    # Colunas de texto para processamento
-    text_cols = [
-        'Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?',
-        '¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?',
-        'Déjame un mensaje',
-        '¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?',
-        '¿Qué esperas aprender en el evento Cero a Inglés Fluido?'  # NOVA coluna normalizada
-    ]
+    # NOVA ABORDAGEM: Usar detector unificado
+    print("\n🔍 Detectando colunas de texto para processamento...")
+    text_cols = detect_text_columns(
+        df,
+        confidence_threshold=0.6,
+        exclude_patterns=['_encoded', '_norm', '_clean', '_tfidf', '_original']
+    )
+    
+    if not text_cols:
+        print("  ⚠️ Nenhuma coluna de texto detectada")
+        return df, params
+    
+    print(f"\n✓ Processamento de texto iniciado para {len(text_cols)} colunas detectadas")
     
     # Filtrar apenas colunas existentes no dataframe
     text_cols = [col for col in text_cols if col in df.columns]

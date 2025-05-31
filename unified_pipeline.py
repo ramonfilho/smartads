@@ -48,6 +48,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 from src.utils.feature_naming import (
     standardize_feature_name,
     standardize_dataframe_columns)
+from src.utils.text_detection import detect_text_columns, text_detector
 
 # ============================================================================
 # CKECKPOINTS FUNCTIONS DEFINITIONS
@@ -135,7 +136,6 @@ from src.preprocessing.professional_motivation_features import (
 
 from src.evaluation.feature_importance import (
     identify_text_derived_columns,
-    sanitize_column_names,
     analyze_rf_importance,
     analyze_lgb_importance,
     analyze_xgb_importance,
@@ -667,9 +667,36 @@ def validate_production_compatibility(df, show_warnings=True):
 
 def apply_preprocessing_pipeline(df, params=None, fit=False, preserve_text=True):
     """Aplica a pipeline completa de pré-processamento."""
-    # Inicializar parâmetros se não fornecidos
     if params is None:
         params = {}
+    
+    print(f"Iniciando pipeline de pré-processamento para DataFrame: {df.shape}")
+    
+    # NOVA ABORDAGEM: Detectar e preservar colunas de texto ANTES de qualquer processamento
+    if preserve_text:
+        print("\n🔍 Detectando colunas de texto automaticamente...")
+        
+        # Usar o detector unificado
+        text_cols = detect_text_columns(
+            df, 
+            confidence_threshold=0.6,
+            exclude_patterns=['_encoded', '_norm', '_clean', '_tfidf', 'RAW_ORIGINAL']
+        )
+        
+        if text_cols:
+            print(f"\n📝 Preservando {len(text_cols)} colunas de texto para processamento posterior...")
+            
+            # Criar um dicionário para armazenar texto original
+            if 'preserved_text_columns' not in params:
+                params['preserved_text_columns'] = {}
+            
+            for col in text_cols:
+                # Armazenar no params ao invés de criar colunas RAW_ORIGINAL
+                if fit:  # Só armazenar no modo fit
+                    params['preserved_text_columns'][col] = df[col].copy()
+                    print(f"  ✓ Preservada: {col[:60]}...")
+        else:
+            print("  ⚠️ Nenhuma coluna de texto detectada automaticamente")
     
     print(f"Iniciando pipeline de pré-processamento para DataFrame: {df.shape}")
     
@@ -701,7 +728,6 @@ def apply_preprocessing_pipeline(df, params=None, fit=False, preserve_text=True)
     print("6. Convertendo tipos de dados...")
     df, _ = convert_data_types(df, fit=fit)
     
-    # Identificar colunas de texto antes do processamento
     text_cols = [
         col for col in df.columns 
         if df[col].dtype == 'object' and any(term in col for term in [
@@ -715,7 +741,10 @@ def apply_preprocessing_pipeline(df, params=None, fit=False, preserve_text=True)
     if text_cols and preserve_text:
         print("Preservando colunas de texto originais...")
         for col in text_cols:
-            df[f"{col}_original"] = df[col].copy()
+            # Usar um sufixo mais claro
+            original_col_name = f"{col}_RAW_ORIGINAL"
+            df[original_col_name] = df[col].copy()
+            print(f"  ✓ Preservada: {col} → {original_col_name}")
     
     # 7. Feature engineering não-textual
     print("7. Aplicando feature engineering não-textual...")
@@ -778,32 +807,28 @@ def ensure_column_consistency(train_df, test_df):
 # FUNÇÕES DA PARTE 3 - FEATURE ENGINEERING PROFISSIONAL
 # ============================================================================
 
-def identify_text_columns_for_professional(df):
+def identify_text_columns_for_professional(df, params=None):
     """
     Identifica colunas de texto no DataFrame para processamento profissional.
+    Usa o sistema unificado de detecção.
     """
-    text_columns_normalized = [
-        'Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?',
-        '¿Qué esperas aprender en el evento Cero a Inglés Fluido?',
-        'Déjame un mensaje'
-    ]
+    print("\n🔍 Identificando colunas para processamento profissional...")
     
-    text_columns = []
-    for col in text_columns_normalized:
-        if col in df.columns:
-            text_columns.append(col)
-            print(f"  ✓ Encontrada: {col[:60]}...")
+    # Opção 1: Recuperar do params se disponível
+    if params and 'preserved_text_columns' in params:
+        text_columns = list(params['preserved_text_columns'].keys())
+        print(f"  ✓ Recuperadas {len(text_columns)} colunas preservadas do params")
+        return text_columns
     
-    # Se não encontrou a versão normalizada, buscar variações
-    if '¿Qué esperas aprender en el evento Cero a Inglés Fluido?' not in text_columns:
-        variations = [
-            '¿Qué esperas aprender en la Semana de Cero a Inglés Fluido?',
-            '¿Qué esperas aprender en la Inmersión Desbloquea Tu Inglés En 72 horas?'
-        ]
-        for var in variations:
-            if var in df.columns:
-                text_columns.append(var)
-                print(f"  ✓ Encontrada variação: {var[:60]}...")
+    # Opção 2: Detectar automaticamente
+    text_columns = detect_text_columns(
+        df,
+        confidence_threshold=0.7,  # Maior confiança para processamento profissional
+        exclude_patterns=['_encoded', '_norm', '_clean', '_tfidf', '_original']
+    )
+    
+    if not text_columns:
+        print("  ⚠️ Nenhuma coluna de texto encontrada para processamento profissional")
     
     return text_columns
 
@@ -961,26 +986,29 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
     if params is None:
         params = {}
     
-    # Inicializar subparâmetros se não existirem
-    if 'professional_features' not in params:
-        params['professional_features'] = {
-            'professional_motivation': {},
-            'aspiration_sentiment': {},
-            'commitment': {},
-            'career_terms': {},
-            'career_tfidf': {},
-            'lda': {}
-        }
+    print(f"\nIniciando pipeline de features profissionais para DataFrame: {df.shape}")
+    
+    # Recuperar colunas de texto preservadas
+    text_columns = []
+    
+    if 'preserved_text_columns' in params:
+        # Adicionar temporariamente as colunas preservadas ao DataFrame
+        for col_name, col_data in params['preserved_text_columns'].items():
+            temp_col_name = f"{col_name}_TEMP_PROF"
+            df[temp_col_name] = col_data.reindex(df.index)
+            text_columns.append(temp_col_name)
+        
+        print(f"  ✓ {len(text_columns)} colunas de texto recuperadas para processamento")
+    else:
+        # Fallback: detectar automaticamente
+        text_columns = detect_text_columns(df, confidence_threshold=0.7)
+    
+    if not text_columns:
+        print("  ⚠️ AVISO: Nenhuma coluna de texto encontrada para processamento profissional!")
+        return df, params
     
     print(f"\nIniciando pipeline de features profissionais para DataFrame: {df.shape}")
     start_time = time.time()
-    
-    # Identificar colunas de texto
-    text_columns = identify_text_columns_for_professional(df)
-    
-    if not text_columns:
-        print("AVISO: Nenhuma coluna de texto encontrada para processamento profissional!")
-        return df, params
     
     print(f"\n✓ {len(text_columns)} colunas de texto identificadas para processamento profissional")
     
@@ -1129,6 +1157,12 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
     elapsed_time = time.time() - start_time
     print(f"\n✓ Processamento de features profissionais concluído em {elapsed_time/60:.1f} minutos")
     
+    # Limpar colunas temporárias
+    temp_cols = [col for col in df.columns if '_TEMP_PROF' in col]
+    if temp_cols:
+        df = df.drop(columns=temp_cols)
+        print(f"\n🧹 {len(temp_cols)} colunas temporárias removidas")
+        
     return df, params
 
 def summarize_features(df, dataset_name, original_shape=None):
@@ -1940,7 +1974,6 @@ if __name__ == "__main__":
         correlation_threshold=0.95,
         fast_mode=False,
         n_folds=3,
-        # NOVOS parâmetros de teste e checkpoint
         test_mode=True,
         max_samples=1000,
         use_checkpoints=False,
