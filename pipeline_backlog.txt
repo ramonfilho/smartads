@@ -14,16 +14,20 @@
 ### Perguntar sobre a estrutura geral da pipeline. Comparar com outras pipelines já vistas. Prós e contras e oportunidades de melhoria que não vão "quebrar" o pipeline. Considere o tipo de problema que estamos tratando e a natureza dos dados.
  - Perguntar sobre feature selection se não mencionar, e sobre o tratamento dos dados no script 2
 
-### Tornar o script reutilizável:
-- Atualize a função `apply_preprocessing_pipeline`, passo 6 do script 2, para detectar as colunas de texto usando uma lógica de verificação que identifique pelo conteúdo as features se ela é textual ou não.  Alguma variação no conteúdo da resposta somado a uma verificação de tipo na resposta pode ajudar a identificar as colunas de texto.
-- Detecte se algum outro lugar possui alguma lógica isolada para identificar colunas de texto e unifique com essa mesma lógica.
-
 ### Futuras implementações:
 - Chamar LLM (langchain?) para determinar o vocabulário de palavras a serem usadas para criar as features de texto.
-- Tornar a pipeline robusta à linguagem
 - Criar função que reconhece os dados de produção em vez de "hardcodar" as colunas de produção no código.
 - Criar função que chama LLM para decidir se o arquivo é UTM, pesquisa ou compradores.
  
 ### Sobre o software: 
 - Toda vez que um cliente criar uma conta, gera um bucket na Cloud Storage ou pasta no google drive para ele. 
 - Toda vez que ele adiciona um arquivo, perguntar se ainda existem mais arquivos, ou se ele já deseja começar o treinamento do modelo.
+
+### Tornar o script reutilizável:
+- Tornar a pipeline robusta à linguas diferentes
+- Criar uma lógica universal de reconhecimento de colunas
+    Estou investigando, módulo por módulo, a lógica de reconhecimento de colunas.
+    Vamos aproveitar o que é útil.
+    Criar um módulo universal.
+    Remover o que é inútil.
+    Substituir o que for preciso pela função universal.
