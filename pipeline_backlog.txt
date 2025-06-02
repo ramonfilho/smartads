@@ -1,12 +1,8 @@
 ### Tornar o script robusto e reutilizável:
-- Tornar a pipeline robusta à linguas diferentes
-- Criar uma lógica universal de reconhecimento de tipos colunas
-- Verificar inconsistência modular na nomenclatura das features. Garantir a utilização da mesma lógica da função em todas elas.
+1 - Criar uma lógica universal de reconhecimento de tipos colunas e verificar sua utilização ao longo do pipeline // Unificar a estrutura de parâmetros com o cache do classificador de colunas.
+2 - Criar uma lógica universão de nomenclatura de colunas e verificar sua utilização ao longo do pipeline
 
-### Sobre Topic Modeling (LDA):
-- Textos válidos: 85041 de 116816 total. O número de textos válidos ser aprox 75%, significa que 1 em cada 4 leads não terá os textos analisados? Isso é porque o texto que eles escreveu é nulo ou pequeno, ou é algum parâmetro do código que está sendo excessivamente exigente? 
-
-### Sobre a diferença do número de features de 1007 para 1050: é devido à ausência de textos ou outro motivo? 
+### Perguntar sobre a estrutura geral da pipeline. Comparar com outras pipelines já vistas. Prós e contras e oportunidades de melhoria que não vão "quebrar" o pipeline. Considere o tipo de problema que estamos tratando e a natureza dos dados.
 
 ### Script 01: 
 - Coluna de e-mail removida na função `prepare_final_dataset`. Alguma outra feature pode estar deixando de ser criada posteriormente em virtude disso? Ou seja, alguma parte do código depende dessa coluna específicamente para criar features?
@@ -14,21 +10,16 @@
 - Tirar excesso de prints
 
 ### Script 02:
-- Como a coluna de profissões está sendo tratada?  
-
-### Perguntar sobre a estrutura geral da pipeline. Comparar com outras pipelines já vistas. Prós e contras e oportunidades de melhoria que não vão "quebrar" o pipeline. Considere o tipo de problema que estamos tratando e a natureza dos dados.
- - Perguntar sobre feature selection se não mencionar, e sobre o tratamento dos dados no script 2
+- Como a coluna de profissões está sendo tratada? E como deveria?
 
 ### Futuras implementações:
 - Chamar LLM (langchain?) para determinar o vocabulário de palavras a serem usadas para criar as features de texto.
-- Criar função que reconhece os dados de produção em vez de "hardcodar" as colunas de produção no código.
+    - Tornar a pipeline robusta à linguas diferentes
+- Criar função que reconhece as colunas dos dados de produção e faz matching com as de treino para verificar a integridade. Preventing data skew / data drift.
 - Criar função que chama LLM para decidir se o arquivo é UTM, pesquisa ou compradores.
 - Reconhecer o tratamento de dados necessário ou recomendado para aquela coluna.
-- Classificar automaticamente o tipo das colunas com base nos dados.
  
 ### Sobre o software: 
 - Toda vez que um cliente criar uma conta, gera um bucket na Cloud Storage ou pasta no google drive para ele. 
 - Toda vez que ele adiciona um arquivo, perguntar se ainda existem mais arquivos, ou se ele já deseja começar o treinamento do modelo.
-
-            INFERÊNCIA>>>>>>>>>
-Editar a pipeline para usar o cache 
+- Verificar requisitos de privacidade no bucket da cloud storage.

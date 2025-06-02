@@ -48,7 +48,6 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 from src.utils.feature_naming import (
     standardize_feature_name,
     standardize_dataframe_columns)
-from src.utils.text_detection import detect_text_columns, text_detector
 
 # ============================================================================
 # CKECKPOINTS FUNCTIONS DEFINITIONS
