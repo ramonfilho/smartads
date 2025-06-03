@@ -217,25 +217,21 @@ class ColumnTypeClassifier:
         
         # NOVO: Mapeamento direto baseado em conhecimento do domínio
         self.domain_type_mapping = {
-            'DATA': self.DATETIME,
             'data': self.DATETIME,
-            'Marca temporal': self.DATETIME,
-            'marca temporal': self.DATETIME,
-            'timestamp': self.DATETIME,
+            'marca_temporal': self.DATETIME,
             
             # Campos de texto conhecidos
-            '¿Cómo te llamas?': self.TEXT,
-            '¿Cuál es tu instagram?': self.TEXT,
-            '¿Cuál es tu profesión?': self.TEXT,
-            'Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?': self.TEXT,
-            '¿Qué esperas aprender en el evento Cero a Inglés Fluido?': self.TEXT,
-            'Déjame un mensaje': self.TEXT,
+            'como_te_llamas': self.TEXT,
+            'cual_es_tu_instagram': self.TEXT,
+            'cual_es_tu_profesion': self.TEXT,
+            'cuando_hables_ingles_con_fluidez_que_cambiara_en_tu_vida_que_oportunidades_se_abriran_para_ti': self.TEXT,
+            'que_esperas_aprender_en_el_evento_cero_a_ingles_fluido': self.TEXT,
+            'dejame_un_mensaje': self.TEXT,
             
             # Campos categóricos conhecidos
-            '¿Cuáles son tus principales razones para aprender inglés?': self.CATEGORICAL,
-            '¿Has comprado algún curso para aprender inglés antes?': self.BOOLEAN,
-            '¿Has comprado algum curso para aprender inglés antes?': self.BOOLEAN,  # Variação PT
-        }
+            'cuales_son_tus_principales_razones_para_aprender_ingles': self.CATEGORICAL,
+            'has_comprado_algun_curso_para_aprender_ingles_antes': self.BOOLEAN,
+            }
         
         # ATUALIZADO: Listas brancas e negras mais precisas
         self.datetime_blacklist = [

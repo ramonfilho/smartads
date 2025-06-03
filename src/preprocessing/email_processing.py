@@ -48,16 +48,15 @@ def similarity_score(str1, str2):
         return 0
     return SequenceMatcher(None, str1, str2).ratio()
 
-def normalize_emails_in_dataframe(df, email_col='email'):
-    """Adiciona uma coluna de emails normalizados a um DataFrame.
-    
-    Args:
-        df: DataFrame a ser processado
-        email_col: Nome da coluna contendo emails
-        
-    Returns:
-        DataFrame com coluna 'email_norm' adicionada
-    """
-    if email_col in df.columns:
+def normalize_emails_in_dataframe(df, email_col=None):
+    """Adiciona uma coluna de emails normalizados a um DataFrame."""
+    if email_col and email_col in df.columns:
         df['email_norm'] = df[email_col].apply(normalize_email)
+    else:
+        # Procurar automaticamente por colunas que possam conter email
+        email_patterns = ['email', 'e_mail', 'mail', 'correo']
+        for col in df.columns:
+            if any(pattern in col for pattern in email_patterns):
+                df['email_norm'] = df[col].apply(normalize_email)
+                break
     return df

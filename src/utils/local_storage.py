@@ -10,7 +10,7 @@ import pickle
 import re
 import io
 from typing import List, Dict, Any, Optional, Union
-
+from src.utils.feature_naming import standardize_dataframe_columns
 
 def list_files_by_extension(directory: str, extension: str) -> List[str]:
     """
@@ -392,40 +392,27 @@ def categorize_files(file_paths):
 
 
 def load_csv_or_excel(bucket, file_path):
-    """
-    Carrega um arquivo CSV ou Excel.
-    
-    Args:
-        bucket: Objeto bucket
-        file_path: Caminho do arquivo no bucket
-        
-    Returns:
-        DataFrame pandas com o conteúdo do arquivo ou None em caso de erro
-    """
+    """Carrega um arquivo CSV ou Excel e PADRONIZA OS NOMES."""
     try:
         blob = bucket.blob(file_path)
         content = blob.download_as_bytes()
         
         if file_path.endswith('.csv'):
-            return pd.read_csv(io.BytesIO(content))
+            df = pd.read_csv(io.BytesIO(content))
         else:  # Excel
-            return pd.read_excel(io.BytesIO(content), engine='openpyxl')
+            df = pd.read_excel(io.BytesIO(content), engine='openpyxl')
+        
+        # PADRONIZAR IMEDIATAMENTE
+        df = standardize_dataframe_columns(df)
+        return df
+        
     except Exception as e:
         print(f"  - Error loading {file_path}: {str(e)}")
         return None
 
 
 def load_csv_with_auto_delimiter(bucket, file_path):
-    """
-    Carrega um arquivo CSV com detecção automática de delimitador.
-    
-    Args:
-        bucket: Objeto bucket
-        file_path: Caminho do arquivo no bucket
-        
-    Returns:
-        DataFrame pandas com o conteúdo do arquivo ou None em caso de erro
-    """
+    """Carrega um arquivo CSV com detecção automática de delimitador e PADRONIZA."""
     try:
         blob = bucket.blob(file_path)
         content = blob.download_as_bytes()
@@ -468,6 +455,8 @@ def load_csv_with_auto_delimiter(bucket, file_path):
                 
                 print(f"  - After using delimiter '{alt_delimiter}': {df.shape[1]} columns detected")
             
+            # PADRONIZAR IMEDIATAMENTE
+            df = standardize_dataframe_columns(df)
             return df
             
         except UnicodeDecodeError:
@@ -489,6 +478,8 @@ def load_csv_with_auto_delimiter(bucket, file_path):
                 low_memory=False
             )
             
+            # PADRONIZAR IMEDIATAMENTE
+            df = standardize_dataframe_columns(df)
             return df
             
     except Exception as e:
