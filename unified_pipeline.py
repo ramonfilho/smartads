@@ -731,13 +731,6 @@ def apply_preprocessing_pipeline(df, params=None, fit=False, preserve_text=True)
     print("6. Convertendo tipos de dados...")
     df, _ = convert_data_types(df, fit=fit)
     
-    text_cols = [
-        col for col in df.columns 
-        if df[col].dtype == 'object' and any(term in col for term in [
-            'mensaje', 'inglés', 'vida', 'oportunidades', 'esperas', 'aprender', 
-            'Semana', 'Inmersión', 'Déjame', 'fluidez'
-        ])
-    ]
     print(f"Colunas de texto identificadas ({len(text_cols)}): {text_cols[:3]}...")
     
     # Criar cópia das colunas de texto originais (com sufixo _original)
