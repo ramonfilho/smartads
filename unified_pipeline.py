@@ -679,7 +679,7 @@ def validate_production_compatibility(df, show_warnings=True):
 # FUNÇÕES DA PARTE 2 - PRÉ-PROCESSAMENTO
 # ============================================================================
 
-def apply_preprocessing_pipeline(df, params=None, fit=False, preserve_text=True):
+def apply_preprocessing_pipeline(df, params=None, fit=False):
     """Aplica a pipeline completa de pré-processamento."""
     if params is None:
         params = {}
@@ -703,61 +703,47 @@ def apply_preprocessing_pipeline(df, params=None, fit=False, preserve_text=True)
         and not any(pattern in col for pattern in exclude_patterns)
     ]
     
-    # 1. Normalizar emails
-    print("1. Normalizando emails...")
-    df = normalize_emails_in_dataframe(df, email_col='email')
-    
-    # 2. Consolidar colunas de qualidade
-    print("2. Consolidando colunas de qualidade...")
+    # 1. Consolidar colunas de qualidade
+    print("1. Consolidando colunas de qualidade...")
     quality_params = params.get('quality_columns', {})
     df, quality_params = consolidate_quality_columns(df, fit=fit, params=quality_params)
     
-    # 3. Tratamento de valores ausentes
-    print("3. Tratando valores ausentes...")
+    # 2. Tratamento de valores ausentes 
+    print("2. Tratando valores ausentes...")
     missing_params = params.get('missing_values', {})
     df, missing_params = handle_missing_values(df, fit=fit, params=missing_params)
     
-    # 4. Tratamento de outliers
-    print("4. Tratando outliers...")
+    # 3. Tratamento de outliers
+    print("3. Tratando outliers...")
     outlier_params = params.get('outliers', {})
     df, outlier_params = handle_outliers(df, fit=fit, params=outlier_params)
     
-    # 5. Normalização de valores
-    print("5. Normalizando valores numéricos...")
+    # 4. Normalização de valores
+    print("4. Normalizando valores numéricos...")
     norm_params = params.get('normalization', {})
     df, norm_params = normalize_values(df, fit=fit, params=norm_params)
     
-    # 6. Converter tipos de dados
-    print("6. Convertendo tipos de dados...")
+    # 5. Converter tipos de dados
+    print("5. Convertendo dados temporais para datetime ...")
     df, _ = convert_data_types(df, fit=fit)
     
-    print(f"Colunas de texto identificadas ({len(text_cols)}): {text_cols[:3]}...")
-    
-    # Criar cópia das colunas de texto originais (com sufixo _original)
-    if text_cols and preserve_text:
-        print("Preservando colunas de texto originais...")
-        for col in text_cols:
-            # Usar um sufixo mais claro
-            original_col_name = f"{col}_RAW_ORIGINAL"
-            df[original_col_name] = df[col].copy()
-            print(f"  ✓ Preservada: {col} → {original_col_name}")
-    
-    # 7. Feature engineering não-textual
-    print("7. Aplicando feature engineering não-textual...")
+    # 6. Feature engineering não-textual
+    print("6. Aplicando feature engineering não-textual...")
     feature_params = params.get('feature_engineering', {})
     df, feature_params = feature_engineering(df, fit=fit, params=feature_params)
     
-    # 8. Processamento de texto
-    print("8. Processando features textuais...")
+    # 7. Processamento de texto
+    print("7. Processando features textuais...")
+    print(f"Colunas de texto identificadas ({text_cols}")
     text_params = params.get('text_processing', {})
     df, text_params = text_feature_engineering(df, fit=fit, params=text_params)
     
-    # 9. Feature engineering avançada (nova etapa)
-    print("9. Aplicando feature engineering avançada...")
+    # 8. Feature engineering avançada
+    print("8. Aplicando feature engineering avançada...")
     advanced_params = params.get('advanced_features', {})
     df, advanced_params = advanced_feature_engineering(df, fit=fit, params=advanced_params)
     
-    # 10. Compilar parâmetros atualizados
+    # 9. Compilar parâmetros atualizados
     updated_params = {
         'quality_columns': quality_params,
         'missing_values': missing_params,
@@ -1480,19 +1466,16 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
                          test_size=0.3,
                          val_size=0.5,
                          random_state=42,
-                         preserve_text=True,
                          batch_size=5000,
-                         # Novos parâmetros para feature selection
                          apply_feature_selection=True,
                          max_features=300,
                          importance_threshold=0.1,
                          correlation_threshold=0.95,
-                         fast_mode=False,
                          n_folds=3,
                          test_mode=False,
                          max_samples=None,
-                         use_checkpoints=True, 
-                         clear_cache=False):
+                         use_checkpoints=False, 
+                         clear_cache=True):
     # Limpar cache se solicitado
     if clear_cache:
         clear_checkpoints()
@@ -1541,22 +1524,20 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     print(f"Diretório de parâmetros: {params_output_dir}")
     print(f"Test size: {test_size}, Val size: {val_size}")
     print(f"Random state: {random_state}")
-    print(f"Preserve text: {preserve_text}")
     print(f"Batch size: {batch_size}")
     print(f"Apply feature selection: {apply_feature_selection}")
     if apply_feature_selection:
         print(f"  - Max features: {max_features}")
         print(f"  - Importance threshold: {importance_threshold}%")
         print(f"  - Correlation threshold: {correlation_threshold}")
-        print(f"  - Fast mode: {fast_mode}")
         print(f"  - CV folds: {n_folds}")
     print()
     
     # ========================================================================
-    # PARTE 1: COLETA E INTEGRAÇÃO DE DADOS
+    # PARTE 1: COLETA, INTEGRAÇÃO E SPLIT DE DADOS
     # ========================================================================
     
-    print("\n=== PARTE 1: COLETA E INTEGRAÇÃO DE DADOS ===")
+    print("\n=== PARTE 1: COLETA, INTEGRAÇÃO E SPLIT DE DADOS ===")
     
     # 1. Conectar ao armazenamento local
     bucket = connect_to_gcs("local_bucket", data_path=raw_data_path)
@@ -1566,7 +1547,7 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     print(f"Found {len(file_paths)} files in: {raw_data_path}")
     
     # 3. Categorizar arquivos
-    survey_files, buyer_files, utm_files, all_files_by_launch = categorize_files(file_paths)
+    survey_files, buyer_files, utm_files = categorize_files(file_paths)
     
     print(f"Survey files: {len(survey_files)}")
     print(f"Buyer files: {len(buyer_files)}")
@@ -1609,7 +1590,7 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     final_data = prepare_final_dataset(merged_data)
     
     # Validar compatibilidade com produção
-    is_compatible, validation_report = validate_production_compatibility(final_data)
+    validation_report = validate_production_compatibility(final_data)
     
     if test_mode and max_samples:
         print(f"\n⚠️ MODO DE TESTE ATIVADO: Limitando a {max_samples} amostras")
@@ -1625,16 +1606,7 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
         print(f"   Negative (0): {target_counts.get(0, 0):,} ({100-positive_rate:.2f}%)")
         print(f"   Positive (1): {target_counts.get(1, 0):,} ({positive_rate:.2f}%)")
     
-    # ========================================================================
-    # PARTE 2: DIVISÃO DOS DADOS (ANTES DO PRÉ-PROCESSAMENTO)
-    # ========================================================================
-
-    print("\n=== PARTE 2: DIVISÃO DOS DADOS ===")
     print("Splitting data into train/val/test sets...")
-
-    if final_data.shape[0] == 0:
-        print("WARNING: Empty dataset - cannot proceed.")
-        return None
 
     # CHECKPOINT 1: Verificar se já temos os dados divididos
     checkpoint_split = load_checkpoint_conditional('data_split')
@@ -1694,10 +1666,10 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     test_original_shape = test_df.shape
     
     # ========================================================================
-    # PARTE 3: PRÉ-PROCESSAMENTO
+    # PARTE 2: PRÉ-PROCESSAMENTO E FEATURE ENGINEERING 1
     # ========================================================================
     
-    print("\n=== PARTE 3: PRÉ-PROCESSAMENTO ===")
+    print("\n=== PARTE 2: PRÉ-PROCESSAMENTO E FEATURE ENGINEERING 1 ===")
     
     # CHECKPOINT 2: Verificar se já temos dados pré-processados
     checkpoint_preproc = load_checkpoint_conditional('preprocessed')
@@ -1713,18 +1685,18 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     else:
         # 1. Processar o conjunto de treinamento com fit=True para aprender parâmetros
         print("\n--- Processando conjunto de treinamento ---")
-        train_processed, params = apply_preprocessing_pipeline(train_df, fit=True, preserve_text=preserve_text)
+        train_processed, params = apply_preprocessing_pipeline(train_df, fit=True)
         
         # 2. Processar o conjunto de validação com fit=False para aplicar parâmetros aprendidos
         print("\n--- Processando conjunto de validação ---")
-        val_processed, _ = apply_preprocessing_pipeline(val_df, params=params, fit=False, preserve_text=preserve_text)
+        val_processed, _ = apply_preprocessing_pipeline(val_df, params=params, fit=False)
         
         # 3. Garantir consistência de colunas com o treino
         val_processed = ensure_column_consistency(train_processed, val_processed)
         
         # 4. Processar o conjunto de teste com fit=False para aplicar parâmetros aprendidos
         print("\n--- Processando conjunto de teste ---")
-        test_processed, _ = apply_preprocessing_pipeline(test_df, params=params, fit=False, preserve_text=preserve_text)
+        test_processed, _ = apply_preprocessing_pipeline(test_df, params=params, fit=False)
         
         # 5. Garantir consistência de colunas com o treino
         test_processed = ensure_column_consistency(train_processed, test_processed)
@@ -1748,10 +1720,10 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
         }, 'preprocessed')
 
     # ========================================================================
-    # PARTE 4: FEATURE ENGINEERING PROFISSIONAL
+    # PARTE 3: FEATURE ENGINEERING PROFISSIONAL
     # ========================================================================
     
-    print("\n=== PARTE 4: FEATURE ENGINEERING PROFISSIONAL ===")
+    print("\n=== PARTE 3: FEATURE ENGINEERING PROFISSIONAL ===")
     
     # CHECKPOINT 3: Verificar se já temos features profissionais
     checkpoint_prof = load_checkpoint_conditional('professional_features')
@@ -1829,7 +1801,6 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
                 max_features=max_features,
                 importance_threshold=importance_threshold,
                 correlation_threshold=correlation_threshold,
-                fast_mode=fast_mode,
                 n_folds=n_folds
             )
             
@@ -1982,17 +1953,15 @@ if __name__ == "__main__":
         test_size=0.3,
         val_size=0.5,
         random_state=42,
-        preserve_text=True,
         batch_size=5000,
         # Parâmetros de feature selection
         apply_feature_selection=True,
         max_features=300,
         importance_threshold=0.1,
         correlation_threshold=0.95,
-        fast_mode=False,
         n_folds=3,
         test_mode=True,
-        max_samples=1000,
+        max_samples=2000,
         use_checkpoints=False,
         clear_cache=True
     )

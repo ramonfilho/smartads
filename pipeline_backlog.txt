@@ -11,6 +11,7 @@
 
 ### Script 02:
 - Como a coluna de profissões está sendo tratada? E como deveria?
+- Normalização é realmente necessária para esse dataset? Por que? 
 
 ### Futuras implementações:
 - Chamar LLM (langchain?) para determinar o vocabulário de palavras a serem usadas para criar as features de texto.
