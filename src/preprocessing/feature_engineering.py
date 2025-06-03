@@ -3,6 +3,7 @@ import numpy as np
 from sklearn.preprocessing import LabelEncoder
 from datetime import datetime
 from src.utils.feature_naming import standardize_feature_name
+from src.utils.column_type_classifier import ColumnTypeClassifier
 
 def create_identity_features(df, fit=True, params=None):
     """Cria features baseadas nos campos de identidade do usuário.
@@ -312,11 +313,22 @@ def feature_engineering(df, fit=True, params=None):
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
     
+    classifier = ColumnTypeClassifier(
+        use_llm=False,
+        use_classification_cache=True,
+        confidence_threshold=0.7
+    )
+    
+    classifications = classifier.classify_dataframe(df_result)
+
     # 1. Colunas a remover (exceto texto)
+    # Identificar colunas que são texto mas serão removidas
+    text_to_remove = ['como_te_llamas', 'cual_es_tu_telefono', 'cual_es_tu_instagram']
+    
     cols_to_remove = [
-        '¿Cómo te llamas?',
-        '¿Cual es tu telefono?',
-        '¿Cuál es tu instagram?'
+        col for col in text_to_remove 
+        if col in df_result.columns 
+        and classifications.get(col, {}).get('type') == classifier.TEXT
     ]
     
     # Verificar quais colunas existem no dataframe

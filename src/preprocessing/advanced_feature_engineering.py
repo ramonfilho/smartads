@@ -18,7 +18,7 @@ warnings.filterwarnings('ignore')
 
 def identify_text_columns(df):
     """
-    Identifica colunas de texto no DataFrame com base em padrões e conteúdo.
+    Identifica colunas de texto no DataFrame usando o sistema unificado.
     
     Args:
         df: DataFrame pandas
@@ -26,30 +26,25 @@ def identify_text_columns(df):
     Returns:
         Lista de nomes de colunas de texto identificadas
     """
-    # Padrões de nomes de colunas de texto em espanhol
-    text_patterns = [
-        'mensaje', 'esperas', 'qué', '¿Qué', 'Cuando', 'vida', 'oportunidad',
-        'aprender', 'inglés', 'fluido', 'fluidez', 'Déjame'
+    from src.utils.column_type_classifier import ColumnTypeClassifier
+    
+    # Usar o classificador unificado
+    classifier = ColumnTypeClassifier(
+        use_llm=False,
+        use_classification_cache=True,
+        confidence_threshold=0.6
+    )
+    
+    classifications = classifier.classify_dataframe(df)
+    
+    # Filtrar apenas colunas de texto
+    exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
+    text_cols = [
+        col for col, info in classifications.items()
+        if info['type'] == classifier.TEXT 
+        and info['confidence'] >= 0.6
+        and not any(pattern in col for pattern in exclude_patterns)
     ]
-    
-    # Possíveis colunas de texto baseadas em padrões de nome
-    possible_text_cols = []
-    for col in df.columns:
-        if any(pattern in col for pattern in text_patterns):
-            possible_text_cols.append(col)
-    
-    # Verificar se as colunas contêm realmente texto
-    text_cols = []
-    for col in possible_text_cols:
-        # Verificar tipo de dados e comprimento médio
-        if df[col].dtype == 'object':
-            # Calcular comprimento médio das strings não-nulas
-            non_null = df[col].dropna()
-            if len(non_null) > 0:
-                avg_length = non_null.str.len().mean()
-                # Se o comprimento médio for maior que 10, considerar como coluna de texto
-                if avg_length > 10:
-                    text_cols.append(col)
     
     print(f"Colunas de texto identificadas: {len(text_cols)}")
     for col in text_cols:
