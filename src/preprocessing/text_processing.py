@@ -5,7 +5,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import string
 from textblob import TextBlob
 from src.utils.feature_naming import standardize_feature_name
-from src.utils.text_detection import detect_text_columns
+from src.utils.column_type_classifier import ColumnTypeClassifier
 
 def clean_text(text):
     """Limpa e normaliza texto.
@@ -393,13 +393,25 @@ def text_feature_engineering(df, fit=True, params=None):
     if params is None:
         params = {}
     
-    # NOVA ABORDAGEM: Usar detector unificado
+    # Usar ColumnTypeClassifier para detectar colunas de texto
     print("\n🔍 Detectando colunas de texto para processamento...")
-    text_cols = detect_text_columns(
-        df,
-        confidence_threshold=0.6,
-        exclude_patterns=['_encoded', '_norm', '_clean', '_tfidf', '_original']
+    
+    classifier = ColumnTypeClassifier(
+        use_llm=False,
+        use_classification_cache=True,
+        confidence_threshold=0.6
     )
+    
+    classifications = classifier.classify_dataframe(df)
+    
+    # Filtrar apenas colunas de texto com alta confiança
+    exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
+    text_cols = [
+        col for col, info in classifications.items()
+        if info['type'] == classifier.TEXT 
+        and info['confidence'] >= 0.6
+        and not any(pattern in col for pattern in exclude_patterns)
+    ]
     
     if not text_cols:
         print("  ⚠️ Nenhuma coluna de texto detectada")

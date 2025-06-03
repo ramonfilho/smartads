@@ -42,12 +42,13 @@ warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 # ============================================================================
-# PADRONIZAÇÃO DE NOMES DE FEATURES
+# PADRONIZAÇÃO DE NOMES E TIPOS DE COLUNAS
 # ============================================================================
 
 from src.utils.feature_naming import (
     standardize_feature_name,
     standardize_dataframe_columns)
+from src.utils.column_type_classifier import ColumnTypeClassifier
 
 # ============================================================================
 # CKECKPOINTS FUNCTIONS DEFINITIONS
@@ -89,9 +90,11 @@ def clear_checkpoints(cache_dir="/Users/ramonmoreira/desktop/smart_ads/cache"):
 from src.utils.local_storage import (
     connect_to_gcs, list_files_by_extension, categorize_files,
     load_csv_or_excel, load_csv_with_auto_delimiter, extract_launch_id
-)
+) #load_csv_or_excel e load_csv_with_auto_delimiter já padronizam nomes de colunas com a função standardize_dataframe_columns
+
 from src.preprocessing.email_processing import normalize_emails_in_dataframe, normalize_email
-from src.preprocessing.column_normalization import normalize_survey_columns, validate_normalized_columns
+#normalize_email normaliza emails individuais, removendo espaços, convertendo para minúsculas e corrigindo domínios comuns.
+#normalize_emails_in_dataframe cria coluna 'email_norm' com emails padronizados, necessário para o matching, depois remove.
 
 # ============================================================================
 # IMPORTS DA PARTE 2 - PRÉ-PROCESSAMENTO
@@ -107,13 +110,6 @@ from src.preprocessing.data_cleaning import (
 from src.preprocessing.feature_engineering import feature_engineering
 from src.preprocessing.text_processing import text_feature_engineering
 from src.preprocessing.advanced_feature_engineering import (
-    refine_tfidf_weights,
-    create_text_embeddings_simple,
-    perform_topic_modeling,
-    create_salary_features,
-    create_country_interaction_features,
-    create_age_interaction_features,
-    create_temporal_interaction_features,
     advanced_feature_engineering
 )
 
@@ -147,42 +143,42 @@ from src.evaluation.feature_importance import (
 
 INFERENCE_COLUMNS = [
     # Dados de UTM
-    'DATA',
-    'E-MAIL',
-    'UTM_CAMPAING',
-    'UTM_SOURCE',
-    'UTM_MEDIUM',
-    'UTM_CONTENT',
-    'UTM_TERM',
-    'GCLID',
+    'data',
+    'e_mail',
+    'utm_campaing',
+    'utm_source',
+    'utm_medium',
+    'utm_content',
+    'utm_term',
+    'gclid',
     
     # Dados da pesquisa
-    'Marca temporal',
-    '¿Cómo te llamas?',
-    '¿Cuál es tu género?',
-    '¿Cuál es tu edad?',
-    '¿Cual es tu país?',
-    '¿Cuál es tu e-mail?',
-    '¿Cual es tu telefono?',
-    '¿Cuál es tu instagram?',
-    '¿Hace quánto tiempo me conoces?',
-    '¿Cuál es tu disponibilidad de tiempo para estudiar inglés?',
-    'Cuando hables inglés con fluidez, ¿qué cambiará en tu vida? ¿Qué oportunidades se abrirán para ti?',
-    '¿Cuál es tu profesión?',
-    '¿Cuál es tu sueldo anual? (en dólares)',
-    '¿Cuánto te gustaría ganar al año?',
-    '¿Crees que aprender inglés te acercaría más al salario que mencionaste anteriormente?',
-    '¿Crees que aprender inglés puede ayudarte en el trabajo o en tu vida diaria?',
-    '¿Qué esperas aprender en el evento Cero a Inglés Fluido?',
-    'Déjame un mensaje',
+    'marca_temporal',
+    'como_te_llamas',
+    'cual_es_tu_genero',
+    'cual_es_tu_edad',
+    'cual_es_tu_pais',
+    'cual_es_tu_e_mail',
+    'cual_es_tu_telefono',
+    'cual_es_tu_instagram',
+    'hace_quanto_tiempo_me_conoces',
+    'cual_es_tu_disponibilidad_de_tiempo_para_estudiar_ingles',
+    'cuando_hables_ingles_con_fluidez_que_cambiara_en_tu_vida_que_oportunidades_se_abriran_para_ti',
+    'cual_es_tu_profesion',
+    'cual_es_tu_sueldo_anual_en_dolares',
+    'cuanto_te_gustaria_ganar_al_ano',
+    'crees_que_aprender_ingles_te_acercaria_mas_al_salario_que_mencionaste_anteriormente',
+    'crees_que_aprender_ingles_puede_ayudarte_en_el_trabajo_o_en_tu_vida_diaria',
+    'que_esperas_aprender_en_el_evento_cero_a_ingles_fluido',
+    'dejame_un_mensaje',
     
     # Features novas do L22
-    '¿Cuáles son tus principales razones para aprender inglés?',
-    '¿Has comprado algún curso para aprender inglés antes?',
+    'cuales_son_tus_principales_razones_para_aprender_ingles',
+    'has_comprado_algun_curso_para_aprender_ingles_antes',
     
     # Qualidade
-    'Qualidade (Nome)',
-    'Qualidade (Número)',
+    'qualidade_nome',
+    'qualidade_numero',
     
     # Variável alvo (adicionada durante o treino)
     'target'
@@ -211,88 +207,64 @@ def setup_nltk_resources():
 setup_nltk_resources()
 
 # ============================================================================
-# FUNÇÕES DA PARTE 1 - COLETA E INTEGRAÇÃO
+# FUNÇÕES DA PARTE 1.1 - COLETA DE DADOS
 # ============================================================================
+"""FLUXO DE PROCESSAMENTO:
+1. CARREGAMENTO E PADRONIZAÇÃO
+   - Arquivos CSV/Excel são carregados via load_csv_or_excel() ou load_csv_with_auto_delimiter()
+   - IMPORTANTE: Essas funções já aplicam standardize_dataframe_columns() automaticamente
+   - Todos os nomes de colunas são padronizados no momento do carregamento
+   - Ex: '¿Cuál es tu edad?' → 'cual_es_tu_edad'
 
+2. PROCESSAMENTO UNIFICADO
+   - process_data_file() processa qualquer tipo de arquivo (survey/buyer/utm)
+   - Adiciona coluna 'lancamento' usando standardize_feature_name() para consistência
+   - Retorna DataFrame pronto com nomes padronizados
+
+3. AGREGAÇÃO POR TIPO
+   - load_survey_files(): Carrega e agrega todos os arquivos de pesquisa
+   - load_buyer_files(): Carrega e agrega todos os arquivos de compradores
+   - load_utm_files(): Carrega e agrega todos os arquivos de UTM
+   - Cada função retorna lista de DataFrames e dicionário organizado por lançamento
+
+COLUNAS ESPECIAIS:
+- 'email_norm': Criada temporariamente para matching, será removida ao final
+- 'lancamento': Identificador do lançamento, criada com nome padronizado
+
+PRINCÍPIO FUNDAMENTAL: Usar APENAS standardize_feature_name() para criar novos nomes.
+"""
 def find_email_column(df):
     """Encontra a coluna que contém emails em um DataFrame."""
-    email_patterns = ['email', 'e-mail', 'correo', '@', 'mail']
+    email_patterns = ['email', 'e_mail', 'mail', 'correo', '@']
     for col in df.columns:
-        if any(pattern in col.lower() for pattern in email_patterns):
+        if any(pattern in col for pattern in email_patterns):
             return col
     return None
 
-def normalize_emails_preserving_originals(df, survey_email_col='¿Cuál es tu e-mail?', utm_email_col='E-MAIL'):
-    """Normaliza emails criando email_norm para matching, mas preserva as colunas originais."""
+def normalize_emails_preserving_originals(df):
+    """Normaliza emails criando email_norm para matching."""
     df_result = df.copy()
     
-    # Criar lista de possíveis fontes de email
-    email_sources = []
+    # Procurar colunas de email já padronizadas
+    email_cols = [col for col in df.columns if 'e_mail' in col or 'email' in col]
     
-    # Verificar coluna de email das pesquisas
-    if survey_email_col in df_result.columns:
-        email_sources.append(survey_email_col)
-    
-    # Verificar coluna de email das UTMs
-    if utm_email_col in df_result.columns:
-        email_sources.append(utm_email_col)
-    
-    # Verificar coluna genérica 'email'
-    if 'email' in df_result.columns:
-        email_sources.append('email')
-    
-    # Inicializar email_norm com tipo string para evitar FutureWarning
+    # Criar email_norm a partir da primeira coluna de email encontrada
     df_result['email_norm'] = pd.Series(dtype='object')
     
-    for source_col in email_sources:
-        # Preencher email_norm com valores não-nulos da fonte
-        mask = df_result['email_norm'].isna() & df_result[source_col].notna()
+    for email_col in email_cols:
+        mask = df_result['email_norm'].isna() & df_result[email_col].notna()
         if mask.any():
-            df_result.loc[mask, 'email_norm'] = df_result.loc[mask, source_col].apply(normalize_email)
-    
-    return df_result
-
-def preserve_email_data(df):
-    """Preserva dados de email movendo-os para as colunas corretas antes da filtragem."""
-    df_result = df.copy()
-    
-    # Se existe coluna 'email' genérica, distribuir para as colunas corretas
-    if 'email' in df_result.columns:
-        # Para registros de pesquisa (não têm E-MAIL preenchido)
-        if '¿Cuál es tu e-mail?' not in df_result.columns:
-            df_result['¿Cuál es tu e-mail?'] = np.nan
-        
-        # Copiar emails para a coluna de pesquisa onde apropriado
-        mask_survey = df_result['email'].notna() & df_result['¿Cuál es tu e-mail?'].isna()
-        if 'E-MAIL' in df_result.columns:
-            # Se tem E-MAIL, só copiar onde E-MAIL está vazio (indica que é da pesquisa)
-            mask_survey = mask_survey & df_result['E-MAIL'].isna()
-        
-        df_result.loc[mask_survey, '¿Cuál es tu e-mail?'] = df_result.loc[mask_survey, 'email']
-        
-        # Para registros de UTM (têm E-MAIL)
-        if 'E-MAIL' not in df_result.columns:
-            df_result['E-MAIL'] = np.nan
-            
-        mask_utm = df_result['email'].notna() & df_result['E-MAIL'].isna()
-        if '¿Cuál es tu e-mail?' in df_result.columns:
-            # Se tem coluna de pesquisa, só copiar onde está vazia
-            mask_utm = mask_utm & df_result['¿Cuál es tu e-mail?'].isna()
-            
-        df_result.loc[mask_utm, 'E-MAIL'] = df_result.loc[mask_utm, 'email']
+            df_result.loc[mask, 'email_norm'] = df_result.loc[mask, email_col].apply(normalize_email)
     
     return df_result
 
 def filter_to_inference_columns_preserving_data(df, add_missing=True):
     """Filtra DataFrame para conter apenas colunas disponíveis na inferência."""
-    # Primeiro, preservar dados de email se existirem em colunas genéricas
-    df_with_preserved_emails = preserve_email_data(df)
-    
     # Colunas que existem no DataFrame e estão na lista de inferência
-    existing_inference_cols = [col for col in INFERENCE_COLUMNS if col in df_with_preserved_emails.columns]
+    existing_inference_cols = [col for col in INFERENCE_COLUMNS if col in df.columns]
     
     # Filtrar DataFrame
-    filtered_df = df_with_preserved_emails[existing_inference_cols].copy()
+    filtered_df = df[existing_inference_cols].copy()
     
     if add_missing:
         # Adicionar colunas faltantes com NaN (exceto target)
@@ -309,71 +281,35 @@ def filter_to_inference_columns_preserving_data(df, add_missing=True):
     
     return filtered_df
 
-def process_survey_file(bucket, file_path):
-    """Processa um arquivo de pesquisa preservando a coluna de email original."""
-    df = load_csv_or_excel(bucket, file_path)
+def process_data_file(bucket, file_path, file_type='general'):
+    """Processa um arquivo de dados (survey, buyer ou utm)."""
+    # Escolher função de carregamento baseada no tipo
+    if file_type == 'utm':
+        df = load_csv_with_auto_delimiter(bucket, file_path)
+    else:
+        df = load_csv_or_excel(bucket, file_path)
+    
     if df is None:
         return None
-        
-    # Identificar o lançamento deste arquivo
-    launch_id = extract_launch_id(file_path)
-    
-    # Normalizar colunas
-    df = normalize_survey_columns(df, launch_id)
-    validate_normalized_columns(df, launch_id)
     
     # Adicionar identificador de lançamento se disponível
-    if launch_id:
-        df['lançamento'] = launch_id
-    
-    return df
-
-def process_buyer_file(bucket, file_path):
-    """Processa um arquivo de compradores."""
-    df = load_csv_or_excel(bucket, file_path)
-    if df is None:
-        return None
-        
-    # Identificar o lançamento deste arquivo
     launch_id = extract_launch_id(file_path)
-    
-    # Para buyers, ainda precisamos da coluna 'email' para normalização
-    email_col = find_email_column(df)
-    if email_col and email_col != 'email':
-        df = df.rename(columns={email_col: 'email'})
-    elif not email_col:
-        print(f"  - Warning: No email column found in {file_path}. Available columns: {', '.join(df.columns[:5])}...")
-    
-    # Adicionar identificador de lançamento se disponível
     if launch_id:
-        df['lançamento'] = launch_id
-    
-    return df
-
-def process_utm_file(bucket, file_path):
-    """Processa um arquivo de UTM preservando a coluna E-MAIL."""
-    df = load_csv_with_auto_delimiter(bucket, file_path)
-    if df is None:
-        return None
-        
-    # Identificar o lançamento deste arquivo
-    launch_id = extract_launch_id(file_path)
-    
-    # Adicionar identificador de lançamento se disponível
-    if launch_id:
-        df['lançamento'] = launch_id
+        # Usar standardize_feature_name para garantir consistência
+        launch_col_name = standardize_feature_name('lançamento')
+        df[launch_col_name] = launch_id
     
     return df
 
 def load_survey_files(bucket, survey_files):
-    """Carrega todos os arquivos de pesquisa preservando emails originais."""
+    """Carrega todos os arquivos de pesquisa."""
     survey_dfs = []
     launch_data = {}
     
     print("\nLoading survey files...")
     for file_path in survey_files:
         try:
-            df = process_survey_file(bucket, file_path)
+            df = process_data_file(bucket, file_path, file_type='general')
             if df is not None:
                 survey_dfs.append(df)
                 
@@ -397,7 +333,7 @@ def load_buyer_files(bucket, buyer_files):
     print("\nLoading buyer files...")
     for file_path in buyer_files:
         try:
-            df = process_buyer_file(bucket, file_path)
+            df = process_data_file(bucket, file_path, file_type='general')
             if df is not None:
                 buyer_dfs.append(df)
                 
@@ -414,14 +350,14 @@ def load_buyer_files(bucket, buyer_files):
     return buyer_dfs, launch_data
 
 def load_utm_files(bucket, utm_files):
-    """Carrega todos os arquivos de UTM preservando E-MAIL original."""
+    """Carrega todos os arquivos de UTM."""
     utm_dfs = []
     launch_data = {}
     
     print("\nLoading UTM files...")
     for file_path in utm_files:
         try:
-            df = process_utm_file(bucket, file_path)
+            df = process_data_file(bucket, file_path, file_type='utm')
             if df is not None:
                 utm_dfs.append(df)
                 
@@ -437,228 +373,278 @@ def load_utm_files(bucket, utm_files):
     
     return utm_dfs, launch_data
 
+# ============================================================================
+# FUNÇÕES DA PARTE 1.2 - MATCHING E MERGE
+# ============================================================================
+"""
+PARTE 1.2: MATCHING E MERGE DE DADOS
+
+Esta seção realiza o matching entre surveys e buyers, cria a variável target
+e mescla os diferentes datasets.
+
+IMPORTANTE:
+- 'email_norm' é uma coluna TEMPORÁRIA usada apenas para matching, será removida depois
+- Todas as novas colunas devem ser criadas usando standardize_feature_name()
+- Colunas com sufixo '_utm' são padronizadas após o merge
+"""
+
 def match_surveys_with_buyers_improved(surveys, buyers, utms=None):
-    """Realiza correspondência entre pesquisas e compradores usando email_norm."""
-    print("\nMatching surveys with buyers...")
-    start_time = time.time()
-    
-    # Verificar se podemos prosseguir com a correspondência
-    if surveys.empty or buyers.empty or 'email_norm' not in buyers.columns or 'email_norm' not in surveys.columns:
-        print("Warning: Cannot perform matching. Missing email_norm column.")
-        return pd.DataFrame(columns=['buyer_id', 'survey_id', 'match_type', 'score'])
-    
-    # Preparar estruturas de dados para matching eficiente
-    survey_emails_dict = dict(zip(surveys['email_norm'], surveys.index))
-    survey_emails_set = set(surveys['email_norm'].dropna())
-    
-    matches = []
-    match_count = 0
-    
-    # Processar cada comprador
-    for idx, buyer in buyers.iterrows():
-        buyer_email_norm = buyer.get('email_norm')
-        if pd.isna(buyer_email_norm):
-            continue
-        
-        # Matching direto com email_norm
-        if buyer_email_norm in survey_emails_set:
-            survey_idx = survey_emails_dict[buyer_email_norm]
-            
-            match_data = {
-                'buyer_id': idx,
-                'survey_id': survey_idx,
-                'match_type': 'exact',
-                'score': 1.0
-            }
-            
-            # Adicionar informação de lançamento se disponível
-            if 'lançamento' in buyer and not pd.isna(buyer['lançamento']):
-                match_data['lançamento'] = buyer['lançamento']
-            
-            matches.append(match_data)
-            match_count += 1
-    
-    print(f"   Found {match_count} matches out of {len(buyers)} buyers")
-    print(f"   Match rate: {(match_count/len(buyers)*100):.1f}%")
-    
-    matches_df = pd.DataFrame(matches)
-    
-    # Calcular tempo gasto
-    end_time = time.time()
-    print(f"   Matching completed in {end_time - start_time:.2f} seconds.")
-    
-    return matches_df
+   """Realiza correspondência entre pesquisas e compradores usando email_norm."""
+   print("\nMatching surveys with buyers...")
+   start_time = time.time()
+   
+   # Verificar se podemos prosseguir com a correspondência
+   if surveys.empty or buyers.empty or 'email_norm' not in buyers.columns or 'email_norm' not in surveys.columns:
+       print("Warning: Cannot perform matching. Missing email_norm column.")
+       return pd.DataFrame(columns=['buyer_id', 'survey_id', 'match_type', 'score'])
+   
+   # Preparar estruturas de dados para matching eficiente
+   survey_emails_dict = dict(zip(surveys['email_norm'], surveys.index))
+   survey_emails_set = set(surveys['email_norm'].dropna())
+   
+   matches = []
+   match_count = 0
+   
+   # Processar cada comprador
+   for idx, buyer in buyers.iterrows():
+       buyer_email_norm = buyer.get('email_norm')
+       if pd.isna(buyer_email_norm):
+           continue
+       
+       # Matching direto com email_norm
+       if buyer_email_norm in survey_emails_set:
+           survey_idx = survey_emails_dict[buyer_email_norm]
+           
+           match_data = {
+               'buyer_id': idx,
+               'survey_id': survey_idx,
+               'match_type': 'exact',
+               'score': 1.0
+           }
+           
+           # Adicionar informação de lançamento se disponível (já padronizado)
+           lancamento_col = standardize_feature_name('lançamento')
+           if lancamento_col in buyer and not pd.isna(buyer[lancamento_col]):
+               match_data[lancamento_col] = buyer[lancamento_col]
+           
+           matches.append(match_data)
+           match_count += 1
+   
+   print(f"   Found {match_count} matches out of {len(buyers)} buyers")
+   print(f"   Match rate: {(match_count/len(buyers)*100):.1f}%")
+   
+   matches_df = pd.DataFrame(matches)
+   
+   # Calcular tempo gasto
+   end_time = time.time()
+   print(f"   Matching completed in {end_time - start_time:.2f} seconds.")
+   
+   return matches_df
 
 def create_target_variable(surveys_df, matches_df):
-    """Cria a variável alvo com base nas correspondências de compras."""
-    if surveys_df.empty:
-        print("No surveys data - creating empty DataFrame with target variable")
-        return pd.DataFrame(columns=['target'])
-    
-    # Copiar o DataFrame para não modificar o original
-    result_df = surveys_df.copy()
-    
-    # Adicionar coluna de target inicializada com 0
-    result_df['target'] = 0
-    
-    # Se não houver correspondências, retornar com todos zeros
-    if matches_df.empty:
-        print("No matches found - target variable will be all zeros")
-        return result_df
-    
-    # Marcar os registros correspondentes como positivos
-    matched_count = 0
-    for _, match in matches_df.iterrows():
-        survey_id = match['survey_id']
-        if survey_id in result_df.index:
-            result_df.loc[survey_id, 'target'] = 1
-            matched_count += 1
-    
-    # Verificar integridade do target
-    positive_count = result_df['target'].sum()
-    expected_positives = len(matches_df)
-    
-    print(f"   Created target variable: {positive_count} positive examples out of {len(result_df)}")
-    
-    if positive_count != expected_positives:
-        print(f"   WARNING: Target integrity check failed!")
-        print(f"      Expected {expected_positives} positives (from matches)")
-        print(f"      Got {positive_count} positives in target")
-    
-    return result_df
+   """Cria a variável alvo com base nas correspondências de compras."""
+   if surveys_df.empty:
+       print("No surveys data - creating empty DataFrame with target variable")
+       return pd.DataFrame(columns=[standardize_feature_name('target')])
+   
+   # Copiar o DataFrame para não modificar o original
+   result_df = surveys_df.copy()
+   
+   # Adicionar coluna de target usando nome padronizado
+   target_col = standardize_feature_name('target')
+   result_df[target_col] = 0
+   
+   # Se não houver correspondências, retornar com todos zeros
+   if matches_df.empty:
+       print("No matches found - target variable will be all zeros")
+       return result_df
+   
+   # Marcar os registros correspondentes como positivos
+   matched_count = 0
+   for _, match in matches_df.iterrows():
+       survey_id = match['survey_id']
+       if survey_id in result_df.index:
+           result_df.loc[survey_id, target_col] = 1
+           matched_count += 1
+   
+   # Verificar integridade do target
+   positive_count = result_df[target_col].sum()
+   expected_positives = len(matches_df)
+   
+   print(f"   Created target variable: {positive_count} positive examples out of {len(result_df)}")
+   
+   if positive_count != expected_positives:
+       print(f"   WARNING: Target integrity check failed!")
+       print(f"      Expected {expected_positives} positives (from matches)")
+       print(f"      Got {positive_count} positives in target")
+   
+   return result_df
 
 def merge_datasets(surveys_df, utm_df, buyers_df):
-    """Mescla as diferentes fontes de dados em um único dataset."""
-    print("Merging datasets...")
-    
-    if surveys_df.empty:
-        print("WARNING: Empty survey data")
-        return pd.DataFrame()
-    
-    # Mesclar pesquisas com UTM usando email_norm
-    if not utm_df.empty and 'email_norm' in utm_df.columns and 'email_norm' in surveys_df.columns:
-        # Remover duplicatas de email_norm nas UTMs antes do merge
-        print(f"   UTM records before deduplication: {len(utm_df):,}")
-        utm_df_dedup = utm_df.drop_duplicates(subset=['email_norm'])
-        print(f"   UTM records after deduplication: {len(utm_df_dedup):,}")
-        
-        merged_df = pd.merge(
-            surveys_df,
-            utm_df_dedup,
-            on='email_norm',
-            how='left',
-            suffixes=('', '_utm')
-        )
-        print(f"   Merged surveys with UTM data: {merged_df.shape[0]} rows, {merged_df.shape[1]} columns")
-        
-        # Consolidar colunas de email das UTMs
-        if 'E-MAIL_utm' in merged_df.columns and 'E-MAIL' not in merged_df.columns:
-            merged_df['E-MAIL'] = merged_df['E-MAIL_utm']
-        elif 'E-MAIL_utm' in merged_df.columns and 'E-MAIL' in merged_df.columns:
-            # Preencher valores vazios de E-MAIL com E-MAIL_utm
-            mask = merged_df['E-MAIL'].isna() & merged_df['E-MAIL_utm'].notna()
-            merged_df.loc[mask, 'E-MAIL'] = merged_df.loc[mask, 'E-MAIL_utm']
-    else:
-        merged_df = surveys_df.copy()
-        print("   No UTM data available for merging")
-    
-    print(f"   Final merged dataset: {merged_df.shape[0]} rows, {merged_df.shape[1]} columns")
-    return merged_df
+   """Mescla as diferentes fontes de dados em um único dataset."""
+   print("Merging datasets...")
+   
+   if surveys_df.empty:
+       print("WARNING: Empty survey data")
+       return pd.DataFrame()
+   
+   # Mesclar pesquisas com UTM usando email_norm
+   if not utm_df.empty and 'email_norm' in utm_df.columns and 'email_norm' in surveys_df.columns:
+       # Remover duplicatas de email_norm nas UTMs antes do merge
+       print(f"   UTM records before deduplication: {len(utm_df):,}")
+       utm_df_dedup = utm_df.drop_duplicates(subset=['email_norm'])
+       print(f"   UTM records after deduplication: {len(utm_df_dedup):,}")
+       
+       merged_df = pd.merge(
+           surveys_df,
+           utm_df_dedup,
+           on='email_norm',
+           how='left',
+           suffixes=('', '_utm')
+       )
+       print(f"   Merged surveys with UTM data: {merged_df.shape[0]} rows, {merged_df.shape[1]} columns")
+       
+       # Padronizar nomes de colunas com sufixo _utm
+       utm_cols = [col for col in merged_df.columns if col.endswith('_utm')]
+       if utm_cols:
+           print(f"   Padronizando {len(utm_cols)} colunas com sufixo _utm")
+           rename_dict = {}
+           for col in utm_cols:
+               # Remover sufixo _utm temporariamente para padronizar
+               base_name = col.replace('_utm', '')
+               # Padronizar o nome base
+               std_base = standardize_feature_name(base_name)
+               # Adicionar sufixo _utm novamente
+               new_name = f"{std_base}_utm"
+               if col != new_name:
+                   rename_dict[col] = new_name
+           
+           if rename_dict:
+               merged_df = merged_df.rename(columns=rename_dict)
+       
+       # Consolidar colunas de email das UTMs (usando nomes padronizados)
+       email_col = standardize_feature_name('e-mail')  # → 'e_mail'
+       email_utm_col = f"{email_col}_utm"  # → 'e_mail_utm'
+       
+       if email_utm_col in merged_df.columns and email_col not in merged_df.columns:
+           merged_df[email_col] = merged_df[email_utm_col]
+       elif email_utm_col in merged_df.columns and email_col in merged_df.columns:
+           # Preencher valores vazios de e_mail com e_mail_utm
+           mask = merged_df[email_col].isna() & merged_df[email_utm_col].notna()
+           merged_df.loc[mask, email_col] = merged_df.loc[mask, email_utm_col]
+   else:
+       merged_df = surveys_df.copy()
+       print("   No UTM data available for merging")
+   
+   print(f"   Final merged dataset: {merged_df.shape[0]} rows, {merged_df.shape[1]} columns")
+   return merged_df
+
+# ============================================================================
+# FUNÇÕES DA PARTE 1.3 - PREPARAÇÃO FINAL DOS DADOS PARA PREPROCESSAMENTO
+# ============================================================================
 
 def prepare_final_dataset(df):
-    """Prepara o dataset final removendo apenas email_norm e preservando emails originais."""
-    print("\nPreparing final dataset...")
-    
-    print(f"   Original dataset: {df.shape[0]} rows, {df.shape[1]} columns")
-    
-    # Listar todas as colunas originais
-    original_columns = set(df.columns)
-    
-    # Primeiro, preservar dados de email nas colunas corretas
-    df_preserved = preserve_email_data(df)
-    
-    # Remover email_norm (usado apenas para matching)
-    if 'email_norm' in df_preserved.columns:
-        df_preserved = df_preserved.drop(columns=['email_norm'])
-    
-    # Remover coluna 'email' genérica se ainda existir
-    if 'email' in df_preserved.columns:
-        df_preserved = df_preserved.drop(columns=['email'])
-    
-    # Filtrar para colunas de inferência (preservando dados)
-    df_filtered = filter_to_inference_columns_preserving_data(df_preserved, add_missing=True)
-    
-    # Análise detalhada de colunas removidas
-    final_columns = set(df_filtered.columns)
-    removed_columns = original_columns - final_columns
-    
-    print(f"\n   COLUMNS REMOVED FOR PRODUCTION COMPATIBILITY:")
-    print(f"   Total columns removed: {len(removed_columns)}")
-    if removed_columns:
-        print(f"   Removed columns list:")
-        for col in sorted(removed_columns):
-            print(f"      - {col}")
-    else:
-        print(f"   No columns were removed (all original columns are in INFERENCE_COLUMNS)")
-    
-    print(f"\n   Final dataset: {df_filtered.shape[0]} rows, {df_filtered.shape[1]} columns")
-    
-    return df_filtered
+   """Prepara o dataset final removendo apenas email_norm e preservando emails originais."""
+   print("\nPreparing final dataset...")
+   
+   print(f"   Original dataset: {df.shape[0]} rows, {df.shape[1]} columns")
+   
+   # Listar todas as colunas originais
+   original_columns = set(df.columns)
+   
+   # Criar cópia para preservar dados originais
+   df_preserved = df.copy()
+   
+   # Remover email_norm (usado apenas para matching)
+   if 'email_norm' in df_preserved.columns:
+       df_preserved = df_preserved.drop(columns=['email_norm'])
+   
+   # Remover coluna 'email' genérica se ainda existir
+   if 'email' in df_preserved.columns:
+       df_preserved = df_preserved.drop(columns=['email'])
+   
+   # Filtrar para colunas de inferência (preservando dados)
+   df_filtered = filter_to_inference_columns_preserving_data(df_preserved, add_missing=True)
+   
+   # Análise detalhada de colunas removidas
+   final_columns = set(df_filtered.columns)
+   removed_columns = original_columns - final_columns
+   
+   print(f"\n   COLUMNS REMOVED FOR PRODUCTION COMPATIBILITY:")
+   print(f"   Total columns removed: {len(removed_columns)}")
+   if removed_columns:
+       print(f"   Removed columns list:")
+       for col in sorted(removed_columns):
+           print(f"      - {col}")
+   else:
+       print(f"   No columns were removed (all original columns are in INFERENCE_COLUMNS)")
+   
+   print(f"\n   Final dataset: {df_filtered.shape[0]} rows, {df_filtered.shape[1]} columns")
+   
+   return df_filtered
 
 def validate_production_compatibility(df, show_warnings=True):
-    """Valida se o DataFrame é compatível com produção."""
-    validation_report = {
-        'is_compatible': True,
-        'errors': [],
-        'warnings': [],
-        'info': []
-    }
-    
-    # Colunas esperadas em produção (sem target)
-    production_columns = [col for col in INFERENCE_COLUMNS if col != 'target']
-    
-    # 1. Verificar colunas obrigatórias
-    df_columns = set(df.columns)
-    missing_columns = set(production_columns) - df_columns
-    extra_columns = df_columns - set(production_columns) - {'target'}  # target é permitido em treino
-    
-    if missing_columns:
-        validation_report['is_compatible'] = False
-        validation_report['errors'].append(f"Missing required columns: {missing_columns}")
-    
-    if extra_columns:
-        validation_report['warnings'].append(f"Extra columns found: {extra_columns}")
-    
-    # 2. Verificar ordem das colunas
-    expected_order = [col for col in production_columns if col in df.columns]
-    actual_order = [col for col in df.columns if col in production_columns]
-    
-    if expected_order != actual_order:
-        validation_report['warnings'].append("Column order differs from expected")
-    
-    # 3. Verificar dados nas colunas críticas
-    critical_data_columns = ['¿Cuál es tu e-mail?', 'E-MAIL', 'DATA']
-    for col in critical_data_columns:
-        if col in df.columns:
-            non_null_count = df[col].notna().sum()
-            null_percentage = (df[col].isna().sum() / len(df) * 100) if len(df) > 0 else 0
-            
-            validation_report['info'].append(f"{col}: {non_null_count} non-null values ({100-null_percentage:.1f}% coverage)")
-            
-            if null_percentage > 90:
-                validation_report['warnings'].append(f"{col} has {null_percentage:.1f}% null values")
-    
-    # 4. Verificar target (se presente)
-    if 'target' in df.columns:
-        target_values = df['target'].unique()
-        if not set(target_values).issubset({0, 1, np.nan}):
-            validation_report['errors'].append(f"Invalid target values: {target_values}")
-            validation_report['is_compatible'] = False
-        else:
-            positive_rate = (df['target'] == 1).sum() / len(df) * 100 if len(df) > 0 else 0
-            validation_report['info'].append(f"Target positive rate: {positive_rate:.2f}%")
-    
-    return validation_report['is_compatible'], validation_report
+   """Valida se o DataFrame é compatível com produção."""
+   validation_report = {
+       'is_compatible': True,
+       'errors': [],
+       'warnings': [],
+       'info': []
+   }
+   
+   # Nome padronizado para target
+   target_col = standardize_feature_name('target')
+   
+   # Colunas esperadas em produção (sem target)
+   production_columns = [col for col in INFERENCE_COLUMNS if col != target_col]
+   
+   # 1. Verificar colunas obrigatórias
+   df_columns = set(df.columns)
+   missing_columns = set(production_columns) - df_columns
+   extra_columns = df_columns - set(production_columns) - {target_col}  # target é permitido em treino
+   
+   if missing_columns:
+       validation_report['is_compatible'] = False
+       validation_report['errors'].append(f"Missing required columns: {missing_columns}")
+   
+   if extra_columns:
+       validation_report['warnings'].append(f"Extra columns found: {extra_columns}")
+   
+   # 2. Verificar ordem das colunas
+   expected_order = [col for col in production_columns if col in df.columns]
+   actual_order = [col for col in df.columns if col in production_columns]
+   
+   if expected_order != actual_order:
+       validation_report['warnings'].append("Column order differs from expected")
+   
+   # 3. Verificar dados nas colunas críticas (usando nomes padronizados)
+   critical_data_columns = [
+       standardize_feature_name('¿Cuál es tu e-mail?'),  # → 'cual_es_tu_e_mail'
+       standardize_feature_name('E-MAIL'),                # → 'e_mail'
+       standardize_feature_name('DATA')                   # → 'data'
+   ]
+   
+   for col in critical_data_columns:
+       if col in df.columns:
+           non_null_count = df[col].notna().sum()
+           null_percentage = (df[col].isna().sum() / len(df) * 100) if len(df) > 0 else 0
+           
+           validation_report['info'].append(f"{col}: {non_null_count} non-null values ({100-null_percentage:.1f}% coverage)")
+           
+           if null_percentage > 90:
+               validation_report['warnings'].append(f"{col} has {null_percentage:.1f}% null values")
+   
+   # 4. Verificar target (se presente)
+   if target_col in df.columns:
+       target_values = df[target_col].unique()
+       if not set(target_values).issubset({0, 1, np.nan}):
+           validation_report['errors'].append(f"Invalid target values: {target_values}")
+           validation_report['is_compatible'] = False
+       else:
+           positive_rate = (df[target_col] == 1).sum() / len(df) * 100 if len(df) > 0 else 0
+           validation_report['info'].append(f"Target positive rate: {positive_rate:.2f}%")
+   
+   return validation_report['is_compatible'], validation_report
 
 # ============================================================================
 # FUNÇÕES DA PARTE 2 - PRÉ-PROCESSAMENTO
@@ -671,33 +657,22 @@ def apply_preprocessing_pipeline(df, params=None, fit=False, preserve_text=True)
     
     print(f"Iniciando pipeline de pré-processamento para DataFrame: {df.shape}")
     
-    # NOVA ABORDAGEM: Detectar e preservar colunas de texto ANTES de qualquer processamento
-    if preserve_text:
-        print("\n🔍 Detectando colunas de texto automaticamente...")
-        
-        # Usar o detector unificado
-        text_cols = detect_text_columns(
-            df, 
-            confidence_threshold=0.6,
-            exclude_patterns=['_encoded', '_norm', '_clean', '_tfidf', 'RAW_ORIGINAL']
-        )
-        
-        if text_cols:
-            print(f"\n📝 Preservando {len(text_cols)} colunas de texto para processamento posterior...")
-            
-            # Criar um dicionário para armazenar texto original
-            if 'preserved_text_columns' not in params:
-                params['preserved_text_columns'] = {}
-            
-            for col in text_cols:
-                # Armazenar no params ao invés de criar colunas RAW_ORIGINAL
-                if fit:  # Só armazenar no modo fit
-                    params['preserved_text_columns'][col] = df[col].copy()
-                    print(f"  ✓ Preservada: {col[:60]}...")
-        else:
-            print("  ⚠️ Nenhuma coluna de texto detectada automaticamente")
-    
-    print(f"Iniciando pipeline de pré-processamento para DataFrame: {df.shape}")
+    # Usar o ColumnTypeClassifier para detectar colunas de texto
+    classifier = ColumnTypeClassifier(
+        use_llm=False,
+        use_classification_cache=True,
+        confidence_threshold=0.6
+    )
+    classifications = classifier.classify_dataframe(df)
+
+    # Filtrar apenas colunas de texto
+    exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', 'RAW_ORIGINAL']
+    text_cols = [
+        col for col, info in classifications.items()
+        if info['type'] == classifier.TEXT 
+        and info['confidence'] >= 0.6
+        and not any(pattern in col for pattern in exclude_patterns)
+    ]
     
     # 1. Normalizar emails
     print("1. Normalizando emails...")
@@ -819,12 +794,21 @@ def identify_text_columns_for_professional(df, params=None):
         print(f"  ✓ Recuperadas {len(text_columns)} colunas preservadas do params")
         return text_columns
     
-    # Opção 2: Detectar automaticamente
-    text_columns = detect_text_columns(
-        df,
-        confidence_threshold=0.7,  # Maior confiança para processamento profissional
-        exclude_patterns=['_encoded', '_norm', '_clean', '_tfidf', '_original']
+    classifier = ColumnTypeClassifier(
+    use_llm=False,
+    use_classification_cache=True,
+    confidence_threshold=0.7
     )
+    classifications = classifier.classify_dataframe(df)
+
+    # Filtrar apenas colunas de texto
+    exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
+    text_columns = [
+        col for col, info in classifications.items()
+        if info['type'] == classifier.TEXT 
+        and info['confidence'] >= 0.7
+        and not any(pattern in col for pattern in exclude_patterns)
+    ]
     
     if not text_columns:
         print("  ⚠️ Nenhuma coluna de texto encontrada para processamento profissional")
@@ -999,8 +983,20 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
         
         print(f"  ✓ {len(text_columns)} colunas de texto recuperadas para processamento")
     else:
-        # Fallback: detectar automaticamente
-        text_columns = detect_text_columns(df, confidence_threshold=0.7)
+        # Usar o ColumnTypeClassifier para detectar colunas de texto
+            classifier = ColumnTypeClassifier(
+                use_llm=False,
+                use_classification_cache=True,
+                confidence_threshold=0.7
+            )
+            classifications = classifier.classify_dataframe(df)
+
+            # Filtrar apenas colunas de texto
+            text_columns = [
+                col for col, info in classifications.items()
+                if info['type'] == classifier.TEXT 
+                and info['confidence'] >= 0.7
+            ]
     
     if not text_columns:
         print("  ⚠️ AVISO: Nenhuma coluna de texto encontrada para processamento profissional!")
