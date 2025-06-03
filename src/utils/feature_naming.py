@@ -8,6 +8,7 @@ def standardize_feature_name(name):
     3. Substitui caracteres especiais por underscore
     4. Remove underscores múltiplos
     5. Trunca em 100 caracteres
+    6. Mapeia variações conhecidas para nomes canônicos
     """
     if not isinstance(name, str):
         return str(name)
@@ -37,6 +38,15 @@ def standardize_feature_name(name):
     # 7. Truncar se muito longo
     if len(name) > 100:
         name = name[:100]
+    
+    # 8. Mapear variações conhecidas para nomes canônicos
+    variations_map = {
+        'que_esperas_aprender_en_la_inmersion_desbloquea_tu_ingles_en_72_horas': 'que_esperas_aprender_en_el_evento_cero_a_ingles_fluido',
+        'que_esperas_aprender_en_la_semana_de_cero_a_ingles_fluido': 'que_esperas_aprender_en_el_evento_cero_a_ingles_fluido'
+    }
+    
+    if name in variations_map:
+        name = variations_map[name]
     
     return name
 

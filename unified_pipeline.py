@@ -542,6 +542,35 @@ def merge_datasets(surveys_df, utm_df, buyers_df):
 # ============================================================================
 # FUNÇÕES DA PARTE 1.3 - PREPARAÇÃO FINAL DOS DADOS PARA PREPROCESSAMENTO
 # ============================================================================
+"""
+PARTE 1.3: PREPARAÇÃO FINAL DOS DADOS PARA PREPROCESSAMENTO
+
+Esta seção finaliza a preparação dos dados antes do preprocessamento,
+garantindo compatibilidade com produção.
+
+FLUXO DE PROCESSAMENTO:
+1. LIMPEZA FINAL
+  - Remove coluna 'email_norm' (temporária, usada apenas para matching)
+  - Remove coluna 'email' genérica se ainda existir
+  - Mantém apenas colunas permitidas em INFERENCE_COLUMNS
+
+2. FILTRAGEM E PADRONIZAÇÃO
+  - filter_to_inference_columns_preserving_data() garante apenas colunas permitidas
+  - Adiciona colunas faltantes com valores NaN para consistência
+  - Reordena colunas conforme INFERENCE_COLUMNS para reprodutibilidade
+
+3. VALIDAÇÃO DE COMPATIBILIDADE
+  - validate_production_compatibility() verifica integridade do dataset
+  - Analisa completude de colunas críticas (e_mail, data)
+  - Valida valores da variável target (apenas 0, 1 ou NaN)
+  - Gera relatório detalhado de compatibilidade
+
+PRINCÍPIOS:
+- Remover TODAS as colunas temporárias ou auxiliares
+- Garantir que o dataset final contenha APENAS colunas de INFERENCE_COLUMNS
+- Manter reprodutibilidade entre treino e inferência
+- Usar SEMPRE nomes padronizados via standardize_feature_name()
+"""
 
 def prepare_final_dataset(df):
    """Prepara o dataset final removendo apenas email_norm e preservando emails originais."""
