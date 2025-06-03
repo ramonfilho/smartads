@@ -546,11 +546,11 @@ def perform_topic_modeling(df, text_cols, n_topics=3, fit=True, params=None):
                 topic_distribution = None
                 with tqdm(total=10) as pbar:  # Assumindo max_iter=10
                     lda.max_iter = 1  # Ajustar uma iteração por vez para mostrar progresso
-                    for i in range(10):
-                        if i == 0:
+                    for iter_idx in range(10):
+                        if iter_idx == 0:
                             topic_distribution = lda.fit_transform(tfidf_matrix)
                         else:
-                            lda.n_iter_ = i
+                            lda.n_iter_ = iter_idx
                             topic_distribution = lda.transform(tfidf_matrix)
                         pbar.update(1)
                         time.sleep(0.1)  # Apenas para visualizar a barra
@@ -569,12 +569,13 @@ def perform_topic_modeling(df, text_cols, n_topics=3, fit=True, params=None):
                 feature_names = [c.split('_tfidf_')[-1] for c in tfidf_cols]
                 print("  Top termos por tópico:")
                 for topic_idx, topic in enumerate(lda.components_):
-                    top_terms = [feature_names[i] for i in topic.argsort()[:-6:-1]]
+                    top_terms = [feature_names[j] for j in topic.argsort()[:-6:-1]]
                     print(f"    Tópico {topic_idx+1}: {', '.join(top_terms)}")
                 
-                # Adicionar distribuição de tópicos ao dataframe
-                for i in range(n_topics):
-                    df_result[f'{col}_topic_{i+1}'] = topic_distribution[:, i]
+                # Adicionar distribuição de tópicos ao dataframe com nomes padronizados
+                for topic_idx in range(n_topics):
+                    feature_name = standardize_feature_name(f'{col}_topic_{topic_idx+1}')
+                    df_result[feature_name] = topic_distribution[:, topic_idx]
                 
                 print(f"  Adicionadas {n_topics} colunas de tópicos ao DataFrame")
                     
@@ -597,16 +598,17 @@ def perform_topic_modeling(df, text_cols, n_topics=3, fit=True, params=None):
                     
                     # Alinhar colunas
                     aligned_matrix = np.zeros((len(df_result), len(stored_cols)))
-                    for i, col_name in enumerate(stored_cols):
+                    for j, col_name in enumerate(stored_cols):
                         if col_name in df_result.columns:
-                            aligned_matrix[:, i] = df_result[col_name].values
+                            aligned_matrix[:, j] = df_result[col_name].values
                     
                     # Transformar usando componentes restaurados
                     topic_distribution = lda.transform(aligned_matrix)
                     
-                    # Adicionar distribuição de tópicos ao dataframe
-                    for i in range(n_topics):
-                        df_result[f'{col}_topic_{i+1}'] = topic_distribution[:, i]
+                    # Adicionar distribuição de tópicos ao dataframe com nomes padronizados
+                    for topic_idx in range(n_topics):
+                        feature_name = standardize_feature_name(f'{col}_topic_{topic_idx+1}')
+                        df_result[feature_name] = topic_distribution[:, topic_idx]
                         
                 except Exception as e:
                     print(f"Erro ao reconstruir LDA para '{col}': {e}")
@@ -617,14 +619,15 @@ def perform_topic_modeling(df, text_cols, n_topics=3, fit=True, params=None):
                     components = np.array(params['lda'][col]['components'])
                     
                     # Para cada tópico, calcular a soma ponderada de TF-IDF disponíveis
-                    for i in range(n_topics):
-                        topic_weights = components[i]
-                        df_result[f'{col}_topic_{i+1}'] = 0  # Inicializar
+                    for topic_idx in range(n_topics):
+                        topic_weights = components[topic_idx]
+                        feature_name = standardize_feature_name(f'{col}_topic_{topic_idx+1}')
+                        df_result[feature_name] = 0  # Inicializar
                         
                         # Aplicar pesos para colunas disponíveis
                         for j, col_name in enumerate(stored_cols):
                             if col_name in df_result.columns and j < len(topic_weights):
-                                df_result[f'{col}_topic_{i+1}'] += df_result[col_name] * topic_weights[j]
+                                df_result[feature_name] += df_result[col_name] * topic_weights[j]
             else:
                 print(f"Aviso: Não há modelo LDA salvo para '{col}' ou dados de componentes")
     
