@@ -24,3 +24,5 @@
 - Toda vez que um cliente criar uma conta, gera um bucket na Cloud Storage ou pasta no google drive para ele. 
 - Toda vez que ele adiciona um arquivo, perguntar se ainda existem mais arquivos, ou se ele já deseja começar o treinamento do modelo.
 - Verificar requisitos de privacidade no bucket da cloud storage.
+
+- Verificar a função column_type_classifier e ver o que ela realmente faz e porque está tão grande.

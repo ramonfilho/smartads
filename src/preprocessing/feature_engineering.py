@@ -317,7 +317,7 @@ def feature_engineering(df, fit=True, params=None):
 
     # 1. Colunas a remover (exceto texto)
     # Identificar colunas que são texto mas serão removidas
-    text_to_remove = ['como_te_llamas', 'cual_es_tu_telefono', 'cual_es_tu_instagram']
+    text_to_remove = ['como_te_llamas', 'cual_es_tu_telefono', 'cual_es_tu_instagram', 'cual_es_tu_profesion']  # ADICIONAR cual_es_tu_profesion
     
     cols_to_remove = [
         col for col in text_to_remove 

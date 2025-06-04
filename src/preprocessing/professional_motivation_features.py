@@ -717,6 +717,7 @@ def enhance_professional_features(df, text_cols, fit=True, params=None):
         params['professional_features'] = {}
     
     # Filtrar apenas colunas existentes no dataframe
+    excluded_cols = params.get('excluded_from_text_processing', [])
     text_cols = [col for col in text_cols if col in df.columns]
     
     if not text_cols:

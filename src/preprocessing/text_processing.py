@@ -427,11 +427,22 @@ def text_feature_engineering(df, fit=True, params=None):
             and not any(pattern in col for pattern in exclude_patterns)
         ]
     
+    # APLICAR EXCLUSÕES (FORA DO IF/ELSE)
+    excluded_cols = params.get('excluded_from_text_processing', [])
+    original_text_cols = text_cols.copy()
+    text_cols = [col for col in text_cols if col not in excluded_cols]
+    
+    if len(original_text_cols) != len(text_cols):
+        print(f"  ℹ️ {len(original_text_cols) - len(text_cols)} colunas de texto excluídas do processamento")
+        for col in original_text_cols:
+            if col not in text_cols:
+                print(f"     - {col}")
+    
     if not text_cols:
-        print("  ⚠️ Nenhuma coluna de texto detectada")
+        print("  ⚠️ Nenhuma coluna de texto para processar após exclusões")
         return df, params
     
-    print(f"\n✓ Processamento de texto iniciado para {len(text_cols)} colunas detectadas")
+    print(f"\n✓ Processamento de texto iniciado para {len(text_cols)} colunas")
     
     # Filtrar apenas colunas existentes no dataframe
     text_cols = [col for col in text_cols if col in df.columns]
@@ -441,8 +452,6 @@ def text_feature_engineering(df, fit=True, params=None):
     
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
-    
-    print(f"\nProcessamento de texto iniciado para {len(text_cols)} colunas...")
     
     # Aplicar pipeline de processamento de texto
     df_result, params = extract_basic_text_features(df_result, text_cols, fit, params)

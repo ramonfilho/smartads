@@ -29,7 +29,7 @@ def identify_text_columns(df, params=None):
         exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
         text_cols = [
             col for col, info in classifications.items()
-            if col in df.columns  # Verificar se ainda existe
+            if col in df.columns
             and info['type'] == 'text'
             and info['confidence'] >= 0.6
             and not any(pattern in col for pattern in exclude_patterns)
@@ -53,6 +53,10 @@ def identify_text_columns(df, params=None):
             and info['confidence'] >= 0.6
             and not any(pattern in col for pattern in exclude_patterns)
         ]
+    
+    # ADICIONAR: Filtrar colunas excluídas
+    excluded_cols = params.get('excluded_from_text_processing', []) if params else []
+    text_cols = [col for col in text_cols if col not in excluded_cols]
     
     print(f"Colunas de texto identificadas: {len(text_cols)}")
     for col in text_cols:
