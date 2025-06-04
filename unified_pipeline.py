@@ -389,96 +389,141 @@ IMPORTANTE:
 """
 
 def match_surveys_with_buyers_improved(surveys, buyers, utms=None):
-   """Realiza correspondência entre pesquisas e compradores usando email_norm."""
-   print("\nMatching surveys with buyers...")
-   start_time = time.time()
-   
-   # Verificar se podemos prosseguir com a correspondência
-   if surveys.empty or buyers.empty or 'email_norm' not in buyers.columns or 'email_norm' not in surveys.columns:
-       print("Warning: Cannot perform matching. Missing email_norm column.")
-       return pd.DataFrame(columns=['buyer_id', 'survey_id', 'match_type', 'score'])
-   
-   # Preparar estruturas de dados para matching eficiente
-   survey_emails_dict = dict(zip(surveys['email_norm'], surveys.index))
-   survey_emails_set = set(surveys['email_norm'].dropna())
-   
-   matches = []
-   match_count = 0
-   
-   # Processar cada comprador
-   for idx, buyer in buyers.iterrows():
-       buyer_email_norm = buyer.get('email_norm')
-       if pd.isna(buyer_email_norm):
-           continue
-       
-       # Matching direto com email_norm
-       if buyer_email_norm in survey_emails_set:
-           survey_idx = survey_emails_dict[buyer_email_norm]
-           
-           match_data = {
-               'buyer_id': idx,
-               'survey_id': survey_idx,
-               'match_type': 'exact',
-               'score': 1.0
-           }
-           
-           # Adicionar informação de lançamento se disponível (já padronizado)
-           lancamento_col = standardize_feature_name('lançamento')
-           if lancamento_col in buyer and not pd.isna(buyer[lancamento_col]):
-               match_data[lancamento_col] = buyer[lancamento_col]
-           
-           matches.append(match_data)
-           match_count += 1
-   
-   print(f"   Found {match_count} matches out of {len(buyers)} buyers")
-   print(f"   Match rate: {(match_count/len(buyers)*100):.1f}%")
-   
-   matches_df = pd.DataFrame(matches)
-   
-   # Calcular tempo gasto
-   end_time = time.time()
-   print(f"   Matching completed in {end_time - start_time:.2f} seconds.")
-   
-   return matches_df
+    """Realiza correspondência entre pesquisas e compradores usando email_norm."""
+    print("\nMatching surveys with buyers...")
+    start_time = time.time()
+    
+    # Verificar se podemos prosseguir com a correspondência
+    if surveys.empty or buyers.empty or 'email_norm' not in buyers.columns or 'email_norm' not in surveys.columns:
+        print("Warning: Cannot perform matching. Missing email_norm column.")
+        return pd.DataFrame(columns=['buyer_id', 'survey_id', 'match_type', 'score'])
+    
+    # MUDANÇA: Usar defaultdict para permitir múltiplos surveys por email
+    from collections import defaultdict
+    survey_emails_dict = defaultdict(list)
+    
+    # Construir dicionário que mapeia email -> lista de índices
+    for idx, row in surveys.iterrows():
+        email_norm = row.get('email_norm')
+        if pd.notna(email_norm):
+            survey_emails_dict[email_norm].append(idx)
+    
+    # Conjunto de emails para verificação rápida
+    survey_emails_set = set(survey_emails_dict.keys())
+    
+    matches = []
+    match_count = 0
+    surveys_matched = set()  # Para rastrear quantos surveys únicos foram matched
+    
+    # Processar cada comprador
+    for idx, buyer in buyers.iterrows():
+        buyer_email_norm = buyer.get('email_norm')
+        if pd.isna(buyer_email_norm):
+            continue
+        
+        # Verificar se o email do comprador existe nas pesquisas
+        if buyer_email_norm in survey_emails_set:
+            # MUDANÇA: Criar um match para CADA survey com esse email
+            survey_indices = survey_emails_dict[buyer_email_norm]
+            
+            for survey_idx in survey_indices:
+                match_data = {
+                    'buyer_id': idx,
+                    'survey_id': survey_idx,
+                    'match_type': 'exact',
+                    'score': 1.0
+                }
+                
+                # Adicionar informação de lançamento se disponível
+                lancamento_col = standardize_feature_name('lançamento')
+                if lancamento_col in buyer and not pd.isna(buyer[lancamento_col]):
+                    match_data[lancamento_col] = buyer[lancamento_col]
+                
+                # Adicionar lançamento do survey também
+                if lancamento_col in surveys.columns:
+                    survey_launch = surveys.loc[survey_idx, lancamento_col]
+                    if not pd.isna(survey_launch):
+                        match_data['survey_lancamento'] = survey_launch
+                
+                matches.append(match_data)
+                surveys_matched.add(survey_idx)
+                match_count += 1
+    
+    # Estatísticas mais detalhadas
+    unique_buyers_matched = len(set(m['buyer_id'] for m in matches))
+    print(f"   Found {match_count} total matches")
+    print(f"   {unique_buyers_matched} unique buyers matched out of {len(buyers)} ({unique_buyers_matched/len(buyers)*100:.1f}%)")
+    print(f"   {len(surveys_matched)} unique surveys matched out of {len(surveys)} ({len(surveys_matched)/len(surveys)*100:.1f}%)")
+    
+    # Análise de múltiplos matches
+    if matches:
+        matches_per_buyer = {}
+        for m in matches:
+            buyer_id = m['buyer_id']
+            if buyer_id not in matches_per_buyer:
+                matches_per_buyer[buyer_id] = 0
+            matches_per_buyer[buyer_id] += 1
+        
+        multi_match_buyers = sum(1 for count in matches_per_buyer.values() if count > 1)
+        if multi_match_buyers > 0:
+            avg_matches = sum(matches_per_buyer.values()) / len(matches_per_buyer)
+            print(f"   {multi_match_buyers} buyers matched to multiple surveys (avg: {avg_matches:.1f} surveys/buyer)")
+    
+    matches_df = pd.DataFrame(matches)
+    
+    # Calcular tempo gasto
+    end_time = time.time()
+    print(f"   Matching completed in {end_time - start_time:.2f} seconds.")
+    
+    return matches_df
 
 def create_target_variable(surveys_df, matches_df):
-   """Cria a variável alvo com base nas correspondências de compras."""
-   if surveys_df.empty:
-       print("No surveys data - creating empty DataFrame with target variable")
-       return pd.DataFrame(columns=[standardize_feature_name('target')])
-   
-   # Copiar o DataFrame para não modificar o original
-   result_df = surveys_df.copy()
-   
-   # Adicionar coluna de target usando nome padronizado
-   target_col = standardize_feature_name('target')
-   result_df[target_col] = 0
-   
-   # Se não houver correspondências, retornar com todos zeros
-   if matches_df.empty:
-       print("No matches found - target variable will be all zeros")
-       return result_df
-   
-   # Marcar os registros correspondentes como positivos
-   matched_count = 0
-   for _, match in matches_df.iterrows():
-       survey_id = match['survey_id']
-       if survey_id in result_df.index:
-           result_df.loc[survey_id, target_col] = 1
-           matched_count += 1
-   
-   # Verificar integridade do target
-   positive_count = result_df[target_col].sum()
-   expected_positives = len(matches_df)
-   
-   print(f"   Created target variable: {positive_count} positive examples out of {len(result_df)}")
-   
-   if positive_count != expected_positives:
-       print(f"   WARNING: Target integrity check failed!")
-       print(f"      Expected {expected_positives} positives (from matches)")
-       print(f"      Got {positive_count} positives in target")
-   
-   return result_df
+    """Cria a variável alvo com base nas correspondências de compras."""
+    if surveys_df.empty:
+        print("No surveys data - creating empty DataFrame with target variable")
+        return pd.DataFrame(columns=[standardize_feature_name('target')])
+    
+    # Copiar o DataFrame para não modificar o original
+    result_df = surveys_df.copy()
+    
+    # Adicionar coluna de target usando nome padronizado
+    target_col = standardize_feature_name('target')
+    result_df[target_col] = 0
+    
+    # Se não houver correspondências, retornar com todos zeros
+    if matches_df.empty:
+        print("No matches found - target variable will be all zeros")
+        return result_df
+    
+    # Marcar os registros correspondentes como positivos
+    matched_count = 0
+    missing_indices = []
+    
+    for _, match in matches_df.iterrows():
+        survey_id = match['survey_id']
+        if survey_id in result_df.index:
+            result_df.loc[survey_id, target_col] = 1
+            matched_count += 1
+        else:
+            missing_indices.append(survey_id)
+    
+    # Verificar integridade do target
+    positive_count = result_df[target_col].sum()
+    expected_positives = len(matches_df)
+    
+    print(f"   Created target variable: {positive_count} positive examples out of {len(result_df)}")
+    
+    if positive_count != expected_positives:
+        print(f"   Target integrity check:")
+        print(f"      Expected {expected_positives} positives (from matches)")
+        print(f"      Got {positive_count} positives in target")
+        if missing_indices:
+            print(f"      {len(missing_indices)} matches had invalid survey indices")
+            print(f"      Invalid indices sample: {missing_indices[:5]}")
+    else:
+        print(f"   ✓ Target integrity check passed!")
+    
+    return result_df
 
 def merge_datasets(surveys_df, utm_df, buyers_df):
    """Mescla as diferentes fontes de dados em um único dataset."""
@@ -680,25 +725,30 @@ def validate_production_compatibility(df, show_warnings=True):
 # ============================================================================
 
 def apply_preprocessing_pipeline(df, params=None, fit=False):
-    """Aplica a pipeline completa de pré-processamento."""
     if params is None:
         params = {}
     
     print(f"Iniciando pipeline de pré-processamento para DataFrame: {df.shape}")
     
-    # Usar o ColumnTypeClassifier para detectar colunas de texto
-    classifier = ColumnTypeClassifier(
-        use_llm=False,
-        use_classification_cache=True,
-        confidence_threshold=0.6
-    )
-    classifications = classifier.classify_dataframe(df)
+    # Classificar apenas uma vez no início se não existir
+    if 'column_classifications' not in params:
+        print("\n🔍 Realizando classificação inicial de colunas...")
+        classifier = ColumnTypeClassifier(
+            use_llm=False,
+            use_classification_cache=True,
+            confidence_threshold=0.6
+        )
+        classifications = classifier.classify_dataframe(df)
+        params['column_classifications'] = classifications
+    else:
+        print("\n✓ Usando classificações de colunas existentes dos params")
+        classifications = params['column_classifications']
 
-    # Filtrar apenas colunas de texto
+    # Filtrar apenas colunas de texto usando classificações salvas
     exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', 'RAW_ORIGINAL']
     text_cols = [
         col for col, info in classifications.items()
-        if info['type'] == classifier.TEXT 
+        if info['type'] == 'text'  # Não precisa mais acessar classifier.TEXT
         and info['confidence'] >= 0.6
         and not any(pattern in col for pattern in exclude_patterns)
     ]
@@ -990,6 +1040,16 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
             text_columns.append(temp_col_name)
         
         print(f"  ✓ {len(text_columns)} colunas de texto recuperadas para processamento")
+    elif 'column_classifications' in params:
+        # Usar classificações existentes
+        print("\n✓ Usando classificações existentes para features profissionais")
+        classifications = params['column_classifications']
+        text_columns = [
+            col for col, info in classifications.items()
+            if col in df.columns
+            and info['type'] == 'text'
+            and info['confidence'] >= 0.7
+        ]
     else:
         # Usar o ColumnTypeClassifier para detectar colunas de texto
             classifier = ColumnTypeClassifier(
@@ -1547,7 +1607,7 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     print(f"Found {len(file_paths)} files in: {raw_data_path}")
     
     # 3. Categorizar arquivos
-    survey_files, buyer_files, utm_files = categorize_files(file_paths)
+    survey_files, buyer_files, utm_files, all_files_by_launch = categorize_files(file_paths)
     
     print(f"Survey files: {len(survey_files)}")
     print(f"Buyer files: {len(buyer_files)}")
@@ -1960,7 +2020,7 @@ if __name__ == "__main__":
         importance_threshold=0.1,
         correlation_threshold=0.95,
         n_folds=3,
-        test_mode=True,
+        test_mode=False,
         max_samples=2000,
         use_checkpoints=False,
         clear_cache=True

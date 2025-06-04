@@ -393,25 +393,39 @@ def text_feature_engineering(df, fit=True, params=None):
     if params is None:
         params = {}
     
-    # Usar ColumnTypeClassifier para detectar colunas de texto
-    print("\n🔍 Detectando colunas de texto para processamento...")
-    
-    classifier = ColumnTypeClassifier(
-        use_llm=False,
-        use_classification_cache=True,
-        confidence_threshold=0.6
-    )
-    
-    classifications = classifier.classify_dataframe(df)
-    
-    # Filtrar apenas colunas de texto com alta confiança
-    exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
-    text_cols = [
-        col for col, info in classifications.items()
-        if info['type'] == classifier.TEXT 
-        and info['confidence'] >= 0.6
-        and not any(pattern in col for pattern in exclude_patterns)
-    ]
+    # Verificar se temos classificações nos params
+    if 'column_classifications' in params:
+        print("\n✓ Usando classificações existentes para processamento de texto")
+        classifications = params['column_classifications']
+        
+        # Filtrar apenas colunas de texto
+        exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
+        text_cols = [
+            col for col, info in classifications.items()
+            if col in df.columns  # Importante: verificar se a coluna ainda existe
+            and info['type'] == 'text'
+            and info['confidence'] >= 0.6
+            and not any(pattern in col for pattern in exclude_patterns)
+        ]
+    else:
+        # Fallback: reclassificar se necessário
+        print("\n🔍 Detectando colunas de texto para processamento...")
+        
+        classifier = ColumnTypeClassifier(
+            use_llm=False,
+            use_classification_cache=True,
+            confidence_threshold=0.6
+        )
+        
+        classifications = classifier.classify_dataframe(df)
+        
+        exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
+        text_cols = [
+            col for col, info in classifications.items()
+            if info['type'] == classifier.TEXT 
+            and info['confidence'] >= 0.6
+            and not any(pattern in col for pattern in exclude_patterns)
+        ]
     
     if not text_cols:
         print("  ⚠️ Nenhuma coluna de texto detectada")

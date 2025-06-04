@@ -295,31 +295,25 @@ def encode_categorical_features(df, fit=True, params=None):
     return df_result, params
 
 def feature_engineering(df, fit=True, params=None):
-    """Executa todo o pipeline de engenharia de features não-textuais.
-    
-    Args:
-        df: DataFrame pandas
-        fit: Se True, aprende parâmetros, caso contrário usa parâmetros existentes
-        params: Dicionário com parâmetros aprendidos na fase de fit
-        
-    Returns:
-        DataFrame com features criadas
-        Dicionário com parâmetros atualizados
-    """
-    # Inicializar parâmetros
+    """Executa todo o pipeline de engenharia de features não-textuais."""
     if params is None:
         params = {}
     
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
     
-    classifier = ColumnTypeClassifier(
-        use_llm=False,
-        use_classification_cache=True,
-        confidence_threshold=0.7
-    )
-    
-    classifications = classifier.classify_dataframe(df_result)
+    # Verificar se temos classificações nos params
+    if 'column_classifications' in params:
+        print("\n✓ Usando classificações existentes para feature engineering")
+        classifications = params['column_classifications']
+    else:
+        # Fallback: reclassificar se necessário
+        classifier = ColumnTypeClassifier(
+            use_llm=False,
+            use_classification_cache=True,
+            confidence_threshold=0.7
+        )
+        classifications = classifier.classify_dataframe(df_result)
 
     # 1. Colunas a remover (exceto texto)
     # Identificar colunas que são texto mas serão removidas
@@ -328,7 +322,8 @@ def feature_engineering(df, fit=True, params=None):
     cols_to_remove = [
         col for col in text_to_remove 
         if col in df_result.columns 
-        and classifications.get(col, {}).get('type') == classifier.TEXT
+        and col in classifications
+        and classifications[col].get('type') == 'text'
     ]
     
     # Verificar quais colunas existem no dataframe

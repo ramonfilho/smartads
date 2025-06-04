@@ -13,38 +13,46 @@ from sklearn.decomposition import LatentDirichletAllocation
 import warnings
 from src.preprocessing.text_processing import clean_text
 from src.utils.feature_naming import standardize_feature_name
+from src.utils.column_type_classifier import ColumnTypeClassifier
 
 warnings.filterwarnings('ignore')
 
-def identify_text_columns(df):
+def identify_text_columns(df, params=None):
     """
     Identifica colunas de texto no DataFrame usando o sistema unificado.
-    
-    Args:
-        df: DataFrame pandas
-        
-    Returns:
-        Lista de nomes de colunas de texto identificadas
     """
-    from src.utils.column_type_classifier import ColumnTypeClassifier
-    
-    # Usar o classificador unificado
-    classifier = ColumnTypeClassifier(
-        use_llm=False,
-        use_classification_cache=True,
-        confidence_threshold=0.6
-    )
-    
-    classifications = classifier.classify_dataframe(df)
-    
-    # Filtrar apenas colunas de texto
-    exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
-    text_cols = [
-        col for col, info in classifications.items()
-        if info['type'] == classifier.TEXT 
-        and info['confidence'] >= 0.6
-        and not any(pattern in col for pattern in exclude_patterns)
-    ]
+    # Verificar primeiro nos params
+    if params and 'column_classifications' in params:
+        print("\n✓ Usando classificações existentes dos params")
+        classifications = params['column_classifications']
+        
+        exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
+        text_cols = [
+            col for col, info in classifications.items()
+            if col in df.columns  # Verificar se ainda existe
+            and info['type'] == 'text'
+            and info['confidence'] >= 0.6
+            and not any(pattern in col for pattern in exclude_patterns)
+        ]
+    else:
+        # Fallback: reclassificar
+        print("\n🔍 Detectando colunas de texto para processamento...")
+        
+        classifier = ColumnTypeClassifier(
+            use_llm=False,
+            use_classification_cache=True,
+            confidence_threshold=0.6
+        )
+        
+        classifications = classifier.classify_dataframe(df)
+        
+        exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
+        text_cols = [
+            col for col, info in classifications.items()
+            if info['type'] == classifier.TEXT 
+            and info['confidence'] >= 0.6
+            and not any(pattern in col for pattern in exclude_patterns)
+        ]
     
     print(f"Colunas de texto identificadas: {len(text_cols)}")
     for col in text_cols:
