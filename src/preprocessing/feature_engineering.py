@@ -58,60 +58,120 @@ def create_temporal_features(df, fit=True, params=None):
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
     
+    # DEBUG inicial
+    print("\n  DEBUG create_temporal_features:")
+    print(f"    Total de colunas no início: {len(df_result.columns)}")
+    
+    # Procurar colunas temporais
+    temporal_candidates = [col for col in df_result.columns if any(word in col.lower() for word in ['temporal', 'data', 'date', 'time', 'marca'])]
+    print(f"    Colunas temporais candidatas: {temporal_candidates}")
+    
+    # Verificar tipos das colunas candidatas
+    for col in temporal_candidates:
+        print(f"      - {col}: tipo = {df_result[col].dtype}")
+    
     # Features de tempo baseadas em 'Marca temporal'
-    if 'Marca temporal' in df_result.columns:
+    marca_temporal_col = None
+    
+    # Tentar diferentes variações do nome
+    for possible_name in ['Marca temporal', 'marca_temporal', 'Marca_temporal', 'MARCA_TEMPORAL']:
+        if possible_name in df_result.columns:
+            marca_temporal_col = possible_name
+            print(f"    ✓ Encontrada coluna marca temporal: '{marca_temporal_col}'")
+            break
+    
+    if marca_temporal_col:
+        # Verificar tipo e conteúdo
+        print(f"    Tipo atual: {df_result[marca_temporal_col].dtype}")
+        print(f"    Primeiros valores: {df_result[marca_temporal_col].head(3).tolist()}")
+        
         # Converter para datetime se ainda não for
-        if not pd.api.types.is_datetime64_dtype(df_result['Marca temporal']):
-            df_result['Marca temporal'] = pd.to_datetime(df_result['Marca temporal'], errors='coerce')
+        if not pd.api.types.is_datetime64_dtype(df_result[marca_temporal_col]):
+            print("    Convertendo para datetime...")
+            df_result[marca_temporal_col] = pd.to_datetime(df_result[marca_temporal_col], errors='coerce')
+            
+            # Verificar resultado da conversão
+            null_count = df_result[marca_temporal_col].isna().sum()
+            total_count = len(df_result)
+            print(f"    Valores nulos após conversão: {null_count} de {total_count} ({null_count/total_count*100:.1f}%)")
+            
+            if null_count == total_count:
+                print("    ❌ ERRO: Todos os valores se tornaram nulos após conversão!")
+                print(f"    Amostra dos valores originais: {df[marca_temporal_col].head(3).tolist()}")
         
-        # Extrair componentes básicos
-        df_result[standardize_feature_name('hour')] = df_result['Marca temporal'].dt.hour
-        df_result[standardize_feature_name('day_of_week')] = df_result['Marca temporal'].dt.dayofweek
-        df_result[standardize_feature_name('month')] = df_result['Marca temporal'].dt.month
-        df_result[standardize_feature_name('year')] = df_result['Marca temporal'].dt.year
-        
-        # Features cíclicas para hora e dia da semana
-        hour_col = standardize_feature_name('hour')
-        day_col = standardize_feature_name('day_of_week')
-        
-        df_result[standardize_feature_name('hour_sin')] = np.sin(2 * np.pi * df_result[hour_col] / 24)
-        df_result[standardize_feature_name('hour_cos')] = np.cos(2 * np.pi * df_result[hour_col] / 24)
-        df_result[standardize_feature_name('day_sin')] = np.sin(2 * np.pi * df_result[day_col] / 7)
-        df_result[standardize_feature_name('day_cos')] = np.cos(2 * np.pi * df_result[day_col] / 7)
-        
-        # Período do dia
-        df_result[standardize_feature_name('period_of_day')] = pd.cut(
-            df_result[hour_col], 
-            bins=[0, 6, 12, 18, 24], 
-            labels=['madrugada', 'manha', 'tarde', 'noite']
-        )
+        # Extrair componentes básicos apenas se temos dados válidos
+        valid_dates = df_result[marca_temporal_col].notna().sum()
+        if valid_dates > 0:
+            df_result[standardize_feature_name('hour')] = df_result[marca_temporal_col].dt.hour
+            df_result[standardize_feature_name('day_of_week')] = df_result[marca_temporal_col].dt.dayofweek
+            df_result[standardize_feature_name('month')] = df_result[marca_temporal_col].dt.month
+            df_result[standardize_feature_name('year')] = df_result[marca_temporal_col].dt.year
+            
+            # Features cíclicas para hora e dia da semana
+            hour_col = standardize_feature_name('hour')
+            day_col = standardize_feature_name('day_of_week')
+            
+            df_result[standardize_feature_name('hour_sin')] = np.sin(2 * np.pi * df_result[hour_col] / 24)
+            df_result[standardize_feature_name('hour_cos')] = np.cos(2 * np.pi * df_result[hour_col] / 24)
+            df_result[standardize_feature_name('day_sin')] = np.sin(2 * np.pi * df_result[day_col] / 7)
+            df_result[standardize_feature_name('day_cos')] = np.cos(2 * np.pi * df_result[day_col] / 7)
+            
+            # Período do dia
+            df_result[standardize_feature_name('period_of_day')] = pd.cut(
+                df_result[hour_col], 
+                bins=[0, 6, 12, 18, 24], 
+                labels=['madrugada', 'manha', 'tarde', 'noite']
+            )
+            
+            print(f"    ✓ Features temporais criadas a partir de '{marca_temporal_col}'")
+        else:
+            print(f"    ❌ Nenhuma data válida em '{marca_temporal_col}' para criar features")
+    else:
+        print("    ❌ Coluna 'marca_temporal' não encontrada em nenhuma variação!")
     
     # Repetir processo para DATA se existir
-    if 'DATA' in df_result.columns:
-        if not pd.api.types.is_datetime64_dtype(df_result['DATA']):
-            df_result['DATA'] = pd.to_datetime(df_result['DATA'], errors='coerce')
+    data_col = None
+    for possible_name in ['DATA', 'data', 'Data']:
+        if possible_name in df_result.columns:
+            data_col = possible_name
+            print(f"\n    ✓ Encontrada coluna data: '{data_col}'")
+            break
+    
+    if data_col:
+        print(f"    Tipo atual: {df_result[data_col].dtype}")
+        
+        if not pd.api.types.is_datetime64_dtype(df_result[data_col]):
+            df_result[data_col] = pd.to_datetime(df_result[data_col], errors='coerce')
         
         # Extrair componentes apenas se conversão foi bem-sucedida
-        if not df_result['DATA'].isna().all():
-            df_result[standardize_feature_name('utm_hour')] = df_result['DATA'].dt.hour
-            df_result[standardize_feature_name('utm_day_of_week')] = df_result['DATA'].dt.dayofweek
-            df_result[standardize_feature_name('utm_month')] = df_result['DATA'].dt.month
-            df_result[standardize_feature_name('utm_year')] = df_result['DATA'].dt.year
+        if not df_result[data_col].isna().all():
+            df_result[standardize_feature_name('utm_hour')] = df_result[data_col].dt.hour
+            df_result[standardize_feature_name('utm_day_of_week')] = df_result[data_col].dt.dayofweek
+            df_result[standardize_feature_name('utm_month')] = df_result[data_col].dt.month
+            df_result[standardize_feature_name('utm_year')] = df_result[data_col].dt.year
+            
+            print(f"    ✓ Features UTM temporais criadas a partir de '{data_col}'")
     
+    # DEBUG final - verificar o que foi criado
+    print("\n    RESUMO de features temporais criadas:")
+    temporal_features_created = []
+    for feature in ['hour', 'day_of_week', 'month', 'year', 'hour_sin', 'hour_cos', 
+                   'day_sin', 'day_cos', 'period_of_day', 'utm_hour', 'utm_day_of_week', 
+                   'utm_month', 'utm_year']:
+        if feature in df_result.columns:
+            temporal_features_created.append(feature)
+    
+    print(f"    Total de features temporais: {len(temporal_features_created)}")
+    if temporal_features_created:
+        print(f"    Features: {temporal_features_created}")
+    else:
+        print("    ❌ NENHUMA feature temporal foi criada!")
+    
+    print(f"    Total de colunas no final: {len(df_result.columns)}")
     return df_result, params
 
 def encode_categorical_features(df, fit=True, params=None):
-    """Codifica variáveis categóricas usando diferentes estratégias.
-    
-    Args:
-        df: DataFrame pandas
-        fit: Se True, aprende mapeamentos, caso contrário usa mapeamentos existentes
-        params: Dicionário com parâmetros aprendidos na fase de fit
-        
-    Returns:
-        DataFrame com variáveis categóricas codificadas
-        Dicionário com parâmetros atualizados
-    """
+    """Codifica variáveis categóricas usando diferentes estratégias."""
     # Inicializar parâmetros
     if params is None:
         params = {}
@@ -121,7 +181,7 @@ def encode_categorical_features(df, fit=True, params=None):
     
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
-    
+
     # 1. Mapas para variáveis ordinais
     age_map = {
         '18 años a 24 años': 1,
@@ -193,35 +253,84 @@ def encode_categorical_features(df, fit=True, params=None):
         params['categorical_encoding']['belief_map'] = belief_map
         params['categorical_encoding']['gender_map'] = gender_map
     
-    # 2. Aplicar mapas para variáveis ordinais
-    if '¿Cuál es tu edad?' in df_result.columns:
-        df_result[standardize_feature_name('age_encoded')] = df_result['¿Cuál es tu edad?'].map(params['categorical_encoding']['age_map'])
+    # DEBUG para diagnóstico
+    print("\n  DEBUG encode_categorical_features:")
+    print(f"    Total de colunas: {len(df_result.columns)}")
     
-    if '¿Hace quánto tiempo me conoces?' in df_result.columns:
-        df_result[standardize_feature_name('time_known_encoded')] = df_result['¿Hace quánto tiempo me conoces?'].map(params['categorical_encoding']['time_map'])
+    # 2. Aplicar mapas para variáveis ordinais - USANDO STANDARDIZE!
     
-    if '¿Cuál es tu disponibilidad de tiempo para estudiar inglés?' in df_result.columns:
-        df_result[standardize_feature_name('availability_encoded')] = df_result['¿Cuál es tu disponibilidad de tiempo para estudiar inglés?'].map(params['categorical_encoding']['availability_map'])
+    # Idade
+    age_col = standardize_feature_name('¿Cuál es tu edad?')
+    if age_col in df_result.columns:
+        df_result[standardize_feature_name('age_encoded')] = df_result[age_col].map(params['categorical_encoding']['age_map'])
+    else:
+        print(f"    ⚠️ Coluna idade não encontrada: {age_col}")
     
-    if '¿Cuál es tu sueldo anual? (en dólares)' in df_result.columns:
-        df_result[standardize_feature_name('current_salary_encoded')] = df_result['¿Cuál es tu sueldo anual? (en dólares)'].map(params['categorical_encoding']['salary_map'])
+    # Tempo conhecido
+    time_col = standardize_feature_name('¿Hace quánto tiempo me conoces?')
+    if time_col in df_result.columns:
+        df_result[standardize_feature_name('time_known_encoded')] = df_result[time_col].map(params['categorical_encoding']['time_map'])
     
-    if '¿Cuánto te gustaría ganar al año?' in df_result.columns:
-        df_result[standardize_feature_name('desired_salary_encoded')] = df_result['¿Cuánto te gustaría ganar al año?'].map(params['categorical_encoding']['desired_salary_map'])
+    # Disponibilidade
+    avail_col = standardize_feature_name('¿Cuál es tu disponibilidad de tiempo para estudiar inglés?')
+    if avail_col in df_result.columns:
+        df_result[standardize_feature_name('availability_encoded')] = df_result[avail_col].map(params['categorical_encoding']['availability_map'])
     
-    # Ambas colunas de crença
-    for col in ['¿Crees que aprender inglés te acercaría más al salario que mencionaste anteriormente?', 
-                '¿Crees que aprender inglés puede ayudarte en el trabajo o en tu vida diaria?']:
-        if col in df_result.columns:
-            new_col = standardize_feature_name('belief_salary_encoded') if 'salario' in col else standardize_feature_name('belief_work_encoded')
-            df_result[new_col] = df_result[col].map(params['categorical_encoding']['belief_map'])
+    # Salário atual
+    salary_col = standardize_feature_name('¿Cuál es tu sueldo anual? (en dólares)')
+    if salary_col in df_result.columns:
+        df_result[standardize_feature_name('current_salary_encoded')] = df_result[salary_col].map(params['categorical_encoding']['salary_map'])
+    
+    # Salário desejado
+    desired_col = standardize_feature_name('¿Cuánto te gustaría ganar al año?')
+    if desired_col in df_result.columns:
+        df_result[standardize_feature_name('desired_salary_encoded')] = df_result[desired_col].map(params['categorical_encoding']['desired_salary_map'])
+    
+    # Crenças sobre salário
+    belief_salary_col = standardize_feature_name('¿Crees que aprender inglés te acercaría más al salario que mencionaste anteriormente?')
+    if belief_salary_col in df_result.columns:
+        df_result[standardize_feature_name('belief_salary_encoded')] = df_result[belief_salary_col].map(params['categorical_encoding']['belief_map'])
+    
+    # Crenças sobre trabalho
+    belief_work_col = standardize_feature_name('¿Crees que aprender inglés puede ayudarte en el trabajo o en tu vida diaria?')
+    if belief_work_col in df_result.columns:
+        df_result[standardize_feature_name('belief_work_encoded')] = df_result[belief_work_col].map(params['categorical_encoding']['belief_map'])
     
     # Gênero
-    if '¿Cuál es tu género?' in df_result.columns:
-        df_result[standardize_feature_name('gender_encoded')] = df_result['¿Cuál es tu género?'].map(params['categorical_encoding']['gender_map'])
+    gender_col = standardize_feature_name('¿Cuál es tu género?')
+    if gender_col in df_result.columns:
+        df_result[standardize_feature_name('gender_encoded')] = df_result[gender_col].map(params['categorical_encoding']['gender_map'])
     
     # 3. Encoding para variáveis nominais de alta cardinalidade
-    nominal_high_cardinality = ['¿Cual es tu país?', '¿Cuál es tu profesión?']
+    
+    # DEBUG para encontrar coluna de país
+    print("\n    DEBUG - Procurando coluna de país:")
+    country_candidates = [col for col in df_result.columns if 'pais' in col.lower() or 'país' in col.lower()]
+    print(f"    Candidatas para país: {country_candidates}")
+    
+    # Tentar múltiplas variações para país
+    country_col = None
+    country_variations = [
+        standardize_feature_name('¿Cual es tu país?'),
+        standardize_feature_name('¿Cuál es tu país?'),
+        'cual_es_tu_pais'
+    ]
+    
+    for variation in country_variations:
+        if variation in df_result.columns:
+            country_col = variation
+            print(f"    ✓ Encontrada coluna país: {country_col}")
+            break
+    
+    # Profissão
+    profession_col = standardize_feature_name('¿Cuál es tu profesión?')
+    if profession_col not in df_result.columns:
+        # Já foi removida, pular
+        profession_col = None
+        print("    ℹ️ Coluna profissão já foi removida")
+    
+    # Processar apenas colunas existentes
+    nominal_high_cardinality = [col for col in [country_col, profession_col] if col is not None]
     
     for col in nominal_high_cardinality:
         if col in df_result.columns:
@@ -233,8 +342,15 @@ def encode_categorical_features(df, fit=True, params=None):
                 # Use stored frequency map
                 freq_map = params['categorical_encoding'].get(f'{col}_freq_map', {})
             
-            col_name = standardize_feature_name('country_freq') if 'país' in col else standardize_feature_name('profession_freq')
-            df_result[col_name] = df_result[col].map(freq_map)
+            # Determinar nome da coluna de saída
+            if 'pais' in col.lower() or 'país' in col.lower():
+                col_name = standardize_feature_name('country_freq')
+                encoded_col = standardize_feature_name('country_encoded')
+            else:
+                col_name = standardize_feature_name('profession_freq')
+                encoded_col = standardize_feature_name('profession_encoded')
+            
+            df_result[col_name] = df_result[col].map(freq_map).fillna(0)
             
             # Agrupar categorias raras
             threshold = 0.01  # 1% de frequência
@@ -249,16 +365,20 @@ def encode_categorical_features(df, fit=True, params=None):
             df_result[grouped_col] = df_result[col].apply(lambda x: 'Rare' if x in rare_categories else x)
             
             # Label Encoding para categoria agrupada
-            encoded_col = standardize_feature_name('country_encoded') if 'país' in col else standardize_feature_name('profession_encoded')
-            
             if fit:
+                from sklearn.preprocessing import LabelEncoder
                 le = LabelEncoder()
+                # Garantir que não há NaN
+                df_result[grouped_col] = df_result[grouped_col].fillna('Unknown')
                 df_result[encoded_col] = le.fit_transform(df_result[grouped_col])
                 params['categorical_encoding'][f'{col}_label_mapping'] = dict(zip(le.classes_, range(len(le.classes_))))
             else:
                 # Converter usando o mapeamento aprendido anteriormente
                 mapping = params['categorical_encoding'].get(f'{col}_label_mapping', {})
+                df_result[grouped_col] = df_result[grouped_col].fillna('Unknown')
                 df_result[encoded_col] = df_result[grouped_col].map(mapping).fillna(-1).astype(int)
+            
+            print(f"    ✓ Criadas features para {col}: {col_name} e {encoded_col}")
     
     # 4. Tratamento de UTMs
     utm_cols = [col for col in df_result.columns if 'UTM_' in col or 'utm_' in col]
@@ -271,6 +391,7 @@ def encode_categorical_features(df, fit=True, params=None):
             if cardinality <= 10:  # Baixa cardinalidade
                 # Label Encoding
                 if fit:
+                    from sklearn.preprocessing import LabelEncoder
                     le = LabelEncoder()
                     df_result[standardize_feature_name(f'{col}_encoded')] = le.fit_transform(df_result[col].fillna('unknown').astype(str))
                     params['categorical_encoding'][f'{col}_label_mapping'] = dict(zip(le.classes_, range(len(le.classes_))))
@@ -286,11 +407,16 @@ def encode_categorical_features(df, fit=True, params=None):
                 else:
                     freq_map = params['categorical_encoding'].get(f'{col}_freq_map', {})
                 
-                df_result[standardize_feature_name(f'{col}_freq')] = df_result[col].map(freq_map)
+                df_result[standardize_feature_name(f'{col}_freq')] = df_result[col].map(freq_map).fillna(0)
     
     # 5. GCLID como indicador binário
-    if 'GCLID' in df_result.columns:
-        df_result[standardize_feature_name('has_gclid')] = df_result['GCLID'].notna().astype(int)
+    if 'GCLID' in df_result.columns or 'gclid' in df_result.columns:
+        gclid_col = 'GCLID' if 'GCLID' in df_result.columns else 'gclid'
+        df_result[standardize_feature_name('has_gclid')] = df_result[gclid_col].notna().astype(int)
+    
+    # DEBUG final
+    encoded_cols = [col for col in df_result.columns if 'encoded' in col or '_freq' in col]
+    print(f"\n    Total de features criadas: {len(encoded_cols)}")
     
     return df_result, params
 
@@ -314,6 +440,9 @@ def feature_engineering(df, fit=True, params=None):
             confidence_threshold=0.7
         )
         classifications = classifier.classify_dataframe(df_result)
+    
+    print("\n  Executando pipeline de feature engineering:")
+    print(f"  Colunas iniciais: {df_result.shape[1]}")
 
     # 1. Colunas a remover (exceto texto)
     # Identificar colunas que são texto mas serão removidas
@@ -333,7 +462,14 @@ def feature_engineering(df, fit=True, params=None):
     df_result, params = create_identity_features(df_result, fit, params)
     df_result, params = create_temporal_features(df_result, fit, params)
     df_result, params = encode_categorical_features(df_result, fit, params)
-    
+
+    # DEBUG: Verificar quais colunas foram criadas
+    print("\n  DEBUG - Colunas após encoding:")
+    encoded_cols = [col for col in df_result.columns if 'encoded' in col]
+    print(f"    Colunas encoded: {encoded_cols}")
+    salary_related = [col for col in df_result.columns if 'salary' in col]
+    print(f"    Colunas com 'salary': {salary_related}")
+
     # 3. Remover colunas originais após criação das features
     df_result = df_result.drop(columns=cols_to_remove, errors='ignore')
     

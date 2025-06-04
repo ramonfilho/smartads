@@ -178,22 +178,13 @@ def extract_tfidf_features(df, text_cols, fit=True, params=None):
                     'feature_names': feature_names.tolist()
                 }
                 
-                # NOVA IMPLEMENTAÇÃO: Criar nomes únicos para colunas TF-IDF
+                # CORREÇÃO: Criar DataFrame e adicionar colunas uma por uma
                 from src.utils.feature_naming import create_tfidf_column_name
                 
-                # Criar DataFrame com nomes únicos
-                tfidf_df = pd.DataFrame(
-                    tfidf_matrix.toarray(), 
-                    index=df_result.index
-                )
-                
-                # Renomear colunas com nomes únicos
+                # Para cada termo, criar coluna com nome único
                 for i, term in enumerate(feature_names):
                     col_name = create_tfidf_column_name(col, term)
-                    tfidf_df.columns.values[i] = col_name
-                
-                # Concatenar ao DataFrame principal
-                df_result = pd.concat([df_result, tfidf_df], axis=1)
+                    df_result[col_name] = tfidf_matrix.toarray()[:, i]
                 
             except Exception as e:
                 print(f"Erro ao processar TF-IDF para '{col}': {e}")
@@ -206,14 +197,18 @@ def extract_tfidf_features(df, text_cols, fit=True, params=None):
                 try:
                     tfidf_matrix = tfidf.transform(df_result[clean_col].fillna(''))
                     
-                    # CORREÇÃO: Usar o índice do df_result
+                    # IMPORTANTE: Usar EXATAMENTE os mesmos nomes de features do fit
                     tfidf_df = pd.DataFrame(
                         tfidf_matrix.toarray(), 
-                        index=df_result.index,  # IMPORTANTE: Manter o mesmo índice
-                        columns=[standardize_feature_name(f'{col}_tfidf_{term}') for term in feature_names]
+                        index=df_result.index
                     )
                     
-                    # CORREÇÃO: Concatenar as novas colunas
+                    # Garantir mesmos nomes de colunas
+                    from src.utils.feature_naming import create_tfidf_column_name
+                    for i, term in enumerate(feature_names):
+                        col_name = create_tfidf_column_name(col, term)
+                        tfidf_df.columns.values[i] = col_name
+                    
                     df_result = pd.concat([df_result, tfidf_df], axis=1)
                     
                 except Exception as e:

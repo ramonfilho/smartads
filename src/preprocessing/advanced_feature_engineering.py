@@ -641,18 +641,6 @@ def perform_topic_modeling(df, text_cols, n_topics=3, fit=True, params=None):
     return df_result, params
 
 def create_salary_features(df, fit=True, params=None):
-    """
-    Cria features baseadas na relação entre salário atual e desejado.
-    
-    Args:
-        df: DataFrame pandas
-        fit: Se True, armazena estatísticas, caso contrário usa existentes
-        params: Parâmetros para transform
-        
-    Returns:
-        DataFrame com features salariais adicionadas
-        Dicionário com parâmetros atualizados
-    """
     if params is None:
         params = {}
     
@@ -661,8 +649,14 @@ def create_salary_features(df, fit=True, params=None):
     
     df_result = df.copy()
     
+        # DEBUG
+    print("  Colunas disponíveis para salary features:")
+    salary_cols = [col for col in df_result.columns if 'salary' in col or 'sueldo' in col or 'ganar' in col]
+    print(f"    {salary_cols}")
+    
     # Verificar se temos as colunas de salário
     if 'current_salary_encoded' not in df_result.columns or 'desired_salary_encoded' not in df_result.columns:
+        print("    ⚠️ Colunas de salário encoded não encontradas!")
         return df_result, params
     
     # Garantir que são numéricas

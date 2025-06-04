@@ -820,8 +820,17 @@ def apply_preprocessing_pipeline(df, params=None, fit=False):
     # 8. Feature engineering avançada
     print("8. Aplicando feature engineering avançada...")
     advanced_params = params.get('advanced_features', {})
+    advanced_params['column_classifications'] = params.get('column_classifications', {})
     df, advanced_params = advanced_feature_engineering(df, fit=fit, params=advanced_params)
-    
+
+    # ADICIONAR DEBUG:
+    print(f"  Features após advanced engineering: {df.shape[1]}")
+    advanced_features = [col for col in df.columns if any(pattern in col for pattern in 
+                        ['salary_diff', 'salary_ratio', 'country_x_', 'age_x_', 'hour_x_'])]
+    print(f"  Features avançadas criadas: {len(advanced_features)}")
+    if len(advanced_features) > 0:
+        print(f"  Exemplos: {advanced_features[:5]}")
+
     # 9. Compilar parâmetros atualizados
     updated_params = {
         'quality_columns': quality_params,
@@ -1056,6 +1065,10 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
     if params is None:
         params = {}
     
+        # ADICIONAR ESTA INICIALIZAÇÃO!
+    if 'professional_features' not in params:
+        params['professional_features'] = {}
+
     print(f"\nIniciando pipeline de features profissionais para DataFrame: {df.shape}")
     
     # Recuperar colunas de texto preservadas
@@ -1775,6 +1788,13 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
         # 1. Processar o conjunto de treinamento com fit=True para aprender parâmetros
         print("\n--- Processando conjunto de treinamento ---")
         train_processed, params = apply_preprocessing_pipeline(train_df, fit=True)
+
+        # Após o processamento do train
+        print("\n=== DIAGNÓSTICO DE COLUNAS ===")
+        print(f"Colunas com 'salary': {[c for c in train_processed.columns if 'salary' in c]}")
+        print(f"Colunas com 'age': {[c for c in train_processed.columns if 'age' in c]}")
+        print(f"Colunas com 'country': {[c for c in train_processed.columns if 'country' in c]}")
+        print(f"Total de colunas TF-IDF: {len([c for c in train_processed.columns if '_tfidf_' in c])}")
         
         # 2. Processar o conjunto de validação com fit=False para aplicar parâmetros aprendidos
         print("\n--- Processando conjunto de validação ---")
@@ -2049,7 +2069,7 @@ if __name__ == "__main__":
         importance_threshold=0.1,
         correlation_threshold=0.95,
         n_folds=3,
-        test_mode=True,
+        test_mode=False,
         max_samples=2000,
         use_checkpoints=False,
         clear_cache=True
