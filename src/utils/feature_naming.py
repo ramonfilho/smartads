@@ -62,3 +62,26 @@ def standardize_dataframe_columns(df):
         print(f"  Padronizando {len(rename_dict)} nomes de colunas...")
         return df.rename(columns=rename_dict)
     return df
+
+def create_tfidf_column_name(base_col, term, max_base_length=30):
+    """
+    Cria nome padronizado para coluna TF-IDF garantindo unicidade.
+    
+    Args:
+        base_col: Nome da coluna base
+        term: Termo TF-IDF
+        max_base_length: Comprimento máximo para base
+        
+    Returns:
+        Nome padronizado e único
+    """
+    # Encurtar nome base se necessário
+    if len(base_col) > max_base_length:
+        # Pegar início e fim do nome para manter contexto
+        base_col = base_col[:max_base_length-3] + "..."
+    
+    # Criar nome completo
+    full_name = f"{base_col}_tfidf_{term}"
+    
+    # Aplicar padronização normal
+    return standardize_feature_name(full_name)

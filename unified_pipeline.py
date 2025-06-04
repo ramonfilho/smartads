@@ -783,6 +783,33 @@ def apply_preprocessing_pipeline(df, params=None, fit=False):
     feature_params = params.get('feature_engineering', {})
     feature_params['column_classifications'] = params.get('column_classifications', {})
     df, feature_params = feature_engineering(df, fit=fit, params=feature_params)
+
+    # 6.1. Remover colunas originais que não devem ser processadas como texto
+    # Estas colunas já foram usadas para criar features derivadas
+    cols_to_remove = params.get('columns_to_remove_after_encoding', 
+                               ['como_te_llamas', 'cual_es_tu_telefono', 
+                                'cual_es_tu_instagram', 'cual_es_tu_profesion'])
+    
+    cols_removed = []
+    cols_not_found = []
+    
+    for col in cols_to_remove:
+        if col in df.columns:
+            df = df.drop(columns=[col])
+            cols_removed.append(col)
+        else:
+            cols_not_found.append(col)
+    
+    if cols_removed:
+        print(f"6.1. Removidas {len(cols_removed)} colunas originais após encoding:")
+        for col in cols_removed:
+            print(f"     - {col}")
+    
+    if cols_not_found:
+        print(f"     ℹ️ {len(cols_not_found)} colunas já não existiam no DataFrame")
+    
+    # Atualizar parâmetros para rastreabilidade
+    params['removed_original_columns'] = cols_removed
     
     # 7. Processamento de texto
     print("7. Processando features textuais...")
@@ -2022,7 +2049,7 @@ if __name__ == "__main__":
         importance_threshold=0.1,
         correlation_threshold=0.95,
         n_folds=3,
-        test_mode=False,
+        test_mode=True,
         max_samples=2000,
         use_checkpoints=False,
         clear_cache=True

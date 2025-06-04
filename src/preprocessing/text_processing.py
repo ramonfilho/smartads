@@ -178,14 +178,21 @@ def extract_tfidf_features(df, text_cols, fit=True, params=None):
                     'feature_names': feature_names.tolist()
                 }
                 
-                # CORREÇÃO: Usar o índice do df_result ao criar o DataFrame TF-IDF
+                # NOVA IMPLEMENTAÇÃO: Criar nomes únicos para colunas TF-IDF
+                from src.utils.feature_naming import create_tfidf_column_name
+                
+                # Criar DataFrame com nomes únicos
                 tfidf_df = pd.DataFrame(
                     tfidf_matrix.toarray(), 
-                    index=df_result.index,  # IMPORTANTE: Manter o mesmo índice
-                    columns=[standardize_feature_name(f'{col}_tfidf_{term}') for term in feature_names]
+                    index=df_result.index
                 )
                 
-                # CORREÇÃO: Concatenar as novas colunas ao invés de atribuir uma por uma
+                # Renomear colunas com nomes únicos
+                for i, term in enumerate(feature_names):
+                    col_name = create_tfidf_column_name(col, term)
+                    tfidf_df.columns.values[i] = col_name
+                
+                # Concatenar ao DataFrame principal
                 df_result = pd.concat([df_result, tfidf_df], axis=1)
                 
             except Exception as e:
@@ -282,18 +289,7 @@ def extract_motivation_features(df, text_cols, fit=True, params=None):
     return df_result, params
 
 def extract_discriminative_features(df, text_cols, fit=True, params=None):
-    """Identifica e cria features para termos com maior poder discriminativo para conversão.
-    
-    Args:
-        df: DataFrame pandas
-        text_cols: Lista de colunas de texto para processamento
-        fit: Se True, calcula termos discriminativos, caso contrário usa os já identificados
-        params: Dicionário com parâmetros aprendidos na fase de fit
-        
-    Returns:
-        DataFrame com features discriminativas adicionadas
-        Dicionário com parâmetros atualizados
-    """
+    """Identifica e cria features para termos com maior poder discriminativo para conversão."""
     # Inicializar parâmetros
     if params is None:
         params = {}
@@ -314,26 +310,41 @@ def extract_discriminative_features(df, text_cols, fit=True, params=None):
     if fit:
         # Calcular taxa geral de conversão
         overall_conv_rate = df_result['target'].mean()
-        min_term_freq = 50  # Mínimo de ocorrências para considerar um termo relevante
+        min_term_freq = 50
         
         for col in text_cols:
-            # Só analisar termos do TF-IDF se existirem no dataframe
-            tfidf_cols = [c for c in df_result.columns if c.startswith(f'{col}_tfidf_')]
+            # CORREÇÃO: Filtrar colunas TF-IDF mais precisamente
+            # Incluir o underscore final para evitar prefixos parciais
+            tfidf_cols = [c for c in df_result.columns 
+                         if c.startswith(f'{col}_tfidf_') and 
+                         c.count('_tfidf_') == 1]  # Garantir que é uma coluna TF-IDF individual
+            
             if not tfidf_cols:
                 continue
             
+            print(f"\nProcessando {col}:")
+            print(f"  Número de colunas TF-IDF: {len(tfidf_cols)}")
+            
             term_stats = []
             for tfidf_col in tfidf_cols:
+                # Agora tfidf_col é realmente UMA coluna
+                tfidf_values = df_result[tfidf_col].values
+                target_values = df_result['target'].values
+                
                 # Extrair o termo do nome da coluna
                 term = tfidf_col.split(f'{col}_tfidf_')[1]
                 
+                # USAR APENAS ESTA IMPLEMENTAÇÃO (com arrays numpy)
+                tfidf_values = df_result[tfidf_col].values
+                target_values = df_result['target'].values
+                
                 # Verificar presença do termo nos dados
-                has_term = df_result[tfidf_col] > 0
+                has_term = tfidf_values > 0
                 term_freq = has_term.sum()
                 
                 if term_freq >= min_term_freq:
                     # Calcular taxa de conversão quando o termo está presente
-                    conv_with_term = df_result.loc[has_term, 'target'].mean()
+                    conv_with_term = target_values[has_term].mean()
                     
                     # Calcular lift (razão entre taxa com termo e taxa geral)
                     if overall_conv_rate > 0:
