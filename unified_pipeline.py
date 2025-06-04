@@ -745,13 +745,14 @@ def apply_preprocessing_pipeline(df, params=None, fit=False):
         classifications = params['column_classifications']
 
     # Filtrar apenas colunas de texto usando classificações salvas
-    exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', 'RAW_ORIGINAL']
-    text_cols = [
-        col for col, info in classifications.items()
-        if info['type'] == 'text'  # Não precisa mais acessar classifier.TEXT
-        and info['confidence'] >= 0.6
-        and not any(pattern in col for pattern in exclude_patterns)
-    ]
+    if 'excluded_from_text_processing' not in params:
+        params['excluded_from_text_processing'] = [
+            'como_te_llamas',
+            'cual_es_tu_instagram', 
+            'cual_es_tu_profesion',
+            'cual_es_tu_telefono'
+        ]
+        print(f"✓ Definidas {len(params['excluded_from_text_processing'])} colunas excluídas do processamento de texto")
     
     # 1. Consolidar colunas de qualidade
     print("1. Consolidando colunas de qualidade...")

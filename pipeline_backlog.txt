@@ -26,3 +26,4 @@
 - Verificar requisitos de privacidade no bucket da cloud storage.
 
 - Verificar a função column_type_classifier e ver o que ela realmente faz e porque está tão grande.
+- Ler o código do matching para entender se realmente seria possível aumentar o número de matches para o esperado impresso pela unified_pipeline.
