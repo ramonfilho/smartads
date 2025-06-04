@@ -780,12 +780,13 @@ def apply_preprocessing_pipeline(df, params=None, fit=False):
     # 6. Feature engineering não-textual
     print("6. Aplicando feature engineering não-textual...")
     feature_params = params.get('feature_engineering', {})
+    feature_params['column_classifications'] = params.get('column_classifications', {})
     df, feature_params = feature_engineering(df, fit=fit, params=feature_params)
     
     # 7. Processamento de texto
     print("7. Processando features textuais...")
-    print(f"Colunas de texto identificadas ({text_cols}")
     text_params = params.get('text_processing', {})
+    text_params['column_classifications'] = params.get('column_classifications', {})
     df, text_params = text_feature_engineering(df, fit=fit, params=text_params)
     
     # 8. Feature engineering avançada
@@ -1051,7 +1052,7 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
             and info['confidence'] >= 0.7
         ]
     else:
-        # Usar o ColumnTypeClassifier para detectar colunas de texto
+        # Usar o ColumnTypeClassifier para detectar colunas de textoz
             classifier = ColumnTypeClassifier(
                 use_llm=False,
                 use_classification_cache=True,
