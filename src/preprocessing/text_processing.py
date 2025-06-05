@@ -399,6 +399,10 @@ def text_feature_engineering(df, fit=True, params=None):
     if params is None:
         params = {}
     
+    print("\n=== DEBUG: RASTREAMENTO DE COLUNAS EM feature_engineering ===")
+    print(f"Colunas na entrada: {len(df.columns)}")
+    initial_cols = set(df.columns)
+
     # Verificar se temos classificações nos params
     if 'column_classifications' in params:
         print("\n✓ Usando classificações existentes para processamento de texto")
@@ -473,5 +477,15 @@ def text_feature_engineering(df, fit=True, params=None):
     # Contar features TF-IDF criadas
     tfidf_count = len([col for col in df_result.columns if '_tfidf_' in col])
     print(f"Total de features TF-IDF criadas: {tfidf_count}")
+    
+    final_cols = set(df_result.columns)
+    removed_cols = initial_cols - final_cols
+    added_cols = final_cols - initial_cols
+    
+    print(f"\nColunas removidas em feature_engineering: {len(removed_cols)}")
+    for col in sorted(removed_cols):
+        print(f"  - {col}")
+    
+    print(f"\nColunas adicionadas: {len(added_cols)}")
     
     return df_result, params

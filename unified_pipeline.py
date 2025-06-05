@@ -869,7 +869,6 @@ def ensure_column_consistency(train_df, test_df):
     
     # Garantir a mesma ordem de colunas
     test_df = test_df[train_df.columns]
-    
     print(f"Alinhamento concluído: {len(missing_cols)} colunas adicionadas, {len(extra_cols)} removidas")
     return test_df
 

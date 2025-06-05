@@ -423,6 +423,11 @@ def encode_categorical_features(df, fit=True, params=None):
 def feature_engineering(df, fit=True, params=None):
     if params is None:
         params = {}
+
+    # ADICIONE ESTE DEBUG TEMPORÁRIO
+    print("\n=== DEBUG: RASTREAMENTO DE COLUNAS EM feature_engineering ===")
+    print(f"Colunas na entrada: {len(df.columns)}")
+    initial_cols = set(df.columns)
     
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
@@ -490,5 +495,15 @@ def feature_engineering(df, fit=True, params=None):
 
     # 3. Remover colunas originais após criação das features - MANTER!
     df_result = df_result.drop(columns=cols_to_remove, errors='ignore')
+
+    final_cols = set(df_result.columns)
+    removed_cols = initial_cols - final_cols
+    added_cols = final_cols - initial_cols
+    
+    print(f"\nColunas removidas em feature_engineering: {len(removed_cols)}")
+    for col in sorted(removed_cols):
+        print(f"  - {col}")
+    
+    print(f"\nColunas adicionadas: {len(added_cols)}")
     
     return df_result, params
