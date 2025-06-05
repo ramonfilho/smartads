@@ -421,7 +421,6 @@ def encode_categorical_features(df, fit=True, params=None):
     return df_result, params
 
 def feature_engineering(df, fit=True, params=None):
-    """Executa todo o pipeline de engenharia de features não-textuais."""
     if params is None:
         params = {}
     
@@ -443,10 +442,15 @@ def feature_engineering(df, fit=True, params=None):
     
     print("\n  Executando pipeline de feature engineering:")
     print(f"  Colunas iniciais: {df_result.shape[1]}")
+    
+    # ADICIONAR DEBUG AQUI
+    temporal_cols = [col for col in df_result.columns 
+                    if any(term in col.lower() for term in ['temporal', 'data', 'date', 'marca'])]
+    print(f"  Colunas temporais disponíveis: {temporal_cols}")
 
-    # 1. Colunas a remover (exceto texto)
+    # 1. Colunas a remover (exceto texto) - MANTER ESTE CÓDIGO!
     # Identificar colunas que são texto mas serão removidas
-    text_to_remove = ['como_te_llamas', 'cual_es_tu_telefono', 'cual_es_tu_instagram', 'cual_es_tu_profesion']  # ADICIONAR cual_es_tu_profesion
+    text_to_remove = ['como_te_llamas', 'cual_es_tu_telefono', 'cual_es_tu_instagram', 'cual_es_tu_profesion']
     
     cols_to_remove = [
         col for col in text_to_remove 
@@ -460,7 +464,21 @@ def feature_engineering(df, fit=True, params=None):
     
     # 2. Criar features
     df_result, params = create_identity_features(df_result, fit, params)
+    
+    # ADICIONAR DEBUG PARA TEMPORAL
+    temp_before = df_result.shape[1]
     df_result, params = create_temporal_features(df_result, fit, params)
+    temp_after = df_result.shape[1]
+    print(f"  Features temporais criadas: {temp_after - temp_before}")
+    
+    # Verificar se features temporais básicas foram criadas
+    temporal_basics = ['hour', 'day_of_week', 'month', 'year']
+    temporal_found = [f for f in temporal_basics if f in df_result.columns]
+    if not temporal_found:
+        print("  ⚠️ AVISO: Nenhuma feature temporal básica foi criada!")
+    else:
+        print(f"  ✓ Features temporais básicas criadas: {temporal_found}")
+    
     df_result, params = encode_categorical_features(df_result, fit, params)
 
     # DEBUG: Verificar quais colunas foram criadas
@@ -470,7 +488,7 @@ def feature_engineering(df, fit=True, params=None):
     salary_related = [col for col in df_result.columns if 'salary' in col]
     print(f"    Colunas com 'salary': {salary_related}")
 
-    # 3. Remover colunas originais após criação das features
+    # 3. Remover colunas originais após criação das features - MANTER!
     df_result = df_result.drop(columns=cols_to_remove, errors='ignore')
     
     return df_result, params
