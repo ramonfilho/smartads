@@ -782,7 +782,9 @@ def apply_preprocessing_pipeline(df, params=None, fit=False):
     print("6. Aplicando feature engineering não-textual...")
     feature_params = params.get('feature_engineering', {})
     feature_params['column_classifications'] = params.get('column_classifications', {})
-    df, feature_params = feature_engineering(df, fit=fit, params=feature_params)
+    preserve_cols = fit  # Preservar apenas durante o treino
+    df, feature_params = feature_engineering(df, fit=fit, params=feature_params, 
+                                            preserve_for_professional=preserve_cols)
 
     # 6.1. Remover colunas originais que não devem ser processadas como texto
     # Estas colunas já foram usadas para criar features derivadas

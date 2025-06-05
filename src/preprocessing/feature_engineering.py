@@ -420,7 +420,7 @@ def encode_categorical_features(df, fit=True, params=None):
     
     return df_result, params
 
-def feature_engineering(df, fit=True, params=None):
+def feature_engineering(df, fit=True, params=None, preserve_for_professional=False):
     if params is None:
         params = {}
 
@@ -486,24 +486,25 @@ def feature_engineering(df, fit=True, params=None):
     
     df_result, params = encode_categorical_features(df_result, fit, params)
 
-    # DEBUG: Verificar quais colunas foram criadas
-    print("\n  DEBUG - Colunas após encoding:")
-    encoded_cols = [col for col in df_result.columns if 'encoded' in col]
-    print(f"    Colunas encoded: {encoded_cols}")
-    salary_related = [col for col in df_result.columns if 'salary' in col]
-    print(f"    Colunas com 'salary': {salary_related}")
-
-    # 3. Remover colunas originais após criação das features - MANTER!
-    df_result = df_result.drop(columns=cols_to_remove, errors='ignore')
-
-    final_cols = set(df_result.columns)
-    removed_cols = initial_cols - final_cols
-    added_cols = final_cols - initial_cols
+    # 3. Remover colunas originais após criação das features (ou preservar)
+    if preserve_for_professional:
+        # Preservar colunas para uso posterior
+        if 'preserved_columns' not in params:
+            params['preserved_columns'] = {}
+        
+        # Salvar as colunas que seriam removidas
+        for col in cols_to_remove:
+            if col in df_result.columns:
+                params['preserved_columns'][col] = df_result[col].copy()
+        
+        print(f"  ℹ️ Preservadas {len(cols_to_remove)} colunas para processamento profissional")
+        print(f"     Colunas preservadas: {cols_to_remove}")
+    else:
+        # Remover normalmente
+        df_result = df_result.drop(columns=cols_to_remove, errors='ignore')
+        print(f"  ✓ Removidas {len(cols_to_remove)} colunas originais")
     
-    print(f"\nColunas removidas em feature_engineering: {len(removed_cols)}")
-    for col in sorted(removed_cols):
-        print(f"  - {col}")
-    
-    print(f"\nColunas adicionadas: {len(added_cols)}")
+    # REMOVER O DEBUG TEMPORÁRIO antes de retornar
+    # (remova as linhas de debug que adicionamos anteriormente)
     
     return df_result, params
