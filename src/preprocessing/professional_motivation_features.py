@@ -551,20 +551,11 @@ def create_career_term_detector(df, text_columns, fit=True, params=None):
 def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None):
     """
     Aprimora pesos TF-IDF para termos relacionados à carreira.
-    
-    Args:
-        df: DataFrame pandas
-        text_cols: Lista de colunas de texto para processamento
-        fit: Se True, ajusta vetorizadores, caso contrário usa existentes
-        params: Dicionário com parâmetros para transform
-        
-    Returns:
-        DataFrame com features TF-IDF aprimoradas
-        Dicionário com parâmetros atualizados
     """
     if params is None:
         params = {}
     
+    # CORREÇÃO: Usar estrutura correta
     if 'vectorizers' not in params:
         params['vectorizers'] = {}
     if 'career_tfidf' not in params['vectorizers']:
@@ -646,17 +637,17 @@ def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None):
             params['vectorizers']['career_tfidf'][col_clean] = {
                 'vectorizer': vectorizer,
                 'feature_names': vectorizer.get_feature_names_out().tolist(),
-                'career_terms': career_terms_dict  # NOVO: Armazenar o dicionário de termos de carreira
+                'career_terms': career_terms_dict  # Também salvar os termos
             }
         
         # Verificar se temos um vetorizador para esta coluna
-        if col_clean not in params['career_tfidf']:
+        if col_clean not in params['vectorizers']['career_tfidf']:
             print(f"Vetorizador não encontrado para {col_clean}, pulando...")
             continue
             
         # Obter vetorizador e nomes de features
-        vectorizer = params['career_tfidf'][col_clean]['vectorizer']
-        feature_names = params['career_tfidf'][col_clean]['feature_names']
+        vectorizer = params['vectorizers']['career_tfidf'][col_clean]['vectorizer']
+        feature_names = params['vectorizers']['career_tfidf'][col_clean]['feature_names']
         
         # Inicializar matriz de zeros para os resultados
         result_matrix = np.zeros((len(df), len(feature_names)))

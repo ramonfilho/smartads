@@ -189,38 +189,34 @@ def extract_tfidf_features(df, text_cols, fit=True, params=None):
             except Exception as e:
                 print(f"Erro ao processar TF-IDF para '{col}': {e}")
                 
-            else:  # transform mode
-                if col in params['tfidf'] and 'vectorizer' in params['tfidf'][col]:
-                    tfidf = params['tfidf'][col]['vectorizer']
-                    feature_names = params['tfidf'][col]['feature_names']
+        else:  # transform mode
+            if col in params['tfidf'] and 'vectorizer' in params['tfidf'][col]:
+                tfidf = params['tfidf'][col]['vectorizer']
+                feature_names = params['tfidf'][col]['feature_names']
+                
+                try:
+                    tfidf_matrix = tfidf.transform(df_result[clean_col].fillna(''))
                     
-                    try:
-                        print(f"  DEBUG: Transformando TF-IDF para '{col}'")
-                        print(f"    - Número de features esperadas: {len(feature_names)}")
-                        
-                        tfidf_matrix = tfidf.transform(df_result[clean_col].fillna(''))
-                        
-                        # IMPORTANTE: Criar DataFrame com índices corretos
-                        tfidf_df = pd.DataFrame(
-                            tfidf_matrix.toarray(), 
-                            index=df_result.index
-                        )
-                        
-                        # Usar os mesmos nomes de colunas do fit
-                        from src.utils.feature_naming import create_tfidf_column_name
-                        for i, term in enumerate(feature_names):
-                            col_name = create_tfidf_column_name(col, term)
-                            tfidf_df.columns.values[i] = col_name
-                        
-                        # Concatenar ao resultado
-                        df_result = pd.concat([df_result, tfidf_df], axis=1)
-                        
-                        print(f"    - TF-IDF aplicado com sucesso! {len(feature_names)} features criadas")
-                        
-                    except Exception as e:
-                        print(f"Erro ao transformar TF-IDF para '{col}': {e}")
-                        import traceback
-                        traceback.print_exc()
+                    # Criar DataFrame com nomes de colunas corretos
+                    from src.utils.feature_naming import create_tfidf_column_name
+                    
+                    # Primeiro criar lista de nomes de colunas
+                    column_names = []
+                    for term in feature_names:
+                        col_name = create_tfidf_column_name(col, term)
+                        column_names.append(col_name)
+                    
+                    # Criar DataFrame com os nomes corretos desde o início
+                    tfidf_df = pd.DataFrame(
+                        tfidf_matrix.toarray(), 
+                        index=df_result.index,
+                        columns=column_names  # ✅ Passar nomes na criação
+                    )
+                    
+                    df_result = pd.concat([df_result, tfidf_df], axis=1)
+                    
+                except Exception as e:
+                    print(f"Erro ao transformar TF-IDF para '{col}': {e}")
     
     return df_result, params
 

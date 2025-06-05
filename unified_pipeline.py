@@ -1235,10 +1235,11 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
 
         temp_df = df[[col]].copy()
 
+        # Na linha onde chama enhance_tfidf_for_career_terms
         tfidf_df, tfidf_params = enhance_tfidf_for_career_terms(
             temp_df, [col],
             fit=fit,
-            params=params['professional_features'].get('career_tfidf', {}).get(col_key) if not fit else None
+            params=params  # ✅ Passar params completos, não subchave
         )
 
         if fit:
