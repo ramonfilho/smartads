@@ -565,8 +565,10 @@ def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None):
     if params is None:
         params = {}
     
-    if 'career_tfidf' not in params:
-        params['career_tfidf'] = {}
+    if 'vectorizers' not in params:
+        params['vectorizers'] = {}
+    if 'career_tfidf' not in params['vectorizers']:
+        params['vectorizers']['career_tfidf'] = {}
     
     df_result = pd.DataFrame(index=df.index)
     
@@ -641,7 +643,7 @@ def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None):
             vectorizer.fit(valid_texts)
             
             # Armazenar vetorizador para uso futuro
-            params['career_tfidf'][col_clean] = {
+            params['vectorizers']['career_tfidf'][col_clean] = {
                 'vectorizer': vectorizer,
                 'feature_names': vectorizer.get_feature_names_out().tolist(),
                 'career_terms': career_terms_dict  # NOVO: Armazenar o dicionário de termos de carreira

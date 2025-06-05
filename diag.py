@@ -1,34 +1,34 @@
-import pandas as pd
 from unified_pipeline import unified_data_pipeline
+import time
 
-print("=== TESTE DE PRESERVAÇÃO DE COLUNAS ===\n")
+print("=== TESTE DO PIPELINE UNIFICADO ===\n")
 
-# Execute com poucos dados
+start_time = time.time()
+
+# Execute com poucos dados para teste rápido
 results = unified_data_pipeline(
     test_mode=True,
-    max_samples=500,  # Mais amostras para evitar erro de split
+    max_samples=500,
     apply_feature_selection=False,
     use_checkpoints=False,
     clear_cache=True
 )
 
-if results and 'params' in results:
-    params = results['params']
+end_time = time.time()
+
+if results:
+    print("\n=== RESULTADOS ===")
+    print(f"Train shape: {results['train'].shape}")
+    print(f"Val shape: {results['validation'].shape}")
+    print(f"Test shape: {results['test'].shape}")
+    print(f"\nTempo total: {(end_time - start_time)/60:.1f} minutos")
     
-    # Verificar se colunas foram preservadas
-    if 'feature_engineering' in params:
-        fe_params = params['feature_engineering']
-        if 'preserved_columns' in fe_params:
-            preserved = fe_params['preserved_columns']
-            print(f"\n✅ SUCESSO! {len(preserved)} colunas preservadas:")
-            for col in preserved.keys():
-                print(f"   - {col}")
-        else:
-            print("\n❌ ERRO: Nenhuma coluna foi preservada!")
+    # Verificar consistência
+    train_cols = set(results['train'].columns)
+    val_cols = set(results['validation'].columns)
+    test_cols = set(results['test'].columns)
     
-    # Verificar se as colunas ainda existem no DataFrame final
-    train_df = results['train']
-    print(f"\nColunas importantes no dataset final:")
-    for col in ['cual_es_tu_profesion', 'como_te_llamas', 'cual_es_tu_instagram']:
-        exists = col in train_df.columns
-        print(f"   {col}: {'✅ Existe' if exists else '❌ Removida'}")
+    if train_cols == val_cols == test_cols:
+        print("\n✅ SUCESSO: Todos os datasets têm as mesmas colunas!")
+    else:
+        print("\n❌ ERRO: Inconsistência nas colunas!")

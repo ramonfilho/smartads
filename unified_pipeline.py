@@ -1159,7 +1159,7 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
             motiv_df, motiv_params = create_professional_motivation_score(
                 batch_df, [col], 
                 fit=fit and batch_idx == 0,
-                params=params['professional_features']['professional_motivation'] if not (fit and batch_idx == 0) else None
+                params=params['professional_features'].get('professional_motivation') if not (fit and batch_idx == 0) else None
             )
             if fit and batch_idx == 0:
                 params['professional_features']['professional_motivation'] = motiv_params
@@ -1177,7 +1177,7 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
             asp_df, asp_params = analyze_aspiration_sentiment(
                 batch_df, [col],
                 fit=fit and batch_idx == 0,
-                params=params['professional_features']['aspiration_sentiment'] if not (fit and batch_idx == 0) else None
+                params=params['professional_features'].get('aspiration_sentiment') if not (fit and batch_idx == 0) else None
             )
             if fit and batch_idx == 0:
                 params['professional_features']['aspiration_sentiment'] = asp_params
@@ -1195,7 +1195,7 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
             comm_df, comm_params = detect_commitment_expressions(
                 batch_df, [col],
                 fit=fit and batch_idx == 0,
-                params=params['professional_features']['commitment'] if not (fit and batch_idx == 0) else None
+                params=params['professional_features'].get('commitment') if not (fit and batch_idx == 0) else None
             )
             if fit and batch_idx == 0:
                 params['professional_features']['commitment'] = comm_params
@@ -1213,7 +1213,7 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
             career_df, career_params = create_career_term_detector(
                 batch_df, [col],
                 fit=fit and batch_idx == 0,
-                params=params['professional_features']['career_terms'] if not (fit and batch_idx == 0) else None
+                params=params['professional_features'].get('career_terms') if not (fit and batch_idx == 0) else None
             )
             if fit and batch_idx == 0:
                 params['professional_features']['career_terms'] = career_params
@@ -1238,7 +1238,7 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
         tfidf_df, tfidf_params = enhance_tfidf_for_career_terms(
             temp_df, [col],
             fit=fit,
-            params=params['professional_features']['career_tfidf'].get(col_key) if not fit else None
+            params=params['professional_features'].get('career_tfidf', {}).get(col_key) if not fit else None
         )
 
         if fit:
@@ -1559,6 +1559,46 @@ def apply_feature_selection_pipeline(train_df, val_df, test_df, params=None,
     
     return train_selected, val_selected, test_selected, final_importance
 
+def apply_complete_feature_pipeline(df, params=None, fit=True, batch_size=5000):
+    """
+    Aplica TODAS as etapas de feature engineering de uma vez.
+    Combina PARTE 2 (preprocessing) + PARTE 3 (professional features).
+    
+    Args:
+        df: DataFrame para processar
+        params: Parâmetros de todas as transformações
+        fit: Se True, aprende parâmetros; se False, aplica existentes
+        batch_size: Tamanho do batch para processamento
+        
+    Returns:
+        df_final: DataFrame com todas as features
+        params: Parâmetros atualizados
+    """
+    if params is None:
+        params = {}
+    
+    print(f"\n{'='*60}")
+    print(f"PROCESSAMENTO COMPLETO - Modo: {'FIT' if fit else 'TRANSFORM'}")
+    print(f"{'='*60}")
+    print(f"DataFrame inicial: {df.shape}")
+    
+    # PARTE 2: Pré-processamento e Feature Engineering básico
+    print("\n>>> PARTE 2: Pré-processamento e Feature Engineering")
+    df_processed, params = apply_preprocessing_pipeline(df, params=params, fit=fit)
+    print(f"Após PARTE 2: {df_processed.shape}")
+    
+    # PARTE 3: Feature Engineering Profissional
+    print("\n>>> PARTE 3: Feature Engineering Profissional")
+    df_final, params = apply_professional_features_pipeline(
+        df_processed, params=params, fit=fit, batch_size=batch_size
+    )
+    print(f"Após PARTE 3: {df_final.shape}")
+    
+    print(f"\nProcessamento completo finalizado: {df.shape} → {df_final.shape}")
+    print(f"{'='*60}\n")
+    
+    return df_final, params
+
 # ============================================================================
 # PIPELINE UNIFICADO PRINCIPAL
 # ============================================================================
@@ -1768,123 +1808,97 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     val_original_shape = val_df.shape
     test_original_shape = test_df.shape
     
+# ========================================================================
+    # PARTE 2 + 3: PROCESSAMENTO COMPLETO DE FEATURES
     # ========================================================================
-    # PARTE 2: PRÉ-PROCESSAMENTO E FEATURE ENGINEERING 1
-    # ========================================================================
+    print("\n=== PROCESSAMENTO COMPLETO DE FEATURES (PARTE 2 + 3) ===")
     
-    print("\n=== PARTE 2: PRÉ-PROCESSAMENTO E FEATURE ENGINEERING 1 ===")
-    
-    # CHECKPOINT 2: Verificar se já temos dados pré-processados
-    checkpoint_preproc = load_checkpoint_conditional('preprocessed')
-    if checkpoint_preproc:
-        train_after_preproc_shape = train_processed.shape
-        val_after_preproc_shape = val_processed.shape
-        test_after_preproc_shape = test_processed.shape
-        print("✓ Usando checkpoint de pré-processamento")
-        train_processed = checkpoint_preproc['train']
-        val_processed = checkpoint_preproc['val']
-        test_processed = checkpoint_preproc['test']
-        params = checkpoint_preproc['params']
-    else:
-        # 1. Processar o conjunto de treinamento com fit=True para aprender parâmetros
-        print("\n--- Processando conjunto de treinamento ---")
-        train_processed, params = apply_preprocessing_pipeline(train_df, fit=True)
-
-        # Após o processamento do train
-        print("\n=== DIAGNÓSTICO DE COLUNAS ===")
-        print(f"Colunas com 'salary': {[c for c in train_processed.columns if 'salary' in c]}")
-        print(f"Colunas com 'age': {[c for c in train_processed.columns if 'age' in c]}")
-        print(f"Colunas com 'country': {[c for c in train_processed.columns if 'country' in c]}")
-        print(f"Total de colunas TF-IDF: {len([c for c in train_processed.columns if '_tfidf_' in c])}")
-        
-        # 2. Processar o conjunto de validação com fit=False para aplicar parâmetros aprendidos
-        print("\n--- Processando conjunto de validação ---")
-        val_processed, _ = apply_preprocessing_pipeline(val_df, params=params, fit=False)
-        
-        # 3. Garantir consistência de colunas com o treino
-        val_processed = ensure_column_consistency(train_processed, val_processed)
-        
-        # 4. Processar o conjunto de teste com fit=False para aplicar parâmetros aprendidos
-        print("\n--- Processando conjunto de teste ---")
-        test_processed, _ = apply_preprocessing_pipeline(test_df, params=params, fit=False)
-        
-        # 5. Garantir consistência de colunas com o treino
-        test_processed = ensure_column_consistency(train_processed, test_processed)
-        
-        # Guardar shapes após pré-processamento
-        train_after_preproc_shape = train_processed.shape
-        val_after_preproc_shape = val_processed.shape
-        test_after_preproc_shape = test_processed.shape
-
-        # Garantir que os DataFrames finais têm a mesma nomeação de colunas
-        train_processed = standardize_dataframe_columns(train_processed)
-        val_processed = standardize_dataframe_columns(val_processed)
-        test_processed = standardize_dataframe_columns(test_processed)
-    
-        # Salvar checkpoint
-        save_checkpoint({
-            'train': train_processed,
-            'val': val_processed,
-            'test': test_processed,
-            'params': params
-        }, 'preprocessed')
-
-    # ========================================================================
-    # PARTE 3: FEATURE ENGINEERING PROFISSIONAL
-    # ========================================================================
-    
-    print("\n=== PARTE 3: FEATURE ENGINEERING PROFISSIONAL ===")
-    
-    # CHECKPOINT 3: Verificar se já temos features profissionais
-    checkpoint_prof = load_checkpoint_conditional('professional_features')
-    if checkpoint_prof:
-        print("✓ Usando checkpoint de features profissionais")
+    # CHECKPOINT: Verificar se já temos os dados processados
+    checkpoint_complete = load_checkpoint_conditional('complete_features')
+    if checkpoint_complete:
+        print("✓ Usando checkpoint de features completas")
+        train_final = checkpoint_complete['train']
+        val_final = checkpoint_complete['val']
+        test_final = checkpoint_complete['test']
+        params = checkpoint_complete['params']
+        # ADICIONAR ESTAS LINHAS:
+        train_after_preproc_shape = checkpoint_complete.get('train_preproc_shape', (train_final.shape[0], train_final.shape[1] // 2))
+        val_after_preproc_shape = checkpoint_complete.get('val_preproc_shape', (val_final.shape[0], val_final.shape[1] // 2))
+        test_after_preproc_shape = checkpoint_complete.get('test_preproc_shape', (test_final.shape[0], test_final.shape[1] // 2))
         train_after_prof_shape = train_final.shape
         val_after_prof_shape = val_final.shape
         test_after_prof_shape = test_final.shape
+        # ADICIONAR TAMBÉM:
+        train_after_features = train_final.shape
+        val_after_features = val_final.shape
+        test_after_features = test_final.shape
     else:
-        # 1. Aplicar features profissionais no conjunto de treinamento
-        print("\n--- Aplicando features profissionais no conjunto de treinamento ---")
-        train_final, params = apply_professional_features_pipeline(
-            train_processed, params=params, fit=True, batch_size=batch_size
+        # Processar TRAIN com todas as transformações
+        print("\n--- Processando conjunto de TREINAMENTO (completo) ---")
+        train_final, params = apply_complete_feature_pipeline(
+            train_df, 
+            params=None, 
+            fit=True, 
+            batch_size=batch_size
         )
         
-        # 2. Aplicar features profissionais no conjunto de validação
-        print("\n--- Aplicando features profissionais no conjunto de validação ---")
-        val_final, _ = apply_professional_features_pipeline(
-            val_processed, params=params, fit=False, batch_size=batch_size
+        # Para relatório, assumir que shape intermediário é metade das features finais
+        # (aproximação, já que não temos mais separação entre PARTE 2 e 3)
+        train_after_preproc_shape = (train_final.shape[0], train_final.shape[1] // 2)
+        train_after_prof_shape = train_final.shape
+        train_after_features = train_final.shape  # ADICIONAR ESTA LINHA
+        
+        # Processar VALIDATION com parâmetros do train
+        print("\n--- Processando conjunto de VALIDAÇÃO (completo) ---")
+        val_final, _ = apply_complete_feature_pipeline(
+            val_df, 
+            params=params, 
+            fit=False, 
+            batch_size=batch_size
         )
         
-        # 3. Garantir consistência de colunas
+        # Garantir consistência de colunas
         val_final = ensure_column_consistency(train_final, val_final)
+        val_after_preproc_shape = (val_final.shape[0], val_final.shape[1] // 2)
+        val_after_prof_shape = val_final.shape
+        val_after_features = val_final.shape  # ADICIONAR ESTA LINHA
         
-        # 4. Aplicar features profissionais no conjunto de teste
-        print("\n--- Aplicando features profissionais no conjunto de teste ---")
-        test_final, _ = apply_professional_features_pipeline(
-            test_processed, params=params, fit=False, batch_size=batch_size
+        # Processar TEST com parâmetros do train
+        print("\n--- Processando conjunto de TESTE (completo) ---")
+        test_final, _ = apply_complete_feature_pipeline(
+            test_df, 
+            params=params, 
+            fit=False, 
+            batch_size=batch_size
         )
         
-        # 5. Garantir consistência de colunas
+        # Garantir consistência de colunas
         test_final = ensure_column_consistency(train_final, test_final)
-        
-        # Guardar shapes após feature engineering profissional
-        train_after_prof_shape = train_final.shape
-        val_after_prof_shape = val_final.shape
+        test_after_preproc_shape = (test_final.shape[0], test_final.shape[1] // 2)
         test_after_prof_shape = test_final.shape
-
+        test_after_features = test_final.shape  # ADICIONAR ESTA LINHA
+        
         # Garantir que os DataFrames finais têm a mesma nomeação de colunas
         train_final = standardize_dataframe_columns(train_final)
         val_final = standardize_dataframe_columns(val_final)
         test_final = standardize_dataframe_columns(test_final)
-    
-        # Salvar checkpoint
+        
+        # Salvar checkpoint com todas as informações
         save_checkpoint({
             'train': train_final,
             'val': val_final,
             'test': test_final,
-            'params': params
-        }, 'professional_features')
+            'params': params,
+            'train_preproc_shape': train_after_preproc_shape,
+            'val_preproc_shape': val_after_preproc_shape,
+            'test_preproc_shape': test_after_preproc_shape
+        }, 'complete_features')
 
+    # Guardar shapes para relatório final
+    train_after_features = train_final.shape
+    val_after_features = val_final.shape
+    test_after_features = test_final.shape
+    
     # ========================================================================
     # PARTE 5: FEATURE SELECTION (OPCIONAL)
     # ========================================================================
@@ -1998,11 +2012,11 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     print("========================================================================")
     
     print(f"\n📊 EVOLUÇÃO DAS DIMENSÕES:")
-    print(f"   Dataset   | Original | Preproc  | Prof Eng | Final   | Total Adicionadas")
-    print(f"   ----------|----------|----------|----------|---------|------------------")
-    print(f"   Train     | {train_original_shape[1]:>8} | {train_after_preproc_shape[1]:>8} | {train_after_prof_shape[1]:>8} | {train_final.shape[1]:>7} | {train_final.shape[1] - train_original_shape[1]:>17}")
-    print(f"   Valid     | {val_original_shape[1]:>8} | {val_after_preproc_shape[1]:>8} | {val_after_prof_shape[1]:>8} | {val_final.shape[1]:>7} | {val_final.shape[1] - val_original_shape[1]:>17}")
-    print(f"   Test      | {test_original_shape[1]:>8} | {test_after_preproc_shape[1]:>8} | {test_after_prof_shape[1]:>8} | {test_final.shape[1]:>7} | {test_final.shape[1] - test_original_shape[1]:>17}")
+    print(f"   Dataset   | Original | Features | Final   | Total Adicionadas")
+    print(f"   ----------|----------|----------|---------|------------------")
+    print(f"   Train     | {train_original_shape[1]:>8} | {train_after_features[1]:>8} | {train_final.shape[1]:>7} | {train_final.shape[1] - train_original_shape[1]:>17}")
+    print(f"   Valid     | {val_original_shape[1]:>8} | {val_after_features[1]:>8} | {val_final.shape[1]:>7} | {val_final.shape[1] - val_original_shape[1]:>17}")
+    print(f"   Test      | {test_original_shape[1]:>8} | {test_after_features[1]:>8} | {test_final.shape[1]:>7} | {test_final.shape[1] - test_original_shape[1]:>17}")
     
     if apply_feature_selection and 'feature_selection' in params:
         print(f"\n📉 FEATURE SELECTION:")
