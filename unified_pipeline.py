@@ -33,6 +33,7 @@ from datetime import datetime
 from sklearn.model_selection import train_test_split
 import pickle
 import hashlib
+from src.utils.parameter_manager import ParameterManager
 
 # Adicionar o diretório raiz do projeto ao sys.path
 project_root = "/Users/ramonmoreira/desktop/smart_ads"
@@ -724,14 +725,26 @@ def validate_production_compatibility(df, show_warnings=True):
 # FUNÇÕES DA PARTE 2 - PRÉ-PROCESSAMENTO
 # ============================================================================
 
-def apply_preprocessing_pipeline(df, params=None, fit=False):
-    if params is None:
-        params = {}
+def apply_preprocessing_pipeline(df, params=None, fit=False, param_manager=None):
+    """Pipeline de pré-processamento com ParameterManager integrado."""
+    
+    if param_manager is None:
+        param_manager = ParameterManager()
+        # Migrar params antigos se existirem
+        if params:
+            print("  ℹ️ Migrando parâmetros antigos para ParameterManager...")
+            # Migrar classificações
+            if 'column_classifications' in params:
+                param_manager.save_preprocessing_params('column_classifications', 
+                                                      params['column_classifications'])
+            # Migrar outros params conforme necessário
     
     print(f"Iniciando pipeline de pré-processamento para DataFrame: {df.shape}")
     
-    # Classificar apenas uma vez no início se não existir
-    if 'column_classifications' not in params:
+    # Classificar colunas apenas uma vez no início se não existir
+    classifications = param_manager.get_preprocessing_params('column_classifications')
+    
+    if not classifications:
         print("\n🔍 Realizando classificação inicial de colunas...")
         classifier = ColumnTypeClassifier(
             use_llm=False,
@@ -739,113 +752,121 @@ def apply_preprocessing_pipeline(df, params=None, fit=False):
             confidence_threshold=0.6
         )
         classifications = classifier.classify_dataframe(df)
-        params['column_classifications'] = classifications
+        param_manager.save_preprocessing_params('column_classifications', classifications)
     else:
         print("\n✓ Usando classificações de colunas existentes dos params")
-        classifications = params['column_classifications']
 
-    # Filtrar apenas colunas de texto usando classificações salvas
-    if 'excluded_from_text_processing' not in params:
-        params['excluded_from_text_processing'] = [
+    # Definir exclusões de processamento de texto
+    excluded_cols = param_manager.params['feature_engineering'].get('excluded_columns', [])
+    if not excluded_cols and fit:
+        excluded_cols = [
             'como_te_llamas',
             'cual_es_tu_instagram', 
             'cual_es_tu_profesion',
             'cual_es_tu_telefono'
         ]
-        print(f"✓ Definidas {len(params['excluded_from_text_processing'])} colunas excluídas do processamento de texto")
+        param_manager.track_excluded_columns(excluded_cols)
+        print(f"✓ Definidas {len(excluded_cols)} colunas excluídas do processamento de texto")
     
     # 1. Consolidar colunas de qualidade
     print("1. Consolidando colunas de qualidade...")
-    quality_params = params.get('quality_columns', {})
+    quality_params = param_manager.get_preprocessing_params('quality_columns')
     df, quality_params = consolidate_quality_columns(df, fit=fit, params=quality_params)
+    if fit:
+        param_manager.save_preprocessing_params('quality_columns', quality_params)
     
-    # 2. Tratamento de valores ausentes 
+    # 2. Tratamento de valores ausentes
     print("2. Tratando valores ausentes...")
-    missing_params = params.get('missing_values', {})
+    missing_params = param_manager.get_preprocessing_params('missing_values')
     df, missing_params = handle_missing_values(df, fit=fit, params=missing_params)
+    if fit:
+        param_manager.save_preprocessing_params('missing_values', missing_params)
     
     # 3. Tratamento de outliers
     print("3. Tratando outliers...")
-    outlier_params = params.get('outliers', {})
+    outlier_params = param_manager.get_preprocessing_params('outliers')
     df, outlier_params = handle_outliers(df, fit=fit, params=outlier_params)
+    if fit:
+        param_manager.save_preprocessing_params('outliers', outlier_params)
     
     # 4. Normalização de valores
     print("4. Normalizando valores numéricos...")
-    norm_params = params.get('normalization', {})
+    norm_params = param_manager.get_preprocessing_params('normalization')
     df, norm_params = normalize_values(df, fit=fit, params=norm_params)
+    if fit:
+        param_manager.save_preprocessing_params('normalization', norm_params)
     
     # 5. Converter tipos de dados
-    print("5. Convertendo dados temporais para datetime ...")
+    print("5. Convertendo dados temporais para datetime...")
     df, _ = convert_data_types(df, fit=fit)
     
     # 6. Feature engineering não-textual
     print("6. Aplicando feature engineering não-textual...")
-    feature_params = params.get('feature_engineering', {})
-    feature_params['column_classifications'] = params.get('column_classifications', {})
+    
+    # Criar params temporário para compatibilidade
+    temp_params = {
+        'column_classifications': classifications,
+        'excluded_from_text_processing': excluded_cols
+    }
+    
     preserve_cols = fit  # Preservar apenas durante o treino
-    df, feature_params = feature_engineering(df, fit=fit, params=feature_params, 
-                                            preserve_for_professional=preserve_cols)
+    df, feature_params = feature_engineering(df, fit=fit, params=temp_params, 
+                                           preserve_for_professional=preserve_cols)
+    
+    # Salvar parâmetros de feature engineering
+    if fit:
+        param_manager.save_preprocessing_params('categorical_encoding', 
+                                              feature_params.get('categorical_encoding', {}))
+        if 'preserved_columns' in feature_params:
+            param_manager.params['feature_engineering']['preserved_columns'] = feature_params['preserved_columns']
 
     # 6.1. Remover colunas originais que não devem ser processadas como texto
-    # Estas colunas já foram usadas para criar features derivadas
-    cols_to_remove = params.get('columns_to_remove_after_encoding', 
-                               ['como_te_llamas', 'cual_es_tu_telefono', 
-                                'cual_es_tu_instagram', 'cual_es_tu_profesion'])
+    cols_to_remove = param_manager.params['feature_engineering'].get('excluded_columns', [])
     
     cols_removed = []
-    cols_not_found = []
-    
     for col in cols_to_remove:
         if col in df.columns:
             df = df.drop(columns=[col])
             cols_removed.append(col)
-        else:
-            cols_not_found.append(col)
     
     if cols_removed:
         print(f"6.1. Removidas {len(cols_removed)} colunas originais após encoding:")
         for col in cols_removed:
             print(f"     - {col}")
     
-    if cols_not_found:
-        print(f"     ℹ️ {len(cols_not_found)} colunas já não existiam no DataFrame")
-    
-    # Atualizar parâmetros para rastreabilidade
-    params['removed_original_columns'] = cols_removed
-    
     # 7. Processamento de texto
     print("7. Processando features textuais...")
-    text_params = params.get('text_processing', {})
-    text_params['column_classifications'] = params.get('column_classifications', {})
-    df, text_params = text_feature_engineering(df, fit=fit, params=text_params)
+    
+    # Passar param_manager em vez de params
+    df, param_manager = text_feature_engineering(df, fit=fit, param_manager=param_manager)
     
     # 8. Feature engineering avançada
     print("8. Aplicando feature engineering avançada...")
-    advanced_params = params.get('advanced_features', {})
-    advanced_params['column_classifications'] = params.get('column_classifications', {})
-    df, advanced_params = advanced_feature_engineering(df, fit=fit, params=advanced_params)
+    
+    # Criar params temporário para compatibilidade
+    advanced_temp_params = {
+        'column_classifications': classifications
+    }
+    
+    df, advanced_params = advanced_feature_engineering(df, fit=fit, params=advanced_temp_params)
+    
+    # Rastrear features criadas
+    if fit:
+        # Contar features criadas
+        feature_cols = [col for col in df.columns if any(pattern in col for pattern in 
+                       ['_tfidf_', '_sentiment', '_motiv_', 'salary_', '_x_', '_encoded'])]
+        param_manager.track_created_features(feature_cols)
 
-    # ADICIONAR DEBUG:
+    # DEBUG
     print(f"  Features após advanced engineering: {df.shape[1]}")
     advanced_features = [col for col in df.columns if any(pattern in col for pattern in 
                         ['salary_diff', 'salary_ratio', 'country_x_', 'age_x_', 'hour_x_'])]
     print(f"  Features avançadas criadas: {len(advanced_features)}")
     if len(advanced_features) > 0:
         print(f"  Exemplos: {advanced_features[:5]}")
-
-    # 9. Compilar parâmetros atualizados
-    updated_params = {
-        'quality_columns': quality_params,
-        'missing_values': missing_params,
-        'outliers': outlier_params,
-        'normalization': norm_params,
-        'feature_engineering': feature_params,
-        'text_processing': text_params,
-        'advanced_features': advanced_params
-    }
     
     print(f"Pipeline concluída! Dimensões finais: {df.shape}")
-    return df, updated_params
+    return df, param_manager
 
 def ensure_column_consistency(train_df, test_df):
     """Garante que o DataFrame de teste tenha as mesmas colunas que o de treinamento."""
@@ -912,15 +933,11 @@ def identify_text_columns_for_professional(df, params=None):
     
     return text_columns
 
-def perform_topic_modeling_fixed(df, text_cols, n_topics=5, fit=True, params=None):
-    """
-    Extrai tópicos latentes dos textos usando LDA - VERSÃO CORRIGIDA.
-    """
-    if params is None:
-        params = {}
+def perform_topic_modeling_fixed(df, text_cols, n_topics=5, fit=True, params=None, param_manager=None):
+    """Extrai tópicos latentes dos textos usando LDA - COM PARAMETER MANAGER"""
     
-    if 'lda' not in params:
-        params['lda'] = {}
+    if param_manager is None:
+        param_manager = ParameterManager()
     
     df_result = df.copy()
     
@@ -987,13 +1004,16 @@ def perform_topic_modeling_fixed(df, text_cols, n_topics=5, fit=True, params=Non
                 for i, pos in enumerate(valid_positions):
                     topic_distribution[pos] = topic_dist_valid[i]
                 
-                # Armazenar modelo
-                params['lda'][col_clean] = {
-                    'model': lda,
-                    'vectorizer': vectorizer,
-                    'n_topics': n_topics,
-                    'feature_names': vectorizer.get_feature_names_out().tolist()
-                }
+                # MUDANÇA: Salvar modelo LDA usando param_manager
+                param_manager.save_lda_model(
+                    {
+                        'model': lda,
+                        'vectorizer': vectorizer,
+                        'n_topics': n_topics,
+                        'feature_names': vectorizer.get_feature_names_out().tolist()
+                    },
+                    name=col_clean
+                )
                 
                 # Adicionar features ao DataFrame
                 for topic_idx in range(n_topics):
@@ -1016,48 +1036,55 @@ def perform_topic_modeling_fixed(df, text_cols, n_topics=5, fit=True, params=Non
                 traceback.print_exc()
         
         else:  # transform mode
-            if col_clean in params['lda']:
-                try:
-                    print(f"  🔄 Aplicando LDA pré-treinado...")
-                    
-                    # Recuperar modelo e vetorizador
-                    lda = params['lda'][col_clean]['model']
-                    vectorizer = params['lda'][col_clean]['vectorizer']
-                    n_topics = params['lda'][col_clean]['n_topics']
-                    
-                    # Vetorizar e transformar textos válidos
-                    doc_term_matrix = vectorizer.transform(valid_texts)
-                    topic_dist_valid = lda.transform(doc_term_matrix)
-                    
-                    # CORREÇÃO: Criar distribuição completa usando posições
-                    topic_distribution = np.zeros((len(df), n_topics))
-                    valid_mask = texts.str.len() > 10
-                    valid_positions = np.where(valid_mask)[0]
-                    
-                    for i, pos in enumerate(valid_positions):
-                        topic_distribution[pos] = topic_dist_valid[i]
-                    
-                    # Adicionar features
-                    for topic_idx in range(n_topics):
-                        feature_name = standardize_feature_name(f'{col_clean}_topic_{topic_idx+1}')
-                        df_result[feature_name] = topic_distribution[:, topic_idx]
-                        lda_features_created += 1
-                    
-                    # Tópico dominante
-                    dominant_topic_name = standardize_feature_name(f'{col_clean}_dominant_topic')
-                    df_result[dominant_topic_name] = np.argmax(topic_distribution, axis=1) + 1
-                    lda_features_created += 1
-                    
-                    print(f"  ✅ LDA aplicado! {n_topics + 1} features criadas")
-                    
-                except Exception as e:
-                    print(f"  ❌ Erro ao transformar com LDA: {e}")
-            else:
+            # MUDANÇA: Recuperar usando param_manager
+            model_data = param_manager.get_lda_model(col_clean)
+            
+            if not model_data:
                 print(f"  ⚠️ Modelo LDA não encontrado para '{col_clean}'")
+                continue
+                
+            try:
+                print(f"  🔄 Aplicando LDA pré-treinado...")
+                
+                # Recuperar modelo e vetorizador DO PARAM_MANAGER
+                lda = model_data['model']
+                vectorizer = model_data['vectorizer']
+                n_topics = model_data['n_topics']
+                feature_names = model_data['feature_names']
+                
+                # Vetorizar e transformar textos válidos
+                doc_term_matrix = vectorizer.transform(valid_texts)
+                topic_dist_valid = lda.transform(doc_term_matrix)
+                
+                # Criar distribuição completa usando posições
+                topic_distribution = np.zeros((len(df), n_topics))
+                valid_mask = texts.str.len() > 10
+                valid_positions = np.where(valid_mask)[0]
+                
+                for i, pos in enumerate(valid_positions):
+                    topic_distribution[pos] = topic_dist_valid[i]
+                
+                # Adicionar features
+                for topic_idx in range(n_topics):
+                    feature_name = standardize_feature_name(f'{col_clean}_topic_{topic_idx+1}')
+                    df_result[feature_name] = topic_distribution[:, topic_idx]
+                    lda_features_created += 1
+                
+                # Tópico dominante
+                dominant_topic_name = standardize_feature_name(f'{col_clean}_dominant_topic')
+                df_result[dominant_topic_name] = np.argmax(topic_distribution, axis=1) + 1
+                lda_features_created += 1
+                
+                print(f"  ✅ LDA aplicado! {n_topics + 1} features criadas")
+                
+            except Exception as e:
+                print(f"  ❌ Erro ao transformar com LDA: {e}")
+                import traceback
+                traceback.print_exc()
     
     print(f"\n📊 RESUMO LDA: Total de {lda_features_created} features LDA criadas")
     
-    return df_result, params
+    return df_result, param_manager
 
 def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=5000):
     """
@@ -1618,46 +1645,27 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
                          max_samples=None,
                          use_checkpoints=False, 
                          clear_cache=True):
+    """
+    Pipeline unificado com ParameterManager integrado.
+    """
+    
+    # Importar ParameterManager
+    from src.utils.parameter_manager import ParameterManager
+    
     # Limpar cache se solicitado
     if clear_cache:
         clear_checkpoints()
     
-    # NOVA FUNÇÃO INTERNA - não altera a load_checkpoint original
+    # Criar ParameterManager
+    param_manager = ParameterManager()
+    
+    # Wrapper para checkpoints respeitando flag
     def load_checkpoint_conditional(stage_name):
-        """Wrapper que respeita a flag use_checkpoints"""
         if use_checkpoints:
-            return load_checkpoint(stage_name)  # Chama a função original
+            return load_checkpoint(stage_name)
         else:
-            return None  # Ignora checkpoints se use_checkpoints=False
+            return None
     
-    """
-    Pipeline unificado que executa coleta, integração, pré-processamento, feature engineering e feature selection.
-    
-    Args:
-        raw_data_path: Caminho para os dados brutos
-        params_output_dir: Diretório para salvar os parâmetros de pré-processamento
-        test_size: Proporção do conjunto de teste
-        val_size: Proporção do conjunto de validação dentro do conjunto de teste
-        random_state: Semente aleatória para reprodutibilidade
-        preserve_text: Se True, preserva as colunas de texto originais
-        batch_size: Tamanho do batch para processamento de features profissionais
-        apply_feature_selection: Se True, aplica feature selection
-        max_features: Número máximo de features a selecionar
-        importance_threshold: Threshold mínimo de importância (%)
-        correlation_threshold: Threshold para remover features correlacionadas
-        fast_mode: Se True, usa apenas RandomForest para feature selection
-        n_folds: Número de folds para cross-validation na feature selection
-        
-    Returns:
-        Dicionário com os DataFrames processados:
-        {
-            'train': DataFrame de treino processado,
-            'validation': DataFrame de validação processado,
-            'test': DataFrame de teste processado,
-            'params': Parâmetros de pré-processamento aprendidos,
-            'feature_importance': DataFrame com importância das features (se apply_feature_selection=True)
-        }
-    """
     print("========================================================================")
     print("INICIANDO PIPELINE UNIFICADO DE COLETA, INTEGRAÇÃO, PRÉ-PROCESSAMENTO,")
     print("FEATURE ENGINEERING PROFISSIONAL E FEATURE SELECTION")
@@ -1695,7 +1703,7 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     print(f"Buyer files: {len(buyer_files)}")
     print(f"UTM files: {len(utm_files)}")
     
-    # 4. Carregar dados (preservando colunas originais)
+    # 4. Carregar dados
     survey_dfs, _ = load_survey_files(bucket, survey_files)
     buyer_dfs, _ = load_buyer_files(bucket, buyer_files)
     utm_dfs, _ = load_utm_files(bucket, utm_files)
@@ -1709,7 +1717,7 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     print(f"Buyer data: {buyers.shape[0]:,} rows, {buyers.shape[1]} columns")
     print(f"UTM data: {utms.shape[0]:,} rows, {utms.shape[1]} columns")
     
-    # 6. Normalizar emails (criando email_norm para matching)
+    # 6. Normalizar emails
     if not surveys.empty:
         surveys = normalize_emails_preserving_originals(surveys)
     
@@ -1728,11 +1736,11 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     # 9. Mesclar datasets
     merged_data = merge_datasets(surveys_with_target, utms, pd.DataFrame())
     
-    # 10. Preparar dataset final (preservando emails)
+    # 10. Preparar dataset final
     final_data = prepare_final_dataset(merged_data)
     
     # Validar compatibilidade com produção
-    validation_report = validate_production_compatibility(final_data)
+    is_compatible, validation_report = validate_production_compatibility(final_data)
     
     if test_mode and max_samples:
         print(f"\n⚠️ MODO DE TESTE ATIVADO: Limitando a {max_samples} amostras")
@@ -1753,10 +1761,6 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     # CHECKPOINT 1: Verificar se já temos os dados divididos
     checkpoint_split = load_checkpoint_conditional('data_split')
     if checkpoint_split:
-        train_original_shape = train_df.shape
-        val_original_shape = val_df.shape
-        test_original_shape = test_df.shape
-
         print("✓ Usando checkpoint de divisão de dados")
         train_df = checkpoint_split['train']
         val_df = checkpoint_split['val']
@@ -1802,12 +1806,12 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
             'test': test_df
         }, 'data_split')
 
-    # Guardar shapes originais para comparação
+    # Guardar shapes originais
     train_original_shape = train_df.shape
     val_original_shape = val_df.shape
     test_original_shape = test_df.shape
     
-# ========================================================================
+    # ========================================================================
     # PARTE 2 + 3: PROCESSAMENTO COMPLETO DE FEATURES
     # ========================================================================
     print("\n=== PROCESSAMENTO COMPLETO DE FEATURES (PARTE 2 + 3) ===")
@@ -1819,84 +1823,94 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
         train_final = checkpoint_complete['train']
         val_final = checkpoint_complete['val']
         test_final = checkpoint_complete['test']
-        params = checkpoint_complete['params']
-        # ADICIONAR ESTAS LINHAS:
-        train_after_preproc_shape = checkpoint_complete.get('train_preproc_shape', (train_final.shape[0], train_final.shape[1] // 2))
-        val_after_preproc_shape = checkpoint_complete.get('val_preproc_shape', (val_final.shape[0], val_final.shape[1] // 2))
-        test_after_preproc_shape = checkpoint_complete.get('test_preproc_shape', (test_final.shape[0], test_final.shape[1] // 2))
-        train_after_prof_shape = train_final.shape
-        val_after_prof_shape = val_final.shape
-        test_after_prof_shape = test_final.shape
-        # ADICIONAR TAMBÉM:
-        train_after_features = train_final.shape
-        val_after_features = val_final.shape
-        test_after_features = test_final.shape
+        # Carregar param_manager do checkpoint
+        if 'param_manager_path' in checkpoint_complete:
+            param_manager.load(checkpoint_complete['param_manager_path'])
     else:
-        # Processar TRAIN com todas as transformações
+        # Processar TRAIN
         print("\n--- Processando conjunto de TREINAMENTO (completo) ---")
-        train_final, params = apply_complete_feature_pipeline(
+        train_final, param_manager = apply_complete_feature_pipeline(
             train_df, 
-            params=None, 
+            param_manager=param_manager,
             fit=True, 
             batch_size=batch_size
         )
         
-        # Para relatório, assumir que shape intermediário é metade das features finais
-        # (aproximação, já que não temos mais separação entre PARTE 2 e 3)
-        train_after_preproc_shape = (train_final.shape[0], train_final.shape[1] // 2)
-        train_after_prof_shape = train_final.shape
-        train_after_features = train_final.shape  # ADICIONAR ESTA LINHA
-        
-        # Processar VALIDATION com parâmetros do train
+        # Processar VALIDATION
         print("\n--- Processando conjunto de VALIDAÇÃO (completo) ---")
         val_final, _ = apply_complete_feature_pipeline(
             val_df, 
-            params=params, 
+            param_manager=param_manager,
             fit=False, 
             batch_size=batch_size
         )
         
         # Garantir consistência de colunas
         val_final = ensure_column_consistency(train_final, val_final)
-        val_after_preproc_shape = (val_final.shape[0], val_final.shape[1] // 2)
-        val_after_prof_shape = val_final.shape
-        val_after_features = val_final.shape  # ADICIONAR ESTA LINHA
         
-        # Processar TEST com parâmetros do train
+        # Processar TEST
         print("\n--- Processando conjunto de TESTE (completo) ---")
         test_final, _ = apply_complete_feature_pipeline(
             test_df, 
-            params=params, 
+            param_manager=param_manager,
             fit=False, 
             batch_size=batch_size
         )
         
         # Garantir consistência de colunas
         test_final = ensure_column_consistency(train_final, test_final)
-        test_after_preproc_shape = (test_final.shape[0], test_final.shape[1] // 2)
-        test_after_prof_shape = test_final.shape
-        test_after_features = test_final.shape  # ADICIONAR ESTA LINHA
         
-        # Garantir que os DataFrames finais têm a mesma nomeação de colunas
-        train_final = standardize_dataframe_columns(train_final)
-        val_final = standardize_dataframe_columns(val_final)
-        test_final = standardize_dataframe_columns(test_final)
+        # Salvar param_manager temporariamente
+        temp_param_path = os.path.join(params_output_dir, "temp_params.joblib")
+        os.makedirs(params_output_dir, exist_ok=True)
+        param_manager.save(temp_param_path)
         
-        # Salvar checkpoint com todas as informações
+        # Salvar checkpoint
         save_checkpoint({
             'train': train_final,
             'val': val_final,
             'test': test_final,
-            'params': params,
-            'train_preproc_shape': train_after_preproc_shape,
-            'val_preproc_shape': val_after_preproc_shape,
-            'test_preproc_shape': test_after_preproc_shape
+            'param_manager_path': temp_param_path
         }, 'complete_features')
 
-    # Guardar shapes para relatório final
+    # Guardar shapes para relatório
     train_after_features = train_final.shape
     val_after_features = val_final.shape
     test_after_features = test_final.shape
+    
+    # ========================================================================
+    # PARTE 4: VALIDAÇÃO DE FEATURES
+    # ========================================================================
+    
+    print("\n=== VALIDAÇÃO DE FEATURES ===")
+    
+    # Verificar zeros nas features
+    print("\nVerificando features com zeros...")
+    
+    for dataset_name, dataset in [('Validation', val_final), ('Test', test_final)]:
+        print(f"\n{dataset_name}:")
+        zero_features = []
+        for col in dataset.select_dtypes(include=[np.number]).columns:
+            if col == 'target':
+                continue
+            if (dataset[col] == 0).all():
+                zero_features.append(col)
+        
+        if zero_features:
+            print(f"  ❌ {len(zero_features)} features com TODOS zeros:")
+            # Categorizar por tipo
+            tfidf_zeros = [f for f in zero_features if '_tfidf_' in f]
+            topic_zeros = [f for f in zero_features if 'topic_' in f or 'dominant_topic' in f]
+            other_zeros = [f for f in zero_features if f not in tfidf_zeros + topic_zeros]
+            
+            if tfidf_zeros:
+                print(f"    - TF-IDF: {len(tfidf_zeros)} features")
+            if topic_zeros:
+                print(f"    - Tópicos/LDA: {len(topic_zeros)} features")
+            if other_zeros:
+                print(f"    - Outras: {len(other_zeros)} features")
+        else:
+            print(f"  ✅ Nenhuma feature com todos zeros!")
     
     # ========================================================================
     # PARTE 5: FEATURE SELECTION (OPCIONAL)
@@ -1914,18 +1928,26 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
             train_final = checkpoint_selection['train']
             val_final = checkpoint_selection['val']
             test_final = checkpoint_selection['test']
-            params = checkpoint_selection['params']
             feature_importance = checkpoint_selection.get('feature_importance')
+            # Atualizar param_manager com features selecionadas
+            if 'selected_features' in checkpoint_selection:
+                param_manager.params['feature_selection']['selected_features'] = checkpoint_selection['selected_features']
         else:
             # Aplicar feature selection
             train_final, val_final, test_final, feature_importance = apply_feature_selection_pipeline(
                 train_final, val_final, test_final,
-                params=params,
+                params=None,  # params agora está no param_manager
                 max_features=max_features,
                 importance_threshold=importance_threshold,
                 correlation_threshold=correlation_threshold,
                 n_folds=n_folds
             )
+            
+            # Salvar features selecionadas no param_manager
+            selected_features = list(train_final.columns)
+            if 'target' in selected_features:
+                selected_features.remove('target')
+            param_manager.params['feature_selection']['selected_features'] = selected_features
             
             # Salvar feature importance
             if feature_importance is not None:
@@ -1933,20 +1955,17 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
                 feature_importance.to_csv(importance_path, index=False)
                 print(f"\nImportância das features salva em {importance_path}")
                 
-                # Salvar lista de features selecionadas
-                selected_features_path = os.path.join(params_output_dir, "selected_features.txt")
-                with open(selected_features_path, 'w') as f:
-                    for feat in params['feature_selection']['selected_features']:
-                        f.write(f"{feat}\n")
-                print(f"Lista de features selecionadas salva em {selected_features_path}")
+                # Salvar importâncias no param_manager
+                importance_dict = feature_importance.set_index('Feature')['Mean_Importance'].to_dict()
+                param_manager.params['feature_selection']['importance_scores'] = importance_dict
             
             # Salvar checkpoint
             save_checkpoint({
                 'train': train_final,
                 'val': val_final,
                 'test': test_final,
-                'params': params,
-                'feature_importance': feature_importance
+                'feature_importance': feature_importance,
+                'selected_features': selected_features
             }, 'feature_selection')
 
     else:
@@ -1962,10 +1981,19 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     # Criar diretório de parâmetros
     os.makedirs(params_output_dir, exist_ok=True)
     
-    # Salvar parâmetros completos
-    params_path = os.path.join(params_output_dir, "all_preprocessing_params.joblib")
-    joblib.dump(params, params_path)
-    print(f"Parâmetros de pré-processamento salvos em {params_path}")
+    # Salvar parâmetros usando ParameterManager
+    params_path = os.path.join(params_output_dir, "pipeline_params.joblib")
+    param_manager.save(params_path)
+    
+    # Mostrar resumo
+    param_manager.get_summary()
+    
+    # Validar consistência
+    issues = param_manager.validate_consistency()
+    if issues['errors']:
+        print("\n⚠️ PROBLEMAS DE CONSISTÊNCIA DETECTADOS:")
+        for error in issues['errors']:
+            print(f"  - {error}")
     
     # Salvar relatório de validação
     validation_report_path = os.path.join(params_output_dir, "validation_report.json")
@@ -2017,51 +2045,48 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     print(f"   Valid     | {val_original_shape[1]:>8} | {val_after_features[1]:>8} | {val_final.shape[1]:>7} | {val_final.shape[1] - val_original_shape[1]:>17}")
     print(f"   Test      | {test_original_shape[1]:>8} | {test_after_features[1]:>8} | {test_final.shape[1]:>7} | {test_final.shape[1] - test_original_shape[1]:>17}")
     
-    if apply_feature_selection and 'feature_selection' in params:
-        print(f"\n📉 FEATURE SELECTION:")
-        print(f"   Features antes da seleção: {params['feature_selection']['n_features_original']}")
-        print(f"   Features selecionadas: {params['feature_selection']['n_features_selected']}")
-        print(f"   Features removidas: {params['feature_selection']['features_removed']}")
-        print(f"   Redução: {(params['feature_selection']['features_removed'] / params['feature_selection']['n_features_original'] * 100):.1f}%")
+    if apply_feature_selection and 'feature_selection' in param_manager.params:
+        fs_info = param_manager.params['feature_selection']
+        if 'selected_features' in fs_info:
+            print(f"\n📉 FEATURE SELECTION:")
+            print(f"   Features selecionadas: {len(fs_info['selected_features'])}")
     
     print(f"\n📁 ARQUIVOS SALVOS:")
-    print(f"   Parâmetros: {params_output_dir}")
+    print(f"   Parâmetros: {params_path}")
     
     print(f"\n✅ PROCESSAMENTO CONCLUÍDO!")
     print(f"   Tempo total: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("========================================================================\n")
     
-    # Salvar DataFrames processados em CSV
-    # Define data_output_dir if saving processed data is required
-    data_output_dir = "/Users/ramonmoreira/desktop/smart_ads/data/processed_data"
-    os.makedirs(data_output_dir, exist_ok=True)
+    # Salvar DataFrames processados (opcional)
+    if data_output_dir:
+        os.makedirs(data_output_dir, exist_ok=True)
+        
+        train_path = os.path.join(data_output_dir, "train.csv")
+        val_path = os.path.join(data_output_dir, "validation.csv")
+        test_path = os.path.join(data_output_dir, "test.csv")
+        
+        train_final.to_csv(train_path, index=False)
+        val_final.to_csv(val_path, index=False)
+        test_final.to_csv(test_path, index=False)
+        
+        print(f"\nDataFrames processados salvos em:")
+        print(f"  - Train: {train_path}")
+        print(f"  - Validation: {val_path}")
+        print(f"  - Test: {test_path}")
     
-    train_path = os.path.join(data_output_dir, "train.csv")
-    val_path = os.path.join(data_output_dir, "validation.csv")
-    test_path = os.path.join(data_output_dir, "test.csv")
-    
-    train_final.to_csv(train_path, index=False)
-    val_final.to_csv(val_path, index=False)
-    test_final.to_csv(test_path, index=False)
-    
-    print(f"\nDataFrames processados salvos em:")
-    print(f"  - Train: {train_path}")
-    print(f"  - Validation: {val_path}")
-    print(f"  - Test: {test_path}")
-    
-    # Retornar DataFrames processados, parâmetros e feature importance
+    # Retornar resultados
     result = {
         'train': train_final,
         'validation': val_final,
         'test': test_final,
-        'params': params
+        'param_manager': param_manager
     }
     
     if feature_importance is not None:
         result['feature_importance'] = feature_importance
     
     return result
-
 
 # ============================================================================
 # MAIN

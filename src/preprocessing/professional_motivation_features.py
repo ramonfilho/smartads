@@ -11,6 +11,7 @@ from nltk.sentiment.vader import SentimentIntensityAnalyzer
 from sklearn.feature_extraction.text import TfidfVectorizer
 import nltk
 from src.utils.feature_naming import standardize_feature_name
+from src.utils.parameter_manager import ParameterManager
 
 # Garantir que os recursos NLTK necessários estejam disponíveis
 try:
@@ -548,14 +549,11 @@ def create_career_term_detector(df, text_columns, fit=True, params=None):
     
     return result_df, params
 
-def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None):
-    """Aprimora pesos TF-IDF para termos de carreira - VERSÃO CORRIGIDA"""
-    if params is None:
-        params = {}
+def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None, param_manager=None):
+    """Aprimora pesos TF-IDF para termos de carreira - COM PARAMETER MANAGER"""
     
-    # CORREÇÃO: Estrutura consistente de parâmetros
-    if 'career_tfidf' not in params:
-        params['career_tfidf'] = {}
+    if param_manager is None:
+        param_manager = ParameterManager()
     
     df_result = pd.DataFrame(index=df.index)
     
@@ -605,14 +603,18 @@ def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None):
                 vectorizer.fit(valid_texts)
                 feature_names = vectorizer.get_feature_names_out()
                 
-                # Salvar vetorizador - ESTRUTURA CORRIGIDA
-                params['career_tfidf'][col_clean] = {
-                    'vectorizer': vectorizer,
-                    'feature_names': feature_names.tolist(),
-                    'career_terms': career_terms
-                }
+                # MUDANÇA: Salvar usando param_manager
+                param_manager.save_vectorizer(
+                    {
+                        'vectorizer': vectorizer,
+                        'feature_names': feature_names.tolist(),
+                        'career_terms': career_terms
+                    },
+                    name=col_clean,
+                    category='career_tfidf'
+                )
                 
-                # Transform todos os textos
+                # Transform e criar features
                 tfidf_matrix_sparse = vectorizer.transform(texts)
                 tfidf_matrix = tfidf_matrix_sparse.toarray()
                 
@@ -626,23 +628,29 @@ def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None):
                     feature_name = standardize_feature_name(f"{col_clean}_career_tfidf_{term}")
                     df_result[feature_name] = tfidf_matrix[:, i]
                 
+                # Rastrear features criadas
+                feature_names_list = [standardize_feature_name(f"{col_clean}_career_tfidf_{term}") 
+                                     for term in feature_names]
+                param_manager.track_created_features(feature_names_list)
+                
                 print(f"    ✓ {len(feature_names)} features Career TF-IDF criadas")
                 
             except Exception as e:
                 print(f"  ❌ Erro ao criar Career TF-IDF para '{col}': {e}")
-                import traceback
-                traceback.print_exc()
                 
         else:
             # MODO TRANSFORM: Usar vetorizador existente
-            if col_clean not in params['career_tfidf']:
+            # MUDANÇA: Recuperar usando param_manager
+            vectorizer_data = param_manager.get_vectorizer(col_clean, 'career_tfidf')
+            
+            if not vectorizer_data:
                 print(f"  ⚠️ Vetorizador Career TF-IDF não encontrado para '{col_clean}'")
                 continue
                 
             try:
-                vectorizer = params['career_tfidf'][col_clean]['vectorizer']
-                feature_names = params['career_tfidf'][col_clean]['feature_names']
-                saved_career_terms = params['career_tfidf'][col_clean].get('career_terms', career_terms)
+                vectorizer = vectorizer_data['vectorizer']
+                feature_names = vectorizer_data['feature_names']
+                saved_career_terms = vectorizer_data.get('career_terms', career_terms)
                 
                 print(f"  🔄 Aplicando Career TF-IDF para '{col}'...")
                 
@@ -664,8 +672,6 @@ def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None):
                 
             except Exception as e:
                 print(f"  ❌ Erro ao aplicar Career TF-IDF para '{col}': {e}")
-                import traceback
-                traceback.print_exc()
     
     # Adicionar score agregado
     for col in text_cols:
@@ -682,7 +688,7 @@ def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None):
             df_result[standardize_feature_name(f"{col_clean}_career_tfidf_score")] = df_result[career_tfidf_cols].mean(axis=1)
             print(f"    ✓ Score agregado criado para {col_clean}")
     
-    return df_result, params
+    return df_result, param_manager
 
 def enhance_professional_features(df, text_cols, fit=True, params=None):
     """Função principal que executa toda a pipeline de features profissionais.

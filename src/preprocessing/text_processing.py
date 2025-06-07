@@ -6,6 +6,7 @@ import string
 from textblob import TextBlob
 from src.utils.feature_naming import standardize_feature_name
 from src.utils.column_type_classifier import ColumnTypeClassifier
+from src.utils.parameter_manager import ParameterManager
 
 def clean_text(text):
     """Limpa e normaliza texto.
@@ -120,13 +121,16 @@ def extract_sentiment_features(df, text_cols, fit=True, params=None):
     
     return df_result, params
 
-def extract_tfidf_features(df, text_cols, fit=True, params=None):
-    """Extrai features TF-IDF dos textos - VERSÃO CORRIGIDA"""
-    if params is None:
-        params = {}
+def extract_tfidf_features(df, text_cols, fit=True, params=None, param_manager=None):
+    """Extrai features TF-IDF dos textos - VERSÃO COM PARAMETER MANAGER"""
     
-    if 'tfidf' not in params:
-        params['tfidf'] = {}
+    # Compatibilidade: criar param_manager se não fornecido
+    if param_manager is None:
+        param_manager = ParameterManager()
+        # Se temos params antigos, migrar para param_manager
+        if params and 'tfidf' in params:
+            for col, data in params['tfidf'].items():
+                param_manager.save_vectorizer(data, col, 'tfidf')
     
     df_result = df.copy()
     
@@ -147,6 +151,8 @@ def extract_tfidf_features(df, text_cols, fit=True, params=None):
         
         if fit:
             # MODO FIT: Criar e treinar vetorizador
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            
             tfidf = TfidfVectorizer(
                 max_features=200,
                 min_df=5,
@@ -168,72 +174,73 @@ def extract_tfidf_features(df, text_cols, fit=True, params=None):
                 
                 print(f"    ✓ Features extraídas: {len(feature_names)}")
                 
-                # Salvar vetorizador e feature names
-                params['tfidf'][col] = {
-                    'vectorizer': tfidf,
-                    'feature_names': feature_names.tolist()
-                }
+                # MUDANÇA: Salvar usando param_manager
+                param_manager.save_vectorizer(
+                    {
+                        'vectorizer': tfidf,
+                        'feature_names': feature_names.tolist()
+                    },
+                    name=col,
+                    category='tfidf'
+                )
                 
-                # CORREÇÃO: Criar DataFrame com nomes corretos desde o início
+                # Criar DataFrame com as features
                 from src.utils.feature_naming import create_tfidf_column_name
-                
-                # Criar lista de nomes de colunas
                 column_names = [create_tfidf_column_name(col, term) for term in feature_names]
                 
-                # Criar DataFrame temporário com as features TF-IDF
                 tfidf_df = pd.DataFrame(
                     tfidf_matrix.toarray(),
                     index=df_result.index,
                     columns=column_names
                 )
                 
-                # Concatenar ao resultado
                 df_result = pd.concat([df_result, tfidf_df], axis=1)
+                
+                # Rastrear features criadas
+                param_manager.track_created_features(column_names)
                 
                 print(f"    ✓ {len(column_names)} features TF-IDF adicionadas")
                 
             except Exception as e:
                 print(f"  ❌ Erro ao processar TF-IDF para '{col}': {e}")
-                import traceback
-                traceback.print_exc()
                 
         else:
             # MODO TRANSFORM: Usar vetorizador existente
-            if col not in params['tfidf']:
+            # MUDANÇA: Recuperar usando param_manager
+            vectorizer_data = param_manager.get_vectorizer(col, 'tfidf')
+            
+            if not vectorizer_data:
                 print(f"  ⚠️ Vetorizador não encontrado para '{col}', pulando...")
                 continue
                 
             try:
-                tfidf = params['tfidf'][col]['vectorizer']
-                feature_names = params['tfidf'][col]['feature_names']
+                tfidf = vectorizer_data['vectorizer']
+                feature_names = vectorizer_data['feature_names']
                 
                 print(f"  🔄 Aplicando TF-IDF pré-treinado para '{col}'...")
                 
-                # Transform usando vetorizador existente
+                # Transform
                 tfidf_matrix = tfidf.transform(texts)
                 
-                # Criar lista de nomes de colunas
+                # Criar DataFrame
                 from src.utils.feature_naming import create_tfidf_column_name
                 column_names = [create_tfidf_column_name(col, term) for term in feature_names]
                 
-                # Criar DataFrame com as features
                 tfidf_df = pd.DataFrame(
                     tfidf_matrix.toarray(),
                     index=df_result.index,
                     columns=column_names
                 )
                 
-                # Concatenar ao resultado
                 df_result = pd.concat([df_result, tfidf_df], axis=1)
                 
                 print(f"    ✓ {len(column_names)} features TF-IDF aplicadas")
                 
             except Exception as e:
                 print(f"  ❌ Erro ao transformar TF-IDF para '{col}': {e}")
-                import traceback
-                traceback.print_exc()
     
-    return df_result, params
+    # Retornar apenas DataFrame (params agora está no param_manager)
+    return df_result, param_manager
 
 def extract_motivation_features(df, text_cols, fit=True, params=None):
     """Extrai features de motivação baseadas em palavras-chave.
@@ -459,8 +466,10 @@ def extract_discriminative_features(df, text_cols, fit=True, params=None):
 
 def text_feature_engineering(df, fit=True, params=None):
     """Executa todo o pipeline de processamento de texto."""
-    if params is None:
-        params = {}
+
+    # Criar param_manager se não fornecido
+    if param_manager is None:
+        param_manager = ParameterManager()
     
     print("\n=== DEBUG: RASTREAMENTO DE COLUNAS EM feature_engineering ===")
     print(f"Colunas na entrada: {len(df.columns)}")
@@ -527,11 +536,11 @@ def text_feature_engineering(df, fit=True, params=None):
     df_result = df.copy()
     
     # Aplicar pipeline de processamento de texto
-    df_result, params = extract_basic_text_features(df_result, text_cols, fit, params)
-    df_result, params = extract_sentiment_features(df_result, text_cols, fit, params)
-    df_result, params = extract_tfidf_features(df_result, text_cols, fit, params)
-    df_result, params = extract_motivation_features(df_result, text_cols, fit, params)
-    df_result, params = extract_discriminative_features(df_result, text_cols, fit, params)
+    df_result, param_manager = extract_basic_text_features(df_result, text_cols, fit, param_manager)
+    df_result, param_manager = extract_sentiment_features(df_result, text_cols, fit, param_manager)
+    df_result, param_manager = extract_tfidf_features(df_result, text_cols, fit, params, param_manager)
+    df_result, param_manager = extract_motivation_features(df_result, text_cols, fit, param_manager)
+    df_result, param_manager = extract_discriminative_features(df_result, text_cols, fit, param_manager)
     
     # Remover colunas temporárias de texto limpo
     columns_to_drop = [f'{col}_clean' for col in text_cols if f'{col}_clean' in df_result.columns]
@@ -551,4 +560,4 @@ def text_feature_engineering(df, fit=True, params=None):
     
     print(f"\nColunas adicionadas: {len(added_cols)}")
     
-    return df_result, params
+    return df_result, param_manager
