@@ -1086,49 +1086,63 @@ def perform_topic_modeling_fixed(df, text_cols, n_topics=5, fit=True, params=Non
     
     return df_result, param_manager
 
-def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=5000):
+def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=5000, param_manager=None):
     """
-    Aplica pipeline de features profissionais de NLP.
+    Aplica pipeline de features profissionais de NLP com ParameterManager.
     """
-    if params is None:
-        params = {}
-    
-        # ADICIONAR ESTA INICIALIZAÇÃO!
-    if 'professional_features' not in params:
-        params['professional_features'] = {}
+    if param_manager is None:
+        param_manager = ParameterManager()
+        # Migrar params antigos se existirem
+        if params:
+            print("  ℹ️ Migrando parâmetros profissionais antigos para ParameterManager...")
+            if 'professional_features' in params:
+                for key, value in params['professional_features'].items():
+                    if key in ['motivation_keywords', 'aspiration_phrases', 'commitment_phrases', 'career_terms']:
+                        param_manager.save_professional_params(key, value)
+                    elif key == 'lda_models':
+                        for model_name, model_data in value.items():
+                            param_manager.save_lda_model(model_data, model_name)
+                    elif key == 'career_tfidf_vectorizers':
+                        for vec_name, vec_data in value.items():
+                            param_manager.save_vectorizer(vec_data, vec_name, 'career_tfidf')
 
     print(f"\nIniciando pipeline de features profissionais para DataFrame: {df.shape}")
     
     # Recuperar colunas de texto preservadas
     text_columns = []
     
-    if 'preserved_text_columns' in params:
+    # Verificar se temos colunas preservadas
+    preserved_columns = param_manager.params['feature_engineering'].get('preserved_columns', {})
+    
+    if preserved_columns:
         # Adicionar temporariamente as colunas preservadas ao DataFrame
-        for col_name, col_data in params['preserved_text_columns'].items():
+        for col_name, col_data in preserved_columns.items():
             temp_col_name = f"{col_name}_TEMP_PROF"
             df[temp_col_name] = col_data.reindex(df.index)
             text_columns.append(temp_col_name)
         
         print(f"  ✓ {len(text_columns)} colunas de texto recuperadas para processamento")
-    elif 'column_classifications' in params:
-        # Usar classificações existentes
-        print("\n✓ Usando classificações existentes para features profissionais")
-        classifications = params['column_classifications']
-        text_columns = [
-            col for col, info in classifications.items()
-            if col in df.columns
-            and info['type'] == 'text'
-            and info['confidence'] >= 0.7
-        ]
     else:
-        # Usar o ColumnTypeClassifier para detectar colunas de textoz
+        # Usar classificações existentes
+        classifications = param_manager.get_preprocessing_params('column_classifications')
+        
+        if classifications:
+            print("\n✓ Usando classificações existentes para features profissionais")
+            text_columns = [
+                col for col, info in classifications.items()
+                if col in df.columns
+                and info['type'] == 'text'
+                and info['confidence'] >= 0.7
+            ]
+        else:
+            # Usar o ColumnTypeClassifier para detectar colunas de texto
             classifier = ColumnTypeClassifier(
                 use_llm=False,
                 use_classification_cache=True,
                 confidence_threshold=0.7
             )
             classifications = classifier.classify_dataframe(df)
-
+            
             # Filtrar apenas colunas de texto
             text_columns = [
                 col for col, info in classifications.items()
@@ -1138,12 +1152,10 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
     
     if not text_columns:
         print("  ⚠️ AVISO: Nenhuma coluna de texto encontrada para processamento profissional!")
-        return df, params
-    
-    print(f"\nIniciando pipeline de features profissionais para DataFrame: {df.shape}")
-    start_time = time.time()
+        return df, param_manager
     
     print(f"\n✓ {len(text_columns)} colunas de texto identificadas para processamento profissional")
+    start_time = time.time()
     
     # Processar em batches para economia de memória
     n_samples = len(df)
@@ -1183,72 +1195,60 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
             if batch_idx == 0:
                 print("\n  1. Calculando score de motivação profissional...")
             
-            motiv_df, motiv_params = create_professional_motivation_score(
+            motiv_df, param_manager = create_professional_motivation_score(
                 batch_df, [col], 
                 fit=fit and batch_idx == 0,
-                params=params['professional_features'].get('professional_motivation') if not (fit and batch_idx == 0) else None
+                param_manager=param_manager
             )
-            if fit and batch_idx == 0:
-                params['professional_features']['professional_motivation'] = motiv_params
             
             for motiv_col in motiv_df.columns:
                 if motiv_col not in df.columns:
                     df[motiv_col] = np.nan
-                # CORREÇÃO: Usar iloc em vez de loc
                 df.iloc[batch_start:batch_end, df.columns.get_loc(motiv_col)] = motiv_df[motiv_col].values
             
             # 2. Análise de sentimento de aspiração
             if batch_idx == 0:
                 print("\n  2. Analisando sentimento de aspiração...")
             
-            asp_df, asp_params = analyze_aspiration_sentiment(
+            asp_df, param_manager = analyze_aspiration_sentiment(
                 batch_df, [col],
                 fit=fit and batch_idx == 0,
-                params=params['professional_features'].get('aspiration_sentiment') if not (fit and batch_idx == 0) else None
+                param_manager=param_manager
             )
-            if fit and batch_idx == 0:
-                params['professional_features']['aspiration_sentiment'] = asp_params
             
             for asp_col in asp_df.columns:
                 if asp_col not in df.columns:
                     df[asp_col] = np.nan
-                # CORREÇÃO: Usar iloc em vez de loc
                 df.iloc[batch_start:batch_end, df.columns.get_loc(asp_col)] = asp_df[asp_col].values
             
             # 3. Detecção de expressões de compromisso
             if batch_idx == 0:
                 print("\n  3. Detectando expressões de compromisso...")
             
-            comm_df, comm_params = detect_commitment_expressions(
+            comm_df, param_manager = detect_commitment_expressions(
                 batch_df, [col],
                 fit=fit and batch_idx == 0,
-                params=params['professional_features'].get('commitment') if not (fit and batch_idx == 0) else None
+                param_manager=param_manager
             )
-            if fit and batch_idx == 0:
-                params['professional_features']['commitment'] = comm_params
             
             for comm_col in comm_df.columns:
                 if comm_col not in df.columns:
                     df[comm_col] = np.nan
-                # CORREÇÃO: Usar iloc em vez de loc
                 df.iloc[batch_start:batch_end, df.columns.get_loc(comm_col)] = comm_df[comm_col].values
             
             # 4. Detector de termos de carreira
             if batch_idx == 0:
                 print("\n  4. Detectando termos de carreira...")
             
-            career_df, career_params = create_career_term_detector(
+            career_df, param_manager = create_career_term_detector(
                 batch_df, [col],
                 fit=fit and batch_idx == 0,
-                params=params['professional_features'].get('career_terms') if not (fit and batch_idx == 0) else None
+                param_manager=param_manager
             )
-            if fit and batch_idx == 0:
-                params['professional_features']['career_terms'] = career_params
             
             for career_col in career_df.columns:
                 if career_col not in df.columns:
                     df[career_col] = np.nan
-                # CORREÇÃO: Usar iloc em vez de loc
                 df.iloc[batch_start:batch_end, df.columns.get_loc(career_col)] = career_df[career_col].values
             
             # Limpar memória após cada batch
@@ -1259,18 +1259,14 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
         
         # 5. TF-IDF aprimorado (processa coluna inteira)
         print("  5. Aplicando TF-IDF aprimorado para termos de carreira...")
-
+        
         temp_df = df[[col]].copy()
-
-        # Na linha onde chama enhance_tfidf_for_career_terms
-        tfidf_df, tfidf_params = enhance_tfidf_for_career_terms(
+        
+        tfidf_df, param_manager = enhance_tfidf_for_career_terms(
             temp_df, [col],
             fit=fit,
-            params=params["professional_features"]  # ✅ Passar params completos, não subchave
+            param_manager=param_manager
         )
-
-        if fit:
-            params['professional_features']['career_tfidf'] = tfidf_params['career_tfidf']
         
         added_count = 0
         for tfidf_col in tfidf_df.columns:
@@ -1281,8 +1277,8 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
     
     # 6. Aplicar LDA após processar todas as features profissionais
     print("\n6. Aplicando LDA para extração de tópicos...")
-    df, params['professional_features'] = perform_topic_modeling_fixed(
-        df, text_columns, n_topics=5, fit=fit, params=params['professional_features']
+    df, param_manager = perform_topic_modeling_fixed(
+        df, text_columns, n_topics=5, fit=fit, param_manager=param_manager
     )
     
     # Relatório final
@@ -1295,7 +1291,7 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
         df = df.drop(columns=temp_cols)
         print(f"\n🧹 {len(temp_cols)} colunas temporárias removidas")
         
-    return df, params
+    return df, param_manager
 
 def summarize_features(df, dataset_name, original_shape=None):
     """
@@ -1365,13 +1361,16 @@ def summarize_features(df, dataset_name, original_shape=None):
 # FUNÇÕES DA PARTE 5 - FEATURE SELECTION
 # ============================================================================
 
-def apply_feature_selection_pipeline(train_df, val_df, test_df, params=None, 
+def apply_feature_selection_pipeline(train_df, val_df, test_df, params=None, param_manager=None,
                                    max_features=300, importance_threshold=0.1,
                                    correlation_threshold=0.95, fast_mode=False,
                                    n_folds=3):
     """
-    Aplica pipeline de feature selection nos datasets.
+    Aplica pipeline de feature selection nos datasets com ParameterManager.
     """
+    if param_manager is None:
+        param_manager = ParameterManager()
+    
     print("\n=== PARTE 5: FEATURE SELECTION ===")
     print(f"Configurações:")
     print(f"  - Max features: {max_features}")
@@ -1381,13 +1380,6 @@ def apply_feature_selection_pipeline(train_df, val_df, test_df, params=None,
     print(f"  - CV folds: {n_folds}")
     
     start_time = time.time()
-    
-    # Inicializar parâmetros de feature selection
-    if params is None:
-        params = {}
-    
-    if 'feature_selection' not in params:
-        params['feature_selection'] = {}
     
     # Guardar shape original
     original_train_shape = train_df.shape
@@ -1410,9 +1402,6 @@ def apply_feature_selection_pipeline(train_df, val_df, test_df, params=None,
     # Identificar features derivadas de texto
     text_derived_cols = identify_text_derived_columns(numeric_cols)
     print(f"Features derivadas de texto: {len(text_derived_cols)}")
-    
-    # NÃO precisamos mais sanitizar - já está padronizado!
-    # Apenas usar os nomes como estão
     
     # Preparar dados
     X_train = train_df[numeric_cols].fillna(0)
@@ -1441,8 +1430,8 @@ def apply_feature_selection_pipeline(train_df, val_df, test_df, params=None,
                 col_j = corr_matrix.columns[j]
                 
                 # Correlação com target
-                corr_i_target = abs(X_train[col_i].corr(y_train))
-                corr_j_target = abs(X_train[col_j].corr(y_train))
+                corr_i_target = abs(X_train[col_i].astype(float).corr(y_train.astype(float)))
+                corr_j_target = abs(X_train[col_j].astype(float).corr(y_train.astype(float)))
                 
                 # Remover a que tem menor correlação com target
                 if corr_i_target < corr_j_target:
@@ -1565,8 +1554,8 @@ def apply_feature_selection_pipeline(train_df, val_df, test_df, params=None,
     print(f"  Val:   {original_val_shape} → {val_selected.shape}")
     print(f"  Test:  {original_test_shape} → {test_selected.shape}")
     
-    # Salvar informações de seleção nos parâmetros
-    params['feature_selection'] = {
+    # MUDANÇA: Salvar informações de seleção no param_manager
+    param_manager.params['feature_selection'] = {
         'selected_features': selected_features,
         'n_features_selected': len(selected_features),
         'n_features_original': initial_n_features,
@@ -1585,23 +1574,34 @@ def apply_feature_selection_pipeline(train_df, val_df, test_df, params=None,
     
     return train_selected, val_selected, test_selected, final_importance
 
-def apply_complete_feature_pipeline(df, params=None, fit=True, batch_size=5000):
+def apply_complete_feature_pipeline(df, params=None, fit=True, batch_size=5000, param_manager=None):
     """
     Aplica TODAS as etapas de feature engineering de uma vez.
     Combina PARTE 2 (preprocessing) + PARTE 3 (professional features).
     
     Args:
         df: DataFrame para processar
-        params: Parâmetros de todas as transformações
+        params: Dicionário com parâmetros (deprecated - usar param_manager)
         fit: Se True, aprende parâmetros; se False, aplica existentes
         batch_size: Tamanho do batch para processamento
+        param_manager: Instância do ParameterManager
         
     Returns:
         df_final: DataFrame com todas as features
-        params: Parâmetros atualizados
+        param_manager: ParameterManager atualizado
     """
-    if params is None:
-        params = {}
+    if param_manager is None:
+        param_manager = ParameterManager()
+        # Migrar params antigos se existirem
+        if params:
+            print("  ℹ️ Migrando parâmetros antigos para ParameterManager...")
+            # Migrar diferentes tipos de parâmetros
+            if 'column_classifications' in params:
+                param_manager.save_preprocessing_params('column_classifications', params['column_classifications'])
+            if 'professional_features' in params:
+                for key, value in params['professional_features'].items():
+                    if key in ['motivation_keywords', 'aspiration_phrases', 'commitment_phrases', 'career_terms']:
+                        param_manager.save_professional_params(key, value)
     
     print(f"\n{'='*60}")
     print(f"PROCESSAMENTO COMPLETO - Modo: {'FIT' if fit else 'TRANSFORM'}")
@@ -1610,20 +1610,20 @@ def apply_complete_feature_pipeline(df, params=None, fit=True, batch_size=5000):
     
     # PARTE 2: Pré-processamento e Feature Engineering básico
     print("\n>>> PARTE 2: Pré-processamento e Feature Engineering")
-    df_processed, params = apply_preprocessing_pipeline(df, params=params, fit=fit)
+    df_processed, param_manager = apply_preprocessing_pipeline(df, param_manager=param_manager, fit=fit)
     print(f"Após PARTE 2: {df_processed.shape}")
     
     # PARTE 3: Feature Engineering Profissional
     print("\n>>> PARTE 3: Feature Engineering Profissional")
-    df_final, params = apply_professional_features_pipeline(
-        df_processed, params=params, fit=fit, batch_size=batch_size
+    df_final, param_manager = apply_professional_features_pipeline(
+        df_processed, param_manager=param_manager, fit=fit, batch_size=batch_size
     )
     print(f"Após PARTE 3: {df_final.shape}")
     
     print(f"\nProcessamento completo finalizado: {df.shape} → {df_final.shape}")
     print(f"{'='*60}\n")
     
-    return df_final, params
+    return df_final, param_manager
 
 # ============================================================================
 # PIPELINE UNIFICADO PRINCIPAL
@@ -2109,26 +2109,50 @@ if __name__ == "__main__":
         correlation_threshold=0.95,
         n_folds=3,
         test_mode=True,
-        max_samples=2000,
+        max_samples=500,
         use_checkpoints=False,
         clear_cache=True
     )
     
     if results:
-        print("\nDataFrames processados disponíveis em memória:")
-        print("- results['train']")
-        print("- results['validation']")
-        print("- results['test']")
-        print("- results['params']")
-        if 'feature_importance' in results:
-            print("- results['feature_importance']")
+        print("\n" + "="*60)
+        print("VERIFICAÇÃO PÓS-PROCESSAMENTO")
+        print("="*60)
         
-        # Mostrar exemplo de como acessar os dados
-        print("\nExemplo de uso:")
-        print("train_df = results['train']")
-        print(f"print(f'Shape do treino: {{results[\"train\"].shape}}')")
-        print(f"print(f'Colunas: {{list(results[\"train\"].columns[:5])}} ...')")
-        
-        if 'feature_importance' in results:
-            print("\n# Ver top 10 features mais importantes:")
-            print("results['feature_importance'].head(10)")
+        # Verificar se ParameterManager foi salvo corretamente
+        param_manager = results.get('param_manager')
+        if param_manager:
+            print("\n✅ ParameterManager disponível")
+            param_manager.get_summary()
+            
+            # Verificar componentes salvos
+            print("\n📦 Componentes salvos:")
+            print(f"  - Vetorizadores TF-IDF: {len(param_manager.params['text_processing']['tfidf_vectorizers'])}")
+            print(f"  - Vetorizadores Career TF-IDF: {len(param_manager.params['professional_features']['career_tfidf_vectorizers'])}")
+            print(f"  - Modelos LDA: {len(param_manager.params['professional_features']['lda_models'])}")
+            
+        # Verificar zeros nas features
+        print("\n🔍 Verificando features com zeros:")
+        for dataset_name, df in [('Train', results['train']), 
+                                 ('Validation', results['validation']), 
+                                 ('Test', results['test'])]:
+            zero_features = []
+            for col in df.select_dtypes(include=[np.number]).columns:
+                if col != 'target' and (df[col] == 0).all():
+                    zero_features.append(col)
+            
+            if zero_features:
+                print(f"\n{dataset_name}: {len(zero_features)} features com TODOS zeros")
+                # Categorizar
+                tfidf_zeros = [f for f in zero_features if '_tfidf_' in f]
+                career_zeros = [f for f in zero_features if 'career_tfidf' in f]
+                lda_zeros = [f for f in zero_features if 'topic_' in f]
+                
+                if tfidf_zeros:
+                    print(f"  - TF-IDF: {len(tfidf_zeros)}")
+                if career_zeros:
+                    print(f"  - Career TF-IDF: {len(career_zeros)}")
+                if lda_zeros:
+                    print(f"  - LDA: {len(lda_zeros)}")
+            else:
+                print(f"\n{dataset_name}: ✅ Nenhuma feature com todos zeros!")

@@ -58,7 +58,7 @@ def clean_column_name(col_name):
     
     return short_name[:30]  # Limitar comprimento
 
-def create_professional_motivation_score(df, text_columns, fit=True, params=None):
+def create_professional_motivation_score(df, text_columns, fit=True, params=None, param_manager=None):
     """
     Cria um score agregado de motivação profissional baseado em palavras-chave.
     
@@ -66,20 +66,20 @@ def create_professional_motivation_score(df, text_columns, fit=True, params=None
         df: DataFrame pandas
         text_columns: Lista de colunas de texto para processamento
         fit: Flag para indicar se estamos no modo fit
-        params: Dicionário com parâmetros
+        params: Dicionário com parâmetros (deprecated - usar param_manager)
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com features de motivação profissional adicionadas
-        Parâmetros atualizados
+        ParameterManager atualizado
     """
-    if params is None:
-        params = {}
+    if param_manager is None:
+        param_manager = ParameterManager()
     
     result_df = pd.DataFrame(index=df.index)
     
-    # Palavras-chave relacionadas à motivação profissional com pesos
     # Se estamos no modo fit, criar o dicionário de palavras-chave
-    if fit or 'work_keywords' not in params:
+    if fit:
         work_keywords = {
             # Termos básicos de trabalho/emprego
             'trabajo': 1.0, 'empleo': 1.0, 'carrera': 1.2, 'profesional': 1.2, 'puesto': 0.8,
@@ -111,11 +111,13 @@ def create_professional_motivation_score(df, text_columns, fit=True, params=None
             'posición de liderazgo': 1.7, 'ascenso laboral': 1.8, 'mejor calidad de vida': 1.5
         }
         
-        # IMPORTANTE: Armazenar explicitamente no dicionário de parâmetros
-        params['work_keywords'] = work_keywords
+        # MUDANÇA: Salvar usando param_manager
+        param_manager.save_professional_params('motivation_keywords', work_keywords)
     else:
-        # No modo transform, usar as palavras-chave existentes
-        work_keywords = params['work_keywords']
+        # MUDANÇA: Recuperar usando param_manager
+        work_keywords = param_manager.get_professional_params('motivation_keywords')
+        if not work_keywords:
+            raise ValueError("Keywords de motivação não encontradas nos parâmetros!")
     
     # Inicializar arrays para scores
     motivation_scores = np.zeros(len(df))
@@ -154,9 +156,9 @@ def create_professional_motivation_score(df, text_columns, fit=True, params=None
     result_df[standardize_feature_name('professional_motivation_score')] = normalized_scores
     result_df[standardize_feature_name('career_keyword_count')] = keyword_counts
     
-    return result_df, params
+    return result_df, param_manager
 
-def analyze_aspiration_sentiment(df, text_columns, fit=True, params=None):
+def analyze_aspiration_sentiment(df, text_columns, fit=True, params=None, param_manager=None):
     """
     Implementa análise de sentimento específica para linguagem de aspiração.
     
@@ -164,14 +166,15 @@ def analyze_aspiration_sentiment(df, text_columns, fit=True, params=None):
         df: DataFrame pandas
         text_columns: Lista de colunas de texto para processamento
         fit: Flag para indicar se estamos no modo fit
-        params: Dicionário com parâmetros
+        params: Dicionário com parâmetros (deprecated - usar param_manager)
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com features de sentimento de aspiração adicionadas
-        Parâmetros atualizados
+        ParameterManager atualizado
     """
-    if params is None:
-        params = {}
+    if param_manager is None:
+        param_manager = ParameterManager()
     
     result_df = pd.DataFrame(index=df.index)
     
@@ -183,7 +186,7 @@ def analyze_aspiration_sentiment(df, text_columns, fit=True, params=None):
         sia = None
     
     # Frases de aspiração para detectar
-    if fit or 'aspiration_phrases' not in params:
+    if fit:
         aspiration_phrases = [
             # Metas e objetivos explícitos
             'quiero ser', 'espero ser', 'mi meta es', 'mi objetivo es', 'mi propósito es',
@@ -214,11 +217,13 @@ def analyze_aspiration_sentiment(df, text_columns, fit=True, params=None):
             'estoy trabajando para', 'estoy en camino a', 'voy a dedicarme a'
         ]
         
-        # IMPORTANTE: Armazenar explicitamente no dicionário de parâmetros
-        params['aspiration_phrases'] = aspiration_phrases
+        # MUDANÇA: Salvar usando param_manager
+        param_manager.save_professional_params('aspiration_phrases', aspiration_phrases)
     else:
-        # No modo transform, usar as frases existentes
-        aspiration_phrases = params['aspiration_phrases']
+        # MUDANÇA: Recuperar usando param_manager
+        aspiration_phrases = param_manager.get_professional_params('aspiration_phrases')
+        if not aspiration_phrases:
+            raise ValueError("Frases de aspiração não encontradas nos parâmetros!")
     
     # Processar cada coluna de texto
     for col in text_columns:
@@ -261,9 +266,9 @@ def analyze_aspiration_sentiment(df, text_columns, fit=True, params=None):
         result_df[standardize_feature_name(f"{col_clean}_aspiration_score")] = np.array(aspiration_counts) * \
                                                   result_df[f"{col_clean}_sentiment_pos"]
     
-    return result_df, params
+    return result_df, param_manager
 
-def detect_commitment_expressions(df, text_columns, fit=True, params=None):
+def detect_commitment_expressions(df, text_columns, fit=True, params=None, param_manager=None):
     """
     Cria features para expressões de compromisso e determinação.
     
@@ -271,19 +276,20 @@ def detect_commitment_expressions(df, text_columns, fit=True, params=None):
         df: DataFrame pandas
         text_columns: Lista de colunas de texto para processamento
         fit: Flag para indicar se estamos no modo fit
-        params: Dicionário com parâmetros
+        params: Dicionário com parâmetros (deprecated - usar param_manager)
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com features de expressões de compromisso adicionadas
-        Parâmetros atualizados
+        ParameterManager atualizado
     """
-    if params is None:
-        params = {}
+    if param_manager is None:
+        param_manager = ParameterManager()
     
     result_df = pd.DataFrame(index=df.index)
     
     # Frases de compromisso em espanhol com pesos
-    if fit or 'commitment_phrases' not in params:
+    if fit:
         commitment_phrases = {
             # Expressões de forte comprometimento
             'estoy decidido': 2.0,
@@ -366,11 +372,13 @@ def detect_commitment_expressions(df, text_columns, fit=True, params=None):
             'horario establecido': 1.3
         }
         
-        # IMPORTANTE: Armazenar explicitamente no dicionário de parâmetros
-        params['commitment_phrases'] = commitment_phrases
+        # MUDANÇA: Salvar usando param_manager
+        param_manager.save_professional_params('commitment_phrases', commitment_phrases)
     else:
-        # No modo transform, usar as frases existentes
-        commitment_phrases = params['commitment_phrases']
+        # MUDANÇA: Recuperar usando param_manager
+        commitment_phrases = param_manager.get_professional_params('commitment_phrases')
+        if not commitment_phrases:
+            raise ValueError("Frases de compromisso não encontradas nos parâmetros!")
     
     # Processar cada coluna de texto
     for col in text_columns:
@@ -407,9 +415,9 @@ def detect_commitment_expressions(df, text_columns, fit=True, params=None):
         result_df[standardize_feature_name(f"{col_clean}_has_commitment")] = has_commitment
         result_df[standardize_feature_name(f"{col_clean}_commitment_count")] = commitment_counts
     
-    return result_df, params
+    return result_df, param_manager
 
-def create_career_term_detector(df, text_columns, fit=True, params=None):
+def create_career_term_detector(df, text_columns, fit=True, params=None, param_manager=None):
     """
     Cria um detector para termos relacionados à carreira com pesos de importância.
     
@@ -417,19 +425,20 @@ def create_career_term_detector(df, text_columns, fit=True, params=None):
         df: DataFrame pandas
         text_columns: Lista de colunas de texto para processamento
         fit: Flag para indicar se estamos no modo fit
-        params: Dicionário com parâmetros
+        params: Dicionário com parâmetros (deprecated - usar param_manager)
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com features de termos de carreira adicionadas
-        Parâmetros atualizados
+        ParameterManager atualizado
     """
-    if params is None:
-        params = {}
+    if param_manager is None:
+        param_manager = ParameterManager()
     
     result_df = pd.DataFrame(index=df.index)
     
     # Termos relacionados à carreira com pesos
-    if fit or 'career_terms' not in params:
+    if fit:
         career_terms = {
             # Termos de avanço na carreira
             'crecimiento profesional': 2.0,
@@ -506,11 +515,13 @@ def create_career_term_detector(df, text_columns, fit=True, params=None):
             'mejorar': 0.7
         }
         
-        # IMPORTANTE: Armazenar explicitamente no dicionário de parâmetros
-        params['career_terms'] = career_terms
+        # MUDANÇA: Salvar usando param_manager
+        param_manager.save_professional_params('career_terms', career_terms)
     else:
-        # No modo transform, usar os termos existentes
-        career_terms = params['career_terms']
+        # MUDANÇA: Recuperar usando param_manager
+        career_terms = param_manager.get_professional_params('career_terms')
+        if not career_terms:
+            raise ValueError("Termos de carreira não encontrados nos parâmetros!")
     
     # Processar cada coluna de texto
     for col in text_columns:
@@ -547,7 +558,7 @@ def create_career_term_detector(df, text_columns, fit=True, params=None):
         result_df[standardize_feature_name(f"{col_clean}_has_career_terms")] = has_career_terms
         result_df[standardize_feature_name(f"{col_clean}_career_term_count")] = career_term_counts
     
-    return result_df, params
+    return result_df, param_manager
 
 def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None, param_manager=None):
     """Aprimora pesos TF-IDF para termos de carreira - COM PARAMETER MANAGER"""
