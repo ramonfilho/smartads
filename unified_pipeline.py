@@ -1239,13 +1239,11 @@ def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=
         tfidf_df, tfidf_params = enhance_tfidf_for_career_terms(
             temp_df, [col],
             fit=fit,
-            params=params  # ✅ Passar params completos, não subchave
+            params=params["professional_features"]  # ✅ Passar params completos, não subchave
         )
 
         if fit:
-            if 'career_tfidf' not in params['professional_features']:
-                params['professional_features']['career_tfidf'] = {}
-            params['professional_features']['career_tfidf'][col_key] = tfidf_params
+            params['professional_features']['career_tfidf'] = tfidf_params['career_tfidf']
         
         added_count = 0
         for tfidf_col in tfidf_df.columns:
@@ -2085,7 +2083,7 @@ if __name__ == "__main__":
         importance_threshold=0.1,
         correlation_threshold=0.95,
         n_folds=3,
-        test_mode=False,
+        test_mode=True,
         max_samples=2000,
         use_checkpoints=False,
         clear_cache=True

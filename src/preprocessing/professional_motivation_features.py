@@ -549,78 +549,45 @@ def create_career_term_detector(df, text_columns, fit=True, params=None):
     return result_df, params
 
 def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None):
-    """
-    Aprimora pesos TF-IDF para termos relacionados à carreira.
-    """
+    """Aprimora pesos TF-IDF para termos de carreira - VERSÃO CORRIGIDA"""
     if params is None:
         params = {}
     
-    # CORREÇÃO: Usar estrutura correta
-    if 'vectorizers' not in params:
-        params['vectorizers'] = {}
-    if 'career_tfidf' not in params['vectorizers']:
-        params['vectorizers']['career_tfidf'] = {}
+    # CORREÇÃO: Estrutura consistente de parâmetros
+    if 'career_tfidf' not in params:
+        params['career_tfidf'] = {}
     
     df_result = pd.DataFrame(index=df.index)
     
-    # Career-related terms to boost
+    # Career-related terms
     career_terms = [
         'trabajo', 'empleo', 'profesional', 'oportunidades', 'laboral',
         'carrera', 'mejor trabajo', 'oportunidades laborales', 'profesión',
         'mejor', 'comunicación', 'viajar', 'mejorar'
     ]
     
-    # NOVO: Garantir que career_terms seja acessível nos parâmetros
-    if fit:
-        # Criar um mapeamento com pesos padrão para cada termo
-        career_terms_dict = {term: 1.0 for term in career_terms}
-        
-        # Atribuir pesos específicos para termos mais importantes
-        special_terms = {
-            'mejor trabajo': 1.8, 
-            'oportunidades laborales': 2.0, 
-            'desarrollo profesional': 2.0,
-            'crecimiento profesional': 2.0
-        }
-        
-        # Atualizar o dicionário com os pesos específicos
-        career_terms_dict.update(special_terms)
-    
-    # Inicializar analisador de sentimento
-    try:
-        from nltk.sentiment.vader import SentimentIntensityAnalyzer
-        sia = SentimentIntensityAnalyzer()
-    except Exception as e:
-        print(f"Erro ao inicializar analisador de sentimento: {e}")
-        sia = None
-    
-    # Processar cada coluna de texto
     for col in text_cols:
         if col not in df.columns:
             continue
             
         col_clean = clean_column_name(col)
         
-        # Normalizar textos e remover vazios
+        # Normalizar textos
         texts = df[col].apply(normalize_text)
-        valid_texts = texts[texts != ""]
+        valid_mask = texts != ""
+        valid_count = valid_mask.sum()
         
-        if len(valid_texts) < 10:  # Pular se houver poucos textos válidos
-            print(f"Pulando TF-IDF para {col_clean} (poucos textos válidos)")
+        if valid_count < 10:
+            print(f"  ⚠️ Poucos textos válidos para {col} ({valid_count}), pulando...")
             continue
         
         if fit:
-            # Criar e ajustar vetorizador
+            # MODO FIT: Criar e treinar vetorizador
             from sklearn.feature_extraction.text import TfidfVectorizer
             
-            # Lista de stopwords em espanhol
             spanish_stopwords = [
                 'a', 'al', 'algo', 'algunas', 'algunos', 'ante', 'antes', 'como', 'con', 'contra',
-                'cual', 'cuando', 'de', 'del', 'desde', 'donde', 'durante', 'e', 'el', 'ella',
-                'ellas', 'ellos', 'en', 'entre', 'era', 'erais', 'eran', 'eras', 'eres', 'es',
-                'esa', 'esas', 'ese', 'eso', 'esos', 'esta', 'estaba', 'estabais', 'estaban',
-                'estabas', 'estad', 'estada', 'estadas', 'estado', 'estados', 'estamos', 'estando',
-                'estar', 'estaremos', 'estará', 'estarán', 'estarás', 'estaré', 'estaréis'
+                'cual', 'cuando', 'de', 'del', 'desde', 'donde', 'durante', 'e', 'el', 'ella'
             ]
             
             vectorizer = TfidfVectorizer(
@@ -630,63 +597,90 @@ def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None):
                 stop_words=spanish_stopwords
             )
             
-            # Ajustar aos textos válidos
-            vectorizer.fit(valid_texts)
-            
-            # Armazenar vetorizador para uso futuro
-            params['vectorizers']['career_tfidf'][col_clean] = {
-                'vectorizer': vectorizer,
-                'feature_names': vectorizer.get_feature_names_out().tolist(),
-                'career_terms': career_terms_dict  # Também salvar os termos
-            }
-        
-        # Verificar se temos um vetorizador para esta coluna
-        if col_clean not in params['vectorizers']['career_tfidf']:
-            print(f"Vetorizador não encontrado para {col_clean}, pulando...")
-            continue
-            
-        # Obter vetorizador e nomes de features
-        vectorizer = params['vectorizers']['career_tfidf'][col_clean]['vectorizer']
-        feature_names = params['vectorizers']['career_tfidf'][col_clean]['feature_names']
-        
-        # Inicializar matriz de zeros para os resultados
-        result_matrix = np.zeros((len(df), len(feature_names)))
-        
-        # Preencher valores para textos válidos
-        valid_indices = texts.index[texts != ""]
-        if len(valid_indices) > 0:
-            valid_matrix = vectorizer.transform(texts[valid_indices]).toarray()
-            
-            # Aplicar boost para termos relacionados à carreira
-            for term_idx, term in enumerate(feature_names):
-                if any(career_term in term for career_term in career_terms):
-                    valid_matrix[:, term_idx] *= 1.5  # Boost de 50%
-            
-            # Colocar valores nas posições corretas
-            for i, idx in enumerate(valid_indices):
-                result_matrix[i] = valid_matrix[i]
-        
-        # Adicionar features ao DataFrame
-        for i, term in enumerate(feature_names):
-            feature_name = standardize_feature_name(f"{col_clean}_tfidf_{term}")
-            df_result[feature_name] = result_matrix[:, i]
+            try:
+                print(f"  🔄 Criando Career TF-IDF para '{col}'...")
+                
+                # Fit apenas em textos válidos
+                valid_texts = texts[valid_mask]
+                vectorizer.fit(valid_texts)
+                feature_names = vectorizer.get_feature_names_out()
+                
+                # Salvar vetorizador - ESTRUTURA CORRIGIDA
+                params['career_tfidf'][col_clean] = {
+                    'vectorizer': vectorizer,
+                    'feature_names': feature_names.tolist(),
+                    'career_terms': career_terms
+                }
+                
+                # Transform todos os textos
+                tfidf_matrix_sparse = vectorizer.transform(texts)
+                tfidf_matrix = tfidf_matrix_sparse.toarray()
+                
+                # Aplicar boost para termos de carreira
+                for term_idx, term in enumerate(feature_names):
+                    if any(career_term in term for career_term in career_terms):
+                        tfidf_matrix[:, term_idx] *= 1.5
+                
+                # Adicionar features ao DataFrame
+                for i, term in enumerate(feature_names):
+                    feature_name = standardize_feature_name(f"{col_clean}_career_tfidf_{term}")
+                    df_result[feature_name] = tfidf_matrix[:, i]
+                
+                print(f"    ✓ {len(feature_names)} features Career TF-IDF criadas")
+                
+            except Exception as e:
+                print(f"  ❌ Erro ao criar Career TF-IDF para '{col}': {e}")
+                import traceback
+                traceback.print_exc()
+                
+        else:
+            # MODO TRANSFORM: Usar vetorizador existente
+            if col_clean not in params['career_tfidf']:
+                print(f"  ⚠️ Vetorizador Career TF-IDF não encontrado para '{col_clean}'")
+                continue
+                
+            try:
+                vectorizer = params['career_tfidf'][col_clean]['vectorizer']
+                feature_names = params['career_tfidf'][col_clean]['feature_names']
+                saved_career_terms = params['career_tfidf'][col_clean].get('career_terms', career_terms)
+                
+                print(f"  🔄 Aplicando Career TF-IDF para '{col}'...")
+                
+                # Transform
+                tfidf_matrix_sparse = vectorizer.transform(texts)
+                tfidf_matrix = tfidf_matrix_sparse.toarray()
+                
+                # Aplicar boost
+                for term_idx, term in enumerate(feature_names):
+                    if any(career_term in term for career_term in saved_career_terms):
+                        tfidf_matrix[:, term_idx] *= 1.5
+                
+                # Adicionar features
+                for i, term in enumerate(feature_names):
+                    feature_name = standardize_feature_name(f"{col_clean}_career_tfidf_{term}")
+                    df_result[feature_name] = tfidf_matrix[:, i]
+                
+                print(f"    ✓ {len(feature_names)} features Career TF-IDF aplicadas")
+                
+            except Exception as e:
+                print(f"  ❌ Erro ao aplicar Career TF-IDF para '{col}': {e}")
+                import traceback
+                traceback.print_exc()
     
-    # Adicionar colunas com score agregado de carreira
+    # Adicionar score agregado
     for col in text_cols:
         if col not in df.columns:
             continue
             
         col_clean = clean_column_name(col)
         
-        # Encontrar colunas TF-IDF para esta coluna de texto
-        tfidf_cols = [c for c in df_result.columns if c.startswith(f"{col_clean}_tfidf_")]
+        # Encontrar colunas career tfidf
+        career_tfidf_cols = [c for c in df_result.columns if f"{col_clean}_career_tfidf_" in c]
         
-        if tfidf_cols:
-            # Calcular score agregado: média de todas as colunas TF-IDF relacionadas à carreira
-            career_cols = [c for c in tfidf_cols if any(term in c for term in career_terms)]
-            
-            if career_cols:
-                df_result[standardize_feature_name(f"{col_clean}_career_tfidf_score")] = df_result[career_cols].mean(axis=1)
+        if career_tfidf_cols:
+            # Score agregado
+            df_result[standardize_feature_name(f"{col_clean}_career_tfidf_score")] = df_result[career_tfidf_cols].mean(axis=1)
+            print(f"    ✓ Score agregado criado para {col_clean}")
     
     return df_result, params
 

@@ -362,6 +362,8 @@ Erro técnico: {str(e)}
             }
         
         # Análise inicial
+        if isinstance(series, pd.DataFrame):
+            series = series.iloc[:, 0]
         dtype = str(series.dtype)
         unique_count = series.nunique()
         total_count = len(series)
@@ -1202,29 +1204,44 @@ Respond with JSON:
         
         return None
     
-    def _compute_dataset_hash(self, df: pd.DataFrame) -> str:
-        """Computa hash do dataset para detectar mudanças."""
-        # Incluir: shape, nomes das colunas, tipos
-        dataset_info = {
-            'shape': df.shape,
-            'columns': sorted(df.columns.tolist()),
-            'dtypes': {col: str(df[col].dtype) for col in df.columns}
-        }
-        
-        # Adicionar amostra de dados de cada coluna
-        data_samples = {}
-        for col in df.columns:
-            # Pegar primeiros e últimos valores únicos
-            unique_vals = df[col].dropna().unique()
-            if len(unique_vals) > 0:
-                sample_vals = sorted([str(v) for v in unique_vals[:5]])
-                data_samples[col] = sample_vals
-        
-        dataset_info['data_samples'] = data_samples
-        
-        # Criar hash
-        info_str = json.dumps(dataset_info, sort_keys=True)
-        return hashlib.md5(info_str.encode()).hexdigest()
+    def _compute_dataset_hash(self, df):
+        """Computa hash único para o dataset"""
+        try:
+            # Informações básicas do dataset
+            hash_components = {
+                'shape': df.shape,
+                'columns': sorted(df.columns.tolist()),
+                'dtypes': df.dtypes.astype(str).to_dict()
+            }
+            
+            # Adicionar algumas amostras de valores únicos (com tratamento de erro)
+            sample_values = {}
+            for col in df.columns[:10]:  # Apenas primeiras 10 colunas
+                try:
+                    if col in df.columns:
+                        # Usar iloc para garantir que pegamos uma Series
+                        col_data = df[col]
+                        if hasattr(col_data, 'dropna'):
+                            col_data = df[col]
+                            if isinstance(col_data, pd.DataFrame):
+                                col_data = col_data.iloc[:, 0]
+                            unique_vals = col_data.dropna().unique()
+                            sample_values[col] = sorted(str(v) for v in unique_vals[:5])
+                except:
+                    pass
+            
+            hash_components['sample_values'] = sample_values
+            
+            # Criar hash
+            import json
+            hash_string = json.dumps(hash_components, sort_keys=True)
+            return hashlib.md5(hash_string.encode()).hexdigest()
+            
+        except Exception as e:
+            print(f"Erro ao computar hash do dataset: {e}")
+            # Fallback: usar apenas shape e colunas
+            fallback_string = f"{df.shape}_{sorted(df.columns.tolist())}"
+            return hashlib.md5(fallback_string.encode()).hexdigest()
     
     def _compute_column_hash(self, series: pd.Series) -> str:
         """Computa hash de uma coluna específica."""

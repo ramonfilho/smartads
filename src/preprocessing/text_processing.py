@@ -121,26 +121,13 @@ def extract_sentiment_features(df, text_cols, fit=True, params=None):
     return df_result, params
 
 def extract_tfidf_features(df, text_cols, fit=True, params=None):
-    """Extrai features TF-IDF dos textos com parâmetros MELHORADOS.
-    
-    Args:
-        df: DataFrame pandas
-        text_cols: Lista de colunas de texto para processamento
-        fit: Se True, ajusta os vetorizadores, caso contrário usa modelos existentes
-        params: Dicionário com parâmetros aprendidos na fase de fit
-        
-    Returns:
-        DataFrame com features TF-IDF adicionadas
-        Dicionário com parâmetros atualizados
-    """
-    # Inicializar parâmetros
+    """Extrai features TF-IDF dos textos - VERSÃO CORRIGIDA"""
     if params is None:
         params = {}
     
     if 'tfidf' not in params:
         params['tfidf'] = {}
     
-    # Cria uma cópia para não modificar o original
     df_result = df.copy()
     
     # Filtrar colunas de texto existentes
@@ -149,10 +136,17 @@ def extract_tfidf_features(df, text_cols, fit=True, params=None):
     for col in text_cols:
         clean_col = f'{col}_clean'
         
-        if clean_col not in df_result.columns or df_result[clean_col].str.len().sum() == 0:
+        if clean_col not in df_result.columns:
+            continue
+            
+        # Verificar se temos textos válidos
+        texts = df_result[clean_col].fillna('')
+        if texts.str.len().sum() == 0:
+            print(f"  ⚠️ Coluna {clean_col} sem texto válido, pulando...")
             continue
         
         if fit:
+            # MODO FIT: Criar e treinar vetorizador
             tfidf = TfidfVectorizer(
                 max_features=200,
                 min_df=5,
@@ -166,57 +160,78 @@ def extract_tfidf_features(df, text_cols, fit=True, params=None):
             )
             
             try:
-                print(f"  Processando TF-IDF para '{col}' com novos parâmetros...")
-                tfidf_matrix = tfidf.fit_transform(df_result[clean_col].fillna(''))
+                print(f"  🔄 Processando TF-IDF para '{col}'...")
+                
+                # Fit e transform
+                tfidf_matrix = tfidf.fit_transform(texts)
                 feature_names = tfidf.get_feature_names_out()
                 
-                print(f"    - Features extraídas: {len(feature_names)}")
-                print(f"    - Exemplos de n-gramas: {list(feature_names[:10])}")
+                print(f"    ✓ Features extraídas: {len(feature_names)}")
                 
+                # Salvar vetorizador e feature names
                 params['tfidf'][col] = {
                     'vectorizer': tfidf,
                     'feature_names': feature_names.tolist()
                 }
                 
-                # CORREÇÃO: Criar DataFrame e adicionar colunas uma por uma
+                # CORREÇÃO: Criar DataFrame com nomes corretos desde o início
                 from src.utils.feature_naming import create_tfidf_column_name
                 
-                # Para cada termo, criar coluna com nome único
-                for i, term in enumerate(feature_names):
-                    col_name = create_tfidf_column_name(col, term)
-                    df_result[col_name] = tfidf_matrix.toarray()[:, i]
+                # Criar lista de nomes de colunas
+                column_names = [create_tfidf_column_name(col, term) for term in feature_names]
+                
+                # Criar DataFrame temporário com as features TF-IDF
+                tfidf_df = pd.DataFrame(
+                    tfidf_matrix.toarray(),
+                    index=df_result.index,
+                    columns=column_names
+                )
+                
+                # Concatenar ao resultado
+                df_result = pd.concat([df_result, tfidf_df], axis=1)
+                
+                print(f"    ✓ {len(column_names)} features TF-IDF adicionadas")
                 
             except Exception as e:
-                print(f"Erro ao processar TF-IDF para '{col}': {e}")
+                print(f"  ❌ Erro ao processar TF-IDF para '{col}': {e}")
+                import traceback
+                traceback.print_exc()
                 
-        else:  # transform mode
-            if col in params['tfidf'] and 'vectorizer' in params['tfidf'][col]:
+        else:
+            # MODO TRANSFORM: Usar vetorizador existente
+            if col not in params['tfidf']:
+                print(f"  ⚠️ Vetorizador não encontrado para '{col}', pulando...")
+                continue
+                
+            try:
                 tfidf = params['tfidf'][col]['vectorizer']
                 feature_names = params['tfidf'][col]['feature_names']
                 
-                try:
-                    tfidf_matrix = tfidf.transform(df_result[clean_col].fillna(''))
-                    
-                    # Criar DataFrame com nomes de colunas corretos
-                    from src.utils.feature_naming import create_tfidf_column_name
-                    
-                    # Primeiro criar lista de nomes de colunas
-                    column_names = []
-                    for term in feature_names:
-                        col_name = create_tfidf_column_name(col, term)
-                        column_names.append(col_name)
-                    
-                    # Criar DataFrame com os nomes corretos desde o início
-                    tfidf_df = pd.DataFrame(
-                        tfidf_matrix.toarray(), 
-                        index=df_result.index,
-                        columns=column_names  # ✅ Passar nomes na criação
-                    )
-                    
-                    df_result = pd.concat([df_result, tfidf_df], axis=1)
-                    
-                except Exception as e:
-                    print(f"Erro ao transformar TF-IDF para '{col}': {e}")
+                print(f"  🔄 Aplicando TF-IDF pré-treinado para '{col}'...")
+                
+                # Transform usando vetorizador existente
+                tfidf_matrix = tfidf.transform(texts)
+                
+                # Criar lista de nomes de colunas
+                from src.utils.feature_naming import create_tfidf_column_name
+                column_names = [create_tfidf_column_name(col, term) for term in feature_names]
+                
+                # Criar DataFrame com as features
+                tfidf_df = pd.DataFrame(
+                    tfidf_matrix.toarray(),
+                    index=df_result.index,
+                    columns=column_names
+                )
+                
+                # Concatenar ao resultado
+                df_result = pd.concat([df_result, tfidf_df], axis=1)
+                
+                print(f"    ✓ {len(column_names)} features TF-IDF aplicadas")
+                
+            except Exception as e:
+                print(f"  ❌ Erro ao transformar TF-IDF para '{col}': {e}")
+                import traceback
+                traceback.print_exc()
     
     return df_result, params
 
@@ -298,6 +313,9 @@ def extract_discriminative_features(df, text_cols, fit=True, params=None):
     
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
+   
+    print(f"\n  DEBUG extract_discriminative_features:")
+    print(f"    DataFrame inicial: {len(df_result)} linhas")
     
     # Filtrar colunas de texto existentes
     text_cols = [col for col in text_cols if col in df_result.columns]
@@ -306,57 +324,78 @@ def extract_discriminative_features(df, text_cols, fit=True, params=None):
     if 'target' not in df_result.columns:
         return df_result, params
     
+    # CORREÇÃO: Garantir que estamos trabalhando com o DataFrame correto
+    # Resetar index se necessário
+    if len(df_result) != len(df):
+        print(f"  ⚠️ AVISO: DataFrame duplicado detectado! df_result: {len(df_result)}, df original: {len(df)}")
+        # Remover duplicatas se existirem
+        df_result = df_result.drop_duplicates().reset_index(drop=True)
+        print(f"  ✓ Após remover duplicatas: {len(df_result)} linhas")
+    
     if fit:
         # Calcular taxa geral de conversão
         overall_conv_rate = df_result['target'].mean()
         min_term_freq = 50
         
         for col in text_cols:
-            # CORREÇÃO: Filtrar colunas TF-IDF mais precisamente
-            # Incluir o underscore final para evitar prefixos parciais
+            # Filtrar colunas TF-IDF
             tfidf_cols = [c for c in df_result.columns 
                          if c.startswith(f'{col}_tfidf_') and 
-                         c.count('_tfidf_') == 1]  # Garantir que é uma coluna TF-IDF individual
+                         c.count('_tfidf_') == 1]
             
             if not tfidf_cols:
                 continue
             
             print(f"\nProcessando {col}:")
             print(f"  Número de colunas TF-IDF: {len(tfidf_cols)}")
+            print(f"  DataFrame tem {len(df_result)} linhas")
             
             term_stats = []
-            for tfidf_col in tfidf_cols:
-                # Agora tfidf_col é realmente UMA coluna
-                tfidf_values = df_result[tfidf_col].values
-                target_values = df_result['target'].values
-                
-                # Extrair o termo do nome da coluna
-                term = tfidf_col.split(f'{col}_tfidf_')[1]
-                
-                # USAR APENAS ESTA IMPLEMENTAÇÃO (com arrays numpy)
-                tfidf_values = df_result[tfidf_col].values
-                target_values = df_result['target'].values
-                
-                # Verificar presença do termo nos dados
-                has_term = tfidf_values > 0
-                term_freq = has_term.sum()
-                
-                if term_freq >= min_term_freq:
-                    # Calcular taxa de conversão quando o termo está presente
-                    conv_with_term = target_values[has_term].mean()
-                    
-                    # Calcular lift (razão entre taxa com termo e taxa geral)
-                    if overall_conv_rate > 0:
-                        lift = conv_with_term / overall_conv_rate
-                        
-                        # Significância estatística básica - margem de 20% ou mais
-                        if abs(lift - 1.0) >= 0.2:
-                            term_stats.append((term, lift, term_freq, conv_with_term))
             
-            # Ordenar por lift (poder discriminativo)
+            for tfidf_col in tfidf_cols:  # Processar apenas as primeiras 50 para evitar loops muito longos
+                try:
+                    # CORREÇÃO CRÍTICA: Garantir que estamos usando índices alinhados
+                    # Resetar índice para garantir alinhamento
+                    df_temp = df_result[[tfidf_col, 'target']].reset_index(drop=True)
+                    
+                    # Agora trabalhar com o DataFrame temporário
+                    tfidf_values = df_temp[tfidf_col].values
+                    target_values = df_temp['target'].values
+                    
+                    # Debug
+                    if len(tfidf_values) != len(target_values):
+                        print(f"  ❌ ERRO CRÍTICO: Tamanhos diferentes!")
+                        print(f"     tfidf: {len(tfidf_values)}, target: {len(target_values)}")
+                        continue
+                    
+                    # Extrair o termo do nome da coluna
+                    term = tfidf_col.split(f'{col}_tfidf_')[1]
+                    
+                    # Verificar presença do termo
+                    has_term = tfidf_values > 0
+                    term_freq = has_term.sum()
+                    
+                    if term_freq >= min_term_freq:
+                        if np.any(has_term):
+                            # Usar apenas valores onde has_term é True
+                            conv_with_term = np.mean(target_values[has_term])
+                        else:
+                            conv_with_term = 0
+                        
+                        # Calcular lift
+                        if overall_conv_rate > 0:
+                            lift = conv_with_term / overall_conv_rate
+                            
+                            if abs(lift - 1.0) >= 0.2:
+                                term_stats.append((term, lift, term_freq, conv_with_term))
+                
+                except Exception as e:
+                    print(f"  ⚠️ Aviso: Erro ao processar {tfidf_col}: {str(e)}")
+                    continue
+            
+            # Ordenar e selecionar top termos
             term_stats.sort(key=lambda x: abs(x[1] - 1.0), reverse=True)
             
-            # Guardar os top 5 termos com maior lift positivo e negativo
             pos_terms = [(t, l) for t, l, _, _ in term_stats if l > 1.0][:5]
             neg_terms = [(t, l) for t, l, _, _ in term_stats if l < 1.0][:5]
             
@@ -364,6 +403,24 @@ def extract_discriminative_features(df, text_cols, fit=True, params=None):
                 'positive': pos_terms,
                 'negative': neg_terms
             }
+            
+            # Debug
+            if pos_terms or neg_terms:
+                print(f"  ✓ Encontrados {len(pos_terms)} termos positivos e {len(neg_terms)} negativos")
+            else:
+                print(f"  ℹ️ Nenhum termo discriminativo encontrado (min_freq={min_term_freq})")
+    
+            
+            # Debug: imprimir termos encontrados
+            if pos_terms or neg_terms:
+                print(f"  Termos positivos (lift > 1): {len(pos_terms)}")
+                for term, lift in pos_terms[:3]:
+                    print(f"    - {term}: lift = {lift:.2f}")
+                print(f"  Termos negativos (lift < 1): {len(neg_terms)}")
+                for term, lift in neg_terms[:3]:
+                    print(f"    - {term}: lift = {lift:.2f}")
+            else:
+                print(f"  Nenhum termo discriminativo encontrado (min_freq={min_term_freq})")
     
     # Criar features para termos discriminativos
     for col, terms_dict in params['discriminative_terms'].items():
@@ -395,6 +452,8 @@ def extract_discriminative_features(df, text_cols, fit=True, params=None):
             if neg_features:
                 df_result[standardize_feature_name(f'{col}_has_any_low_conv_term')] = df_result[neg_features].max(axis=1)
                 df_result[standardize_feature_name(f'{col}_num_low_conv_terms')] = df_result[neg_features].sum(axis=1)
+    
+    print(f"  DEBUG: DataFrame final: {len(df_result)} linhas")
     
     return df_result, params
 
