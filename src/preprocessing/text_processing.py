@@ -316,22 +316,12 @@ def extract_discriminative_features(df, text_cols, fit=True, param_manager=None)
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
     
-    # DEBUG
-    print(f"\n  DEBUG extract_discriminative_features:")
-    print(f"    DataFrame inicial: {len(df_result)} linhas")
-    
     # Filtrar colunas de texto existentes
     text_cols = [col for col in text_cols if col in df_result.columns]
     
     # Verificar se a coluna target existe
     if 'target' not in df_result.columns:
         return df_result, param_manager
-    
-    # Verificar duplicação
-    if len(df_result) != len(df):
-        print(f"  ⚠️ AVISO: DataFrame duplicado detectado! df_result: {len(df_result)}, df original: {len(df)}")
-        df_result = df_result.drop_duplicates().reset_index(drop=True)
-        print(f"  ✓ Após remover duplicatas: {len(df_result)} linhas")
     
     if fit:
         # Calcular taxa geral de conversão
@@ -358,31 +348,16 @@ def extract_discriminative_features(df, text_cols, fit=True, param_manager=None)
             
             for tfidf_col in tfidf_cols:
                 try:
-                    # Criar DataFrame temporário com índices resetados
-                    df_temp = df_result[[tfidf_col, 'target']].reset_index(drop=True)
-                    
-                    # Trabalhar com arrays
-                    tfidf_values = df_temp[tfidf_col].values
-                    target_values = df_temp['target'].values
-                    
-                    # Verificar tamanhos
-                    if len(tfidf_values) != len(target_values):
-                        print(f"  ❌ ERRO: Tamanhos incompatíveis para {tfidf_col}")
-                        continue
-                    
                     # Extrair o termo do nome da coluna
                     term = tfidf_col.split(f'{col}_tfidf_')[1]
                     
                     # Verificar presença do termo
-                    has_term = tfidf_values > 0
+                    has_term = df_result[tfidf_col] > 0
                     term_freq = has_term.sum()
                     
                     if term_freq >= min_term_freq:
-                        # Calcular taxa de conversão
-                        if has_term.any():
-                            conv_with_term = target_values[has_term].mean()
-                        else:
-                            conv_with_term = 0
+                        # Calcular taxa de conversão para quem tem o termo
+                        conv_with_term = df_result.loc[has_term, 'target'].mean()
                         
                         # Calcular lift
                         if overall_conv_rate > 0:
@@ -406,41 +381,29 @@ def extract_discriminative_features(df, text_cols, fit=True, param_manager=None)
                 'negative': neg_terms
             }
             
-            # Debug
-            if pos_terms or neg_terms:
-                print(f"  ✓ Encontrados {len(pos_terms)} termos positivos e {len(neg_terms)} negativos")
-                if pos_terms:
-                    print(f"  Termos positivos (lift > 1): {len(pos_terms)}")
-                    for term, lift in pos_terms[:3]:
-                        print(f"    - {term}: lift = {lift:.2f}")
-                if neg_terms:
-                    print(f"  Termos negativos (lift < 1): {len(neg_terms)}")
-                    for term, lift in neg_terms[:3]:
-                        print(f"    - {term}: lift = {lift:.2f}")
-            else:
-                print(f"  ℹ️ Nenhum termo discriminativo encontrado (min_freq={min_term_freq})")
+            # Debug output...
         
-        # MUDANÇA: Salvar usando param_manager
+        # Salvar no param_manager
         param_manager.params['text_processing']['discriminative_terms'] = discriminative_terms
     else:
-        # MUDANÇA: Recuperar usando param_manager
+        # Recuperar do param_manager
         discriminative_terms = param_manager.params['text_processing'].get('discriminative_terms', {})
     
     # Criar features para termos discriminativos
     for col, terms_dict in discriminative_terms.items():
-        # Termos positivos (associados à conversão)
+        # Termos positivos
         for term, lift in terms_dict.get('positive', []):
             term_col = standardize_feature_name(f'{col}_tfidf_{term}')
             if term_col in df_result.columns:
-                # Criar feature binária para presença do termo
-                df_result[standardize_feature_name(f'{col}_high_conv_term_{term}')] = (df_result[term_col] > 0).astype(int)
+                feature_name = standardize_feature_name(f'{col}_high_conv_term_{term}')
+                df_result[feature_name] = (df_result[term_col] > 0).astype(int)
         
-        # Termos negativos (associados à não-conversão)
+        # Termos negativos
         for term, lift in terms_dict.get('negative', []):
             term_col = standardize_feature_name(f'{col}_tfidf_{term}')
             if term_col in df_result.columns:
-                # Criar feature binária para presença do termo
-                df_result[standardize_feature_name(f'{col}_low_conv_term_{term}')] = (df_result[term_col] > 0).astype(int)
+                feature_name = standardize_feature_name(f'{col}_low_conv_term_{term}')
+                df_result[feature_name] = (df_result[term_col] > 0).astype(int)
         
         # Criar feature agregada para presença de qualquer termo positivo ou negativo
         if terms_dict.get('positive', []):

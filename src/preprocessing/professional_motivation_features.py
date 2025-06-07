@@ -560,7 +560,7 @@ def create_career_term_detector(df, text_columns, fit=True, params=None, param_m
     
     return result_df, param_manager
 
-def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None, param_manager=None):
+def enhance_tfidf_for_career_terms(df, text_cols, fit=True, param_manager=None):
     """Aprimora pesos TF-IDF para termos de carreira - COM PARAMETER MANAGER"""
     
     if param_manager is None:
@@ -583,10 +583,15 @@ def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None, param_m
         
         # Normalizar textos
         texts = df[col].apply(normalize_text)
-        valid_mask = texts != ""
+        
+        # CORREÇÃO: Verificar textos não vazios com threshold mais baixo
+        valid_mask = texts.str.len() > 0  # MUDANÇA: de > 5 para > 0
         valid_count = valid_mask.sum()
         
-        if valid_count < 10:
+        # MUDANÇA: Threshold mais baixo
+        min_texts_required = 5  # Era 10
+        
+        if valid_count < min_texts_required:
             print(f"  ⚠️ Poucos textos válidos para {col} ({valid_count}), pulando...")
             continue
         
@@ -601,7 +606,7 @@ def enhance_tfidf_for_career_terms(df, text_cols, fit=True, params=None, param_m
             
             vectorizer = TfidfVectorizer(
                 max_features=50,
-                min_df=3,
+                min_df=2,  # MUDANÇA: de 3 para 2
                 ngram_range=(1, 2),
                 stop_words=spanish_stopwords
             )

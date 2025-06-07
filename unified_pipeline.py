@@ -938,12 +938,17 @@ def perform_topic_modeling_fixed(df, text_cols, n_topics=5, fit=True, param_mana
         
         # Verificar se temos texto limpo
         texts = df[col].fillna('').astype(str)
-        valid_texts = texts[texts.str.len() > 10]
+        
+        # MUDANÇA: Threshold mais baixo para textos válidos
+        valid_texts = texts[texts.str.len() > 5]  # MUDANÇA: de > 10 para > 5
         
         print(f"  📊 Textos válidos: {len(valid_texts)} de {len(texts)} total")
         
-        if len(valid_texts) < 50:
-            print(f"  ⚠️ Poucos textos válidos para LDA. Pulando esta coluna.")
+        # MUDANÇA: Threshold mais baixo
+        min_texts_for_lda = 20  # Era 50
+        
+        if len(valid_texts) < min_texts_for_lda:
+            print(f"  ⚠️ Poucos textos válidos para LDA (mínimo: {min_texts_for_lda}). Pulando esta coluna.")
             continue
         
         if fit:
@@ -1085,41 +1090,31 @@ def apply_professional_features_pipeline(df, fit=False, batch_size=5000, param_m
     preserved_columns = param_manager.params['feature_engineering'].get('preserved_columns', {})
     
     if preserved_columns:
-        # Adicionar temporariamente as colunas preservadas ao DataFrame
+        # CORREÇÃO: Verificar se as colunas preservadas têm dados
+        print(f"  ℹ️ Verificando {len(preserved_columns)} colunas preservadas...")
+        
         for col_name, col_data in preserved_columns.items():
             temp_col_name = f"{col_name}_TEMP_PROF"
-            df[temp_col_name] = col_data.reindex(df.index)
-            text_columns.append(temp_col_name)
-        
-        print(f"  ✓ {len(text_columns)} colunas de texto recuperadas para processamento")
-    else:
-        # Usar classificações existentes
-        classifications = param_manager.get_preprocessing_params('column_classifications')
-        
-        if classifications:
-            print("\n✓ Usando classificações existentes para features profissionais")
-            text_columns = [
-                col for col, info in classifications.items()
-                if col in df.columns
-                and info['type'] == 'text'
-                and info['confidence'] >= 0.7
-            ]
-        else:
-            # Usar o ColumnTypeClassifier para detectar colunas de texto
-            classifier = ColumnTypeClassifier(
-                use_llm=False,
-                use_classification_cache=True,
-                confidence_threshold=0.7
-            )
-            classifications = classifier.classify_dataframe(df)
             
-            # Filtrar apenas colunas de texto
-            text_columns = [
-                col for col, info in classifications.items()
-                if info['type'] == classifier.TEXT 
-                and info['confidence'] >= 0.7
-            ]
+            # IMPORTANTE: Verificar se temos dados na coluna preservada
+            if col_data is not None and len(col_data) > 0:
+                # Alinhar índices com o DataFrame atual
+                df[temp_col_name] = col_data.reindex(df.index)
+                
+                # Verificar se a coluna tem conteúdo válido
+                non_empty_count = df[temp_col_name].notna().sum()
+                if non_empty_count > 0:
+                    text_columns.append(temp_col_name)
+                    print(f"    ✓ {col_name}: {non_empty_count} valores não vazios")
+                else:
+                    print(f"    ⚠️ {col_name}: todos os valores são vazios, pulando")
+                    df = df.drop(columns=[temp_col_name])
+            else:
+                print(f"    ⚠️ {col_name}: coluna preservada vazia, pulando")
+        
+        print(f"  ✓ {len(text_columns)} colunas de texto válidas para processamento")
     
+    # Se não temos colunas preservadas válidas, usar classificações
     if not text_columns:
         print("  ⚠️ AVISO: Nenhuma coluna de texto encontrada para processamento profissional!")
         return df, param_manager
@@ -1840,19 +1835,20 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
     # ========================================================================
     # PARTE 4: VALIDAÇÃO DE FEATURES
     # ========================================================================
-    
+
     print("\n=== VALIDAÇÃO DE FEATURES ===")
-    
+
     # Verificar zeros nas features
     print("\nVerificando features com zeros...")
-    
+
     for dataset_name, dataset in [('Validation', val_final), ('Test', test_final)]:
         print(f"\n{dataset_name}:")
         zero_features = []
         for col in dataset.select_dtypes(include=[np.number]).columns:
             if col == 'target':
                 continue
-            if (dataset[col] == 0).all():
+            # CORREÇÃO: usar .eq() para comparação elemento por elemento
+            if dataset[col].eq(0).all():
                 zero_features.append(col)
         
         if zero_features:
@@ -2068,7 +2064,7 @@ if __name__ == "__main__":
         correlation_threshold=0.95,
         n_folds=3,
         test_mode=True,
-        max_samples=500,
+        max_samples=5000,
         use_checkpoints=False,
         clear_cache=True
     )

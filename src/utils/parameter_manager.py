@@ -29,7 +29,7 @@ class ParameterManager:
                 'normalization': {},
                 'categorical_encoding': {},
                 'temporal_features': {},
-                'column_classifications': {}
+                'column_classifications': {},
             },
             'text_processing': {
                 'tfidf_vectorizers': {},
@@ -111,7 +111,7 @@ class ParameterManager:
     def save_preprocessing_params(self, param_type: str, params: Dict) -> None:
         """Salva parâmetros de pré-processamento."""
         valid_types = ['quality_columns', 'missing_values', 'outliers', 
-                      'normalization', 'categorical_encoding', 'temporal_features']
+                      'normalization', 'categorical_encoding', 'temporal_features', 'column_classifications']
         
         if param_type not in valid_types:
             raise ValueError(f"Tipo inválido: {param_type}. Válidos: {valid_types}")
