@@ -725,19 +725,11 @@ def validate_production_compatibility(df, show_warnings=True):
 # FUNÇÕES DA PARTE 2 - PRÉ-PROCESSAMENTO
 # ============================================================================
 
-def apply_preprocessing_pipeline(df, params=None, fit=False, param_manager=None):
+def apply_preprocessing_pipeline(df, fit=False, param_manager=None):
     """Pipeline de pré-processamento com ParameterManager integrado."""
     
     if param_manager is None:
         param_manager = ParameterManager()
-        # Migrar params antigos se existirem
-        if params:
-            print("  ℹ️ Migrando parâmetros antigos para ParameterManager...")
-            # Migrar classificações
-            if 'column_classifications' in params:
-                param_manager.save_preprocessing_params('column_classifications', 
-                                                      params['column_classifications'])
-            # Migrar outros params conforme necessário
     
     print(f"Iniciando pipeline de pré-processamento para DataFrame: {df.shape}")
     
@@ -770,55 +762,30 @@ def apply_preprocessing_pipeline(df, params=None, fit=False, param_manager=None)
     
     # 1. Consolidar colunas de qualidade
     print("1. Consolidando colunas de qualidade...")
-    quality_params = param_manager.get_preprocessing_params('quality_columns')
-    df, quality_params = consolidate_quality_columns(df, fit=fit, params=quality_params)
-    if fit:
-        param_manager.save_preprocessing_params('quality_columns', quality_params)
+    df, param_manager = consolidate_quality_columns(df, fit=fit, param_manager=param_manager)
     
     # 2. Tratamento de valores ausentes
     print("2. Tratando valores ausentes...")
-    missing_params = param_manager.get_preprocessing_params('missing_values')
-    df, missing_params = handle_missing_values(df, fit=fit, params=missing_params)
-    if fit:
-        param_manager.save_preprocessing_params('missing_values', missing_params)
+    df, param_manager = handle_missing_values(df, fit=fit, param_manager=param_manager)
     
     # 3. Tratamento de outliers
     print("3. Tratando outliers...")
-    outlier_params = param_manager.get_preprocessing_params('outliers')
-    df, outlier_params = handle_outliers(df, fit=fit, params=outlier_params)
-    if fit:
-        param_manager.save_preprocessing_params('outliers', outlier_params)
+    df, param_manager = handle_outliers(df, fit=fit, param_manager=param_manager)
     
     # 4. Normalização de valores
     print("4. Normalizando valores numéricos...")
-    norm_params = param_manager.get_preprocessing_params('normalization')
-    df, norm_params = normalize_values(df, fit=fit, params=norm_params)
-    if fit:
-        param_manager.save_preprocessing_params('normalization', norm_params)
+    df, param_manager = normalize_values(df, fit=fit, param_manager=param_manager)
     
     # 5. Converter tipos de dados
     print("5. Convertendo dados temporais para datetime...")
-    df, _ = convert_data_types(df, fit=fit)
+    df, param_manager = convert_data_types(df, fit=fit, param_manager=param_manager)
     
     # 6. Feature engineering não-textual
     print("6. Aplicando feature engineering não-textual...")
     
-    # Criar params temporário para compatibilidade
-    temp_params = {
-        'column_classifications': classifications,
-        'excluded_from_text_processing': excluded_cols
-    }
-    
     preserve_cols = fit  # Preservar apenas durante o treino
-    df, feature_params = feature_engineering(df, fit=fit, params=temp_params, 
+    df, param_manager = feature_engineering(df, fit=fit, param_manager=param_manager, 
                                            preserve_for_professional=preserve_cols)
-    
-    # Salvar parâmetros de feature engineering
-    if fit:
-        param_manager.save_preprocessing_params('categorical_encoding', 
-                                              feature_params.get('categorical_encoding', {}))
-        if 'preserved_columns' in feature_params:
-            param_manager.params['feature_engineering']['preserved_columns'] = feature_params['preserved_columns']
 
     # 6.1. Remover colunas originais que não devem ser processadas como texto
     cols_to_remove = param_manager.params['feature_engineering'].get('excluded_columns', [])
@@ -836,19 +803,11 @@ def apply_preprocessing_pipeline(df, params=None, fit=False, param_manager=None)
     
     # 7. Processamento de texto
     print("7. Processando features textuais...")
-    
-    # Passar param_manager em vez de params
     df, param_manager = text_feature_engineering(df, fit=fit, param_manager=param_manager)
     
     # 8. Feature engineering avançada
     print("8. Aplicando feature engineering avançada...")
-    
-    # Criar params temporário para compatibilidade
-    advanced_temp_params = {
-        'column_classifications': classifications
-    }
-    
-    df, advanced_params = advanced_feature_engineering(df, fit=fit, params=advanced_temp_params)
+    df, param_manager = advanced_feature_engineering(df, fit=fit, param_manager=param_manager)
     
     # Rastrear features criadas
     if fit:
@@ -899,41 +858,65 @@ def ensure_column_consistency(train_df, test_df):
 # FUNÇÕES DA PARTE 3 - FEATURE ENGINEERING PROFISSIONAL
 # ============================================================================
 
-def identify_text_columns_for_professional(df, params=None):
+def identify_text_columns_for_professional(df, param_manager=None):
     """
     Identifica colunas de texto no DataFrame para processamento profissional.
     Usa o sistema unificado de detecção.
     """
     print("\n🔍 Identificando colunas para processamento profissional...")
     
-    # Opção 1: Recuperar do params se disponível
-    if params and 'preserved_text_columns' in params:
-        text_columns = list(params['preserved_text_columns'].keys())
-        print(f"  ✓ Recuperadas {len(text_columns)} colunas preservadas do params")
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
+    
+    # Opção 1: Recuperar colunas preservadas do param_manager
+    preserved_columns = param_manager.params['feature_engineering'].get('preserved_columns', {})
+    if preserved_columns:
+        text_columns = list(preserved_columns.keys())
+        print(f"  ✓ Recuperadas {len(text_columns)} colunas preservadas do param_manager")
         return text_columns
     
-    classifier = ColumnTypeClassifier(
-    use_llm=False,
-    use_classification_cache=True,
-    confidence_threshold=0.7
-    )
-    classifications = classifier.classify_dataframe(df)
-
-    # Filtrar apenas colunas de texto
-    exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
-    text_columns = [
-        col for col, info in classifications.items()
-        if info['type'] == classifier.TEXT 
-        and info['confidence'] >= 0.7
-        and not any(pattern in col for pattern in exclude_patterns)
-    ]
+    # Opção 2: Usar classificações existentes
+    classifications = param_manager.get_preprocessing_params('column_classifications')
+    
+    if classifications:
+        print("  ✓ Usando classificações existentes do param_manager")
+        exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
+        text_columns = [
+            col for col, info in classifications.items()
+            if col in df.columns
+            and info['type'] == 'text'
+            and info['confidence'] >= 0.7
+            and not any(pattern in col for pattern in exclude_patterns)
+        ]
+    else:
+        # Opção 3: Reclassificar se necessário
+        print("  🔍 Classificando colunas do DataFrame...")
+        classifier = ColumnTypeClassifier(
+            use_llm=False,
+            use_classification_cache=True,
+            confidence_threshold=0.7
+        )
+        classifications = classifier.classify_dataframe(df)
+        
+        # Salvar classificações no param_manager
+        param_manager.save_preprocessing_params('column_classifications', classifications)
+        
+        # Filtrar apenas colunas de texto
+        exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
+        text_columns = [
+            col for col, info in classifications.items()
+            if info['type'] == classifier.TEXT
+            and info['confidence'] >= 0.7
+            and not any(pattern in col for pattern in exclude_patterns)
+        ]
     
     if not text_columns:
         print("  ⚠️ Nenhuma coluna de texto encontrada para processamento profissional")
     
     return text_columns
 
-def perform_topic_modeling_fixed(df, text_cols, n_topics=5, fit=True, params=None, param_manager=None):
+def perform_topic_modeling_fixed(df, text_cols, n_topics=5, fit=True, param_manager=None):
     """Extrai tópicos latentes dos textos usando LDA - COM PARAMETER MANAGER"""
     
     if param_manager is None:
@@ -1086,25 +1069,12 @@ def perform_topic_modeling_fixed(df, text_cols, n_topics=5, fit=True, params=Non
     
     return df_result, param_manager
 
-def apply_professional_features_pipeline(df, params=None, fit=False, batch_size=5000, param_manager=None):
+def apply_professional_features_pipeline(df, fit=False, batch_size=5000, param_manager=None):
     """
     Aplica pipeline de features profissionais de NLP com ParameterManager.
     """
     if param_manager is None:
         param_manager = ParameterManager()
-        # Migrar params antigos se existirem
-        if params:
-            print("  ℹ️ Migrando parâmetros profissionais antigos para ParameterManager...")
-            if 'professional_features' in params:
-                for key, value in params['professional_features'].items():
-                    if key in ['motivation_keywords', 'aspiration_phrases', 'commitment_phrases', 'career_terms']:
-                        param_manager.save_professional_params(key, value)
-                    elif key == 'lda_models':
-                        for model_name, model_data in value.items():
-                            param_manager.save_lda_model(model_data, model_name)
-                    elif key == 'career_tfidf_vectorizers':
-                        for vec_name, vec_data in value.items():
-                            param_manager.save_vectorizer(vec_data, vec_name, 'career_tfidf')
 
     print(f"\nIniciando pipeline de features profissionais para DataFrame: {df.shape}")
     
@@ -1361,7 +1331,7 @@ def summarize_features(df, dataset_name, original_shape=None):
 # FUNÇÕES DA PARTE 5 - FEATURE SELECTION
 # ============================================================================
 
-def apply_feature_selection_pipeline(train_df, val_df, test_df, params=None, param_manager=None,
+def apply_feature_selection_pipeline(train_df, val_df, test_df, param_manager=None,
                                    max_features=300, importance_threshold=0.1,
                                    correlation_threshold=0.95, fast_mode=False,
                                    n_folds=3):
@@ -1554,7 +1524,7 @@ def apply_feature_selection_pipeline(train_df, val_df, test_df, params=None, par
     print(f"  Val:   {original_val_shape} → {val_selected.shape}")
     print(f"  Test:  {original_test_shape} → {test_selected.shape}")
     
-    # MUDANÇA: Salvar informações de seleção no param_manager
+    # Salvar informações de seleção no param_manager
     param_manager.params['feature_selection'] = {
         'selected_features': selected_features,
         'n_features_selected': len(selected_features),
@@ -1574,14 +1544,13 @@ def apply_feature_selection_pipeline(train_df, val_df, test_df, params=None, par
     
     return train_selected, val_selected, test_selected, final_importance
 
-def apply_complete_feature_pipeline(df, params=None, fit=True, batch_size=5000, param_manager=None):
+def apply_complete_feature_pipeline(df, fit=True, batch_size=5000, param_manager=None):
     """
     Aplica TODAS as etapas de feature engineering de uma vez.
     Combina PARTE 2 (preprocessing) + PARTE 3 (professional features).
     
     Args:
         df: DataFrame para processar
-        params: Dicionário com parâmetros (deprecated - usar param_manager)
         fit: Se True, aprende parâmetros; se False, aplica existentes
         batch_size: Tamanho do batch para processamento
         param_manager: Instância do ParameterManager
@@ -1592,16 +1561,6 @@ def apply_complete_feature_pipeline(df, params=None, fit=True, batch_size=5000, 
     """
     if param_manager is None:
         param_manager = ParameterManager()
-        # Migrar params antigos se existirem
-        if params:
-            print("  ℹ️ Migrando parâmetros antigos para ParameterManager...")
-            # Migrar diferentes tipos de parâmetros
-            if 'column_classifications' in params:
-                param_manager.save_preprocessing_params('column_classifications', params['column_classifications'])
-            if 'professional_features' in params:
-                for key, value in params['professional_features'].items():
-                    if key in ['motivation_keywords', 'aspiration_phrases', 'commitment_phrases', 'career_terms']:
-                        param_manager.save_professional_params(key, value)
     
     print(f"\n{'='*60}")
     print(f"PROCESSAMENTO COMPLETO - Modo: {'FIT' if fit else 'TRANSFORM'}")

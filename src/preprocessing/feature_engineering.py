@@ -5,21 +5,22 @@ from datetime import datetime
 from src.utils.feature_naming import standardize_feature_name
 from src.utils.column_type_classifier import ColumnTypeClassifier
 
-def create_identity_features(df, fit=True, params=None):
+def create_identity_features(df, fit=True, param_manager=None):
     """Cria features baseadas nos campos de identidade do usuário.
     
     Args:
         df: DataFrame pandas
         fit: Se True, realiza processo de fit, caso contrário utiliza params
-        params: Dicionário com parâmetros aprendidos na fase de fit
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com features adicionadas
-        Dicionário com parâmetros atualizados
+        ParameterManager atualizado
     """
     # Inicializar parâmetros
-    if params is None:
-        params = {}
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
     
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
@@ -37,23 +38,24 @@ def create_identity_features(df, fit=True, params=None):
     if '¿Cuál es tu instagram?' in df_result.columns:
         df_result[standardize_feature_name('has_instagram')] = df_result['¿Cuál es tu instagram?'].notna() & (df_result['¿Cuál es tu instagram?'] != '')
     
-    return df_result, params
+    return df_result, param_manager
 
-def create_temporal_features(df, fit=True, params=None):
+def create_temporal_features(df, fit=True, param_manager=None):
     """Cria features baseadas em informações temporais.
     
     Args:
         df: DataFrame pandas
         fit: Se True, realiza processo de fit, caso contrário utiliza params
-        params: Dicionário com parâmetros aprendidos na fase de fit
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com features adicionadas
-        Dicionário com parâmetros atualizados
+        ParameterManager atualizado
     """
     # Inicializar parâmetros
-    if params is None:
-        params = {}
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
     
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
@@ -168,16 +170,19 @@ def create_temporal_features(df, fit=True, params=None):
         print("    ❌ NENHUMA feature temporal foi criada!")
     
     print(f"    Total de colunas no final: {len(df_result.columns)}")
-    return df_result, params
+    return df_result, param_manager
 
-def encode_categorical_features(df, fit=True, params=None):
+def encode_categorical_features(df, fit=True, param_manager=None):
     """Codifica variáveis categóricas usando diferentes estratégias."""
     # Inicializar parâmetros
-    if params is None:
-        params = {}
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
     
-    if 'categorical_encoding' not in params:
-        params['categorical_encoding'] = {}
+    # Recuperar parâmetros de encoding categórico
+    categorical_params = param_manager.get_preprocessing_params('categorical_encoding')
+    if not categorical_params:
+        categorical_params = {}
     
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
@@ -243,15 +248,24 @@ def encode_categorical_features(df, fit=True, params=None):
         'desconhecido': -1
     }
     
-    # Guardar mapas no params se estivermos no modo fit
+    # Guardar mapas no param_manager se estivermos no modo fit
     if fit:
-        params['categorical_encoding']['age_map'] = age_map
-        params['categorical_encoding']['time_map'] = time_map
-        params['categorical_encoding']['availability_map'] = availability_map
-        params['categorical_encoding']['salary_map'] = salary_map
-        params['categorical_encoding']['desired_salary_map'] = desired_salary_map
-        params['categorical_encoding']['belief_map'] = belief_map
-        params['categorical_encoding']['gender_map'] = gender_map
+        categorical_params['age_map'] = age_map
+        categorical_params['time_map'] = time_map
+        categorical_params['availability_map'] = availability_map
+        categorical_params['salary_map'] = salary_map
+        categorical_params['desired_salary_map'] = desired_salary_map
+        categorical_params['belief_map'] = belief_map
+        categorical_params['gender_map'] = gender_map
+    else:
+        # Usar mapas salvos se existirem
+        age_map = categorical_params.get('age_map', age_map)
+        time_map = categorical_params.get('time_map', time_map)
+        availability_map = categorical_params.get('availability_map', availability_map)
+        salary_map = categorical_params.get('salary_map', salary_map)
+        desired_salary_map = categorical_params.get('desired_salary_map', desired_salary_map)
+        belief_map = categorical_params.get('belief_map', belief_map)
+        gender_map = categorical_params.get('gender_map', gender_map)
     
     # DEBUG para diagnóstico
     print("\n  DEBUG encode_categorical_features:")
@@ -262,44 +276,44 @@ def encode_categorical_features(df, fit=True, params=None):
     # Idade
     age_col = standardize_feature_name('¿Cuál es tu edad?')
     if age_col in df_result.columns:
-        df_result[standardize_feature_name('age_encoded')] = df_result[age_col].map(params['categorical_encoding']['age_map'])
+        df_result[standardize_feature_name('age_encoded')] = df_result[age_col].map(age_map)
     else:
         print(f"    ⚠️ Coluna idade não encontrada: {age_col}")
     
     # Tempo conhecido
     time_col = standardize_feature_name('¿Hace quánto tiempo me conoces?')
     if time_col in df_result.columns:
-        df_result[standardize_feature_name('time_known_encoded')] = df_result[time_col].map(params['categorical_encoding']['time_map'])
+        df_result[standardize_feature_name('time_known_encoded')] = df_result[time_col].map(time_map)
     
     # Disponibilidade
     avail_col = standardize_feature_name('¿Cuál es tu disponibilidad de tiempo para estudiar inglés?')
     if avail_col in df_result.columns:
-        df_result[standardize_feature_name('availability_encoded')] = df_result[avail_col].map(params['categorical_encoding']['availability_map'])
+        df_result[standardize_feature_name('availability_encoded')] = df_result[avail_col].map(availability_map)
     
     # Salário atual
     salary_col = standardize_feature_name('¿Cuál es tu sueldo anual? (en dólares)')
     if salary_col in df_result.columns:
-        df_result[standardize_feature_name('current_salary_encoded')] = df_result[salary_col].map(params['categorical_encoding']['salary_map'])
+        df_result[standardize_feature_name('current_salary_encoded')] = df_result[salary_col].map(salary_map)
     
     # Salário desejado
     desired_col = standardize_feature_name('¿Cuánto te gustaría ganar al año?')
     if desired_col in df_result.columns:
-        df_result[standardize_feature_name('desired_salary_encoded')] = df_result[desired_col].map(params['categorical_encoding']['desired_salary_map'])
+        df_result[standardize_feature_name('desired_salary_encoded')] = df_result[desired_col].map(desired_salary_map)
     
     # Crenças sobre salário
     belief_salary_col = standardize_feature_name('¿Crees que aprender inglés te acercaría más al salario que mencionaste anteriormente?')
     if belief_salary_col in df_result.columns:
-        df_result[standardize_feature_name('belief_salary_encoded')] = df_result[belief_salary_col].map(params['categorical_encoding']['belief_map'])
+        df_result[standardize_feature_name('belief_salary_encoded')] = df_result[belief_salary_col].map(belief_map)
     
     # Crenças sobre trabalho
     belief_work_col = standardize_feature_name('¿Crees que aprender inglés puede ayudarte en el trabajo o en tu vida diaria?')
     if belief_work_col in df_result.columns:
-        df_result[standardize_feature_name('belief_work_encoded')] = df_result[belief_work_col].map(params['categorical_encoding']['belief_map'])
+        df_result[standardize_feature_name('belief_work_encoded')] = df_result[belief_work_col].map(belief_map)
     
     # Gênero
     gender_col = standardize_feature_name('¿Cuál es tu género?')
     if gender_col in df_result.columns:
-        df_result[standardize_feature_name('gender_encoded')] = df_result[gender_col].map(params['categorical_encoding']['gender_map'])
+        df_result[standardize_feature_name('gender_encoded')] = df_result[gender_col].map(gender_map)
     
     # 3. Encoding para variáveis nominais de alta cardinalidade
     
@@ -337,10 +351,10 @@ def encode_categorical_features(df, fit=True, params=None):
             # Frequency Encoding
             if fit:
                 freq_map = df_result[col].value_counts(normalize=True).to_dict()
-                params['categorical_encoding'][f'{col}_freq_map'] = freq_map
+                categorical_params[f'{col}_freq_map'] = freq_map
             else:
                 # Use stored frequency map
-                freq_map = params['categorical_encoding'].get(f'{col}_freq_map', {})
+                freq_map = categorical_params.get(f'{col}_freq_map', {})
             
             # Determinar nome da coluna de saída
             if 'pais' in col.lower() or 'país' in col.lower():
@@ -356,9 +370,9 @@ def encode_categorical_features(df, fit=True, params=None):
             threshold = 0.01  # 1% de frequência
             if fit:
                 rare_categories = [cat for cat, freq in freq_map.items() if freq < threshold]
-                params['categorical_encoding'][f'{col}_rare_categories'] = rare_categories
+                categorical_params[f'{col}_rare_categories'] = rare_categories
             else:
-                rare_categories = params['categorical_encoding'].get(f'{col}_rare_categories', [])
+                rare_categories = categorical_params.get(f'{col}_rare_categories', [])
             
             # Criar variável agrupada
             grouped_col = col + '_grouped'
@@ -371,10 +385,10 @@ def encode_categorical_features(df, fit=True, params=None):
                 # Garantir que não há NaN
                 df_result[grouped_col] = df_result[grouped_col].fillna('Unknown')
                 df_result[encoded_col] = le.fit_transform(df_result[grouped_col])
-                params['categorical_encoding'][f'{col}_label_mapping'] = dict(zip(le.classes_, range(len(le.classes_))))
+                categorical_params[f'{col}_label_mapping'] = dict(zip(le.classes_, range(len(le.classes_))))
             else:
                 # Converter usando o mapeamento aprendido anteriormente
-                mapping = params['categorical_encoding'].get(f'{col}_label_mapping', {})
+                mapping = categorical_params.get(f'{col}_label_mapping', {})
                 df_result[grouped_col] = df_result[grouped_col].fillna('Unknown')
                 df_result[encoded_col] = df_result[grouped_col].map(mapping).fillna(-1).astype(int)
             
@@ -394,18 +408,18 @@ def encode_categorical_features(df, fit=True, params=None):
                     from sklearn.preprocessing import LabelEncoder
                     le = LabelEncoder()
                     df_result[standardize_feature_name(f'{col}_encoded')] = le.fit_transform(df_result[col].fillna('unknown').astype(str))
-                    params['categorical_encoding'][f'{col}_label_mapping'] = dict(zip(le.classes_, range(len(le.classes_))))
+                    categorical_params[f'{col}_label_mapping'] = dict(zip(le.classes_, range(len(le.classes_))))
                 else:
                     # Converter usando o mapeamento aprendido anteriormente
-                    mapping = params['categorical_encoding'].get(f'{col}_label_mapping', {})
+                    mapping = categorical_params.get(f'{col}_label_mapping', {})
                     df_result[standardize_feature_name(f'{col}_encoded')] = df_result[col].fillna('unknown').astype(str).map(mapping).fillna(-1).astype(int)
             else:  # Alta cardinalidade
                 # Frequency Encoding
                 if fit:
                     freq_map = df_result[col].value_counts(normalize=True).to_dict()
-                    params['categorical_encoding'][f'{col}_freq_map'] = freq_map
+                    categorical_params[f'{col}_freq_map'] = freq_map
                 else:
-                    freq_map = params['categorical_encoding'].get(f'{col}_freq_map', {})
+                    freq_map = categorical_params.get(f'{col}_freq_map', {})
                 
                 df_result[standardize_feature_name(f'{col}_freq')] = df_result[col].map(freq_map).fillna(0)
     
@@ -418,11 +432,16 @@ def encode_categorical_features(df, fit=True, params=None):
     encoded_cols = [col for col in df_result.columns if 'encoded' in col or '_freq' in col]
     print(f"\n    Total de features criadas: {len(encoded_cols)}")
     
-    return df_result, params
+    # Salvar parâmetros se estamos no modo fit
+    if fit:
+        param_manager.save_preprocessing_params('categorical_encoding', categorical_params)
+    
+    return df_result, param_manager
 
-def feature_engineering(df, fit=True, params=None, preserve_for_professional=False):
-    if params is None:
-        params = {}
+def feature_engineering(df, fit=True, param_manager=None, preserve_for_professional=False):
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
 
     # ADICIONE ESTE DEBUG TEMPORÁRIO
     print("\n=== DEBUG: RASTREAMENTO DE COLUNAS EM feature_engineering ===")
@@ -433,9 +452,9 @@ def feature_engineering(df, fit=True, params=None, preserve_for_professional=Fal
     df_result = df.copy()
     
     # Verificar se temos classificações nos params
-    if 'column_classifications' in params:
+    classifications = param_manager.get_preprocessing_params('column_classifications')
+    if classifications:
         print("\n✓ Usando classificações existentes para feature engineering")
-        classifications = params['column_classifications']
     else:
         # Fallback: reclassificar se necessário
         classifier = ColumnTypeClassifier(
@@ -444,6 +463,7 @@ def feature_engineering(df, fit=True, params=None, preserve_for_professional=Fal
             confidence_threshold=0.7
         )
         classifications = classifier.classify_dataframe(df_result)
+        param_manager.save_preprocessing_params('column_classifications', classifications)
     
     print("\n  Executando pipeline de feature engineering:")
     print(f"  Colunas iniciais: {df_result.shape[1]}")
@@ -468,11 +488,11 @@ def feature_engineering(df, fit=True, params=None, preserve_for_professional=Fal
     cols_to_remove = [col for col in cols_to_remove if col in df_result.columns]
     
     # 2. Criar features
-    df_result, params = create_identity_features(df_result, fit, params)
+    df_result, _ = create_identity_features(df_result, fit, param_manager)
     
     # ADICIONAR DEBUG PARA TEMPORAL
     temp_before = df_result.shape[1]
-    df_result, params = create_temporal_features(df_result, fit, params)
+    df_result, _ = create_temporal_features(df_result, fit, param_manager)
     temp_after = df_result.shape[1]
     print(f"  Features temporais criadas: {temp_after - temp_before}")
     
@@ -484,18 +504,20 @@ def feature_engineering(df, fit=True, params=None, preserve_for_professional=Fal
     else:
         print(f"  ✓ Features temporais básicas criadas: {temporal_found}")
     
-    df_result, params = encode_categorical_features(df_result, fit, params)
+    df_result, _ = encode_categorical_features(df_result, fit, param_manager)
 
     # 3. Remover colunas originais após criação das features (ou preservar)
     if preserve_for_professional:
         # Preservar colunas para uso posterior
-        if 'preserved_columns' not in params:
-            params['preserved_columns'] = {}
+        preserved_columns = {}
         
         # Salvar as colunas que seriam removidas
         for col in cols_to_remove:
             if col in df_result.columns:
-                params['preserved_columns'][col] = df_result[col].copy()
+                preserved_columns[col] = df_result[col].copy()
+        
+        # Salvar no param_manager
+        param_manager.params['feature_engineering']['preserved_columns'] = preserved_columns
         
         print(f"  ℹ️ Preservadas {len(cols_to_remove)} colunas para processamento profissional")
         print(f"     Colunas preservadas: {cols_to_remove}")
@@ -504,7 +526,7 @@ def feature_engineering(df, fit=True, params=None, preserve_for_professional=Fal
         df_result = df_result.drop(columns=cols_to_remove, errors='ignore')
         print(f"  ✓ Removidas {len(cols_to_remove)} colunas originais")
     
-    # REMOVER O DEBUG TEMPORÁRIO antes de retornar
-    # (remova as linhas de debug que adicionamos anteriormente)
+    # Rastrear colunas excluídas
+    param_manager.track_excluded_columns(cols_to_remove)
     
-    return df_result, params
+    return df_result, param_manager

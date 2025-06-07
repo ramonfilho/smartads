@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 import warnings
+from src.utils.parameter_manager import ParameterManager
 
 def detect_quality_columns(df):
     """Detecta colunas relacionadas à qualidade no DataFrame.
@@ -39,29 +40,33 @@ def detect_quality_columns(df):
         'possible_renamed': possible_renamed
     }
 
-def consolidate_quality_columns(df, fit=True, params=None):
+def consolidate_quality_columns(df, fit=True, param_manager=None):
     """Consolida múltiplas colunas de qualidade em colunas normalizadas.
     
     Args:
         df: DataFrame pandas com dados
         fit: Se True, realiza processo de fit, caso contrário utiliza params
-        params: Dicionário com parâmetros aprendidos na fase de fit
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame pandas com colunas de qualidade consolidadas
-        Dicionário com parâmetros aprendidos (se fit=True)
+        ParameterManager atualizado
     """
     # Importar a função de padronização
     from src.utils.feature_naming import standardize_feature_name
     
+    # Inicializar param_manager
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
+    
     # Cria uma cópia do dataframe para não modificar o original
     df_result = df.copy()
     
-    # Inicializar parâmetros se necessário
-    if params is None:
-        params = {}
-    if 'quality_columns' not in params:
-        params['quality_columns'] = {}
+    # Recuperar parâmetros de quality_columns
+    quality_params = param_manager.get_preprocessing_params('quality_columns')
+    if not quality_params:
+        quality_params = {}
     
     # Detectar colunas de qualidade
     quality_info = detect_quality_columns(df_result)
@@ -71,7 +76,7 @@ def consolidate_quality_columns(df, fit=True, params=None):
     text_col_name = standardize_feature_name('qualidade_textual')      # → 'qualidade_textual'
     
     # Se estamos no modo transform e temos parâmetros, usar configuração salva
-    if not fit and 'numeric_cols' in params['quality_columns'] and 'text_cols' in params['quality_columns']:
+    if not fit and 'numeric_cols' in quality_params and 'text_cols' in quality_params:
         # No modo transform, só criar colunas se elas não existirem
         if not quality_info['has_numeric']:
             df_result[numeric_col_name] = np.nan
@@ -84,14 +89,14 @@ def consolidate_quality_columns(df, fit=True, params=None):
         if variants_to_remove:
             df_result = df_result.drop(columns=variants_to_remove)
             
-        return df_result, params
+        return df_result, param_manager
     
     # Caso 1: Nenhuma coluna encontrada, criar colunas vazias
     if len(quality_info['existing_variants']) == 0 and not (quality_info['has_numeric'] or quality_info['has_textual']):
         df_result[numeric_col_name] = np.nan
         df_result[text_col_name] = None
         
-        return df_result, params
+        return df_result, param_manager
         
     # Caso 2: Colunas já existem, remover redundâncias
     elif quality_info['has_numeric'] and quality_info['has_textual']:
@@ -99,7 +104,7 @@ def consolidate_quality_columns(df, fit=True, params=None):
         if quality_info['existing_variants']:
             df_result = df_result.drop(columns=quality_info['existing_variants'])
             
-        return df_result, params
+        return df_result, param_manager
         
     # Caso 3: Processar e consolidar as colunas
     else:
@@ -126,10 +131,10 @@ def consolidate_quality_columns(df, fit=True, params=None):
                     text_cols.append(col)
         
         # Guardar a classificação nos parâmetros
-        params['quality_columns']['numeric_cols'] = numeric_cols
-        params['quality_columns']['text_cols'] = text_cols
-        params['quality_columns']['numeric_col_name'] = numeric_col_name
-        params['quality_columns']['text_col_name'] = text_col_name
+        quality_params['numeric_cols'] = numeric_cols
+        quality_params['text_cols'] = text_cols
+        quality_params['numeric_col_name'] = numeric_col_name
+        quality_params['text_col_name'] = text_col_name
         
         # Consolidar colunas numéricas
         if numeric_cols:
@@ -162,32 +167,37 @@ def consolidate_quality_columns(df, fit=True, params=None):
         # Remover as colunas originais
         df_result = df_result.drop(columns=quality_info['existing_variants'])
         
-        return df_result, params
+        # Salvar parâmetros se estamos no modo fit
+        if fit:
+            param_manager.save_preprocessing_params('quality_columns', quality_params)
+        
+        return df_result, param_manager
 
-def handle_duplicates(df, fit=True, params=None):
+def handle_duplicates(df, fit=True, param_manager=None):
     """Remove seletivamente duplicatas, preservando compradores (target=1).
     
     Args:
         df: DataFrame pandas com dados
         fit: Se True, realiza processo de fit, caso contrário apenas transforma
-        params: Dicionário com parâmetros aprendidos na fase de fit
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame sem duplicatas
-        Dicionário com parâmetros aprendidos (se fit=True)
+        ParameterManager inalterado
     """
     # Inicializar parâmetros
-    if params is None:
-        params = {}
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
     
     # Se não tem coluna target ou email_norm, retornar sem mudanças
     if 'target' not in df.columns or 'email_norm' not in df.columns:
-        return df, params
+        return df, param_manager
     
     # No modo transform, não fazemos remoção de duplicatas
     # pois precisamos prever para todos os registros
     if not fit:
-        return df, params
+        return df, param_manager
     
     # A partir daqui estamos no modo fit
     # Identificar duplicatas
@@ -203,25 +213,29 @@ def handle_duplicates(df, fit=True, params=None):
     # Recombinar dataset
     result = pd.concat([buyers, non_buyers_dedup], ignore_index=True)
     
-    return result, params
+    return result, param_manager
 
-def handle_missing_values(df, fit=True, params=None):
+def handle_missing_values(df, fit=True, param_manager=None):
     """Trata valores ausentes com estratégias específicas por tipo de coluna.
     
     Args:
         df: DataFrame pandas com dados
         fit: Se True, aprende parâmetros, caso contrário usa parâmetros existentes
-        params: Dicionário com parâmetros aprendidos na fase de fit
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com valores ausentes tratados
-        Dicionário com parâmetros aprendidos (se fit=True)
+        ParameterManager atualizado
     """
     # Inicializar ou usar parâmetros existentes
-    if params is None:
-        params = {}
-    if 'missing_values' not in params:
-        params['missing_values'] = {}
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
+    
+    # Recuperar parâmetros de missing_values
+    missing_params = param_manager.get_preprocessing_params('missing_values')
+    if not missing_params:
+        missing_params = {}
     
     # Criar cópia para não modificar o original
     df_result = df.copy()
@@ -231,9 +245,9 @@ def handle_missing_values(df, fit=True, params=None):
         missing_counts = df.isnull().sum()
         missing_pct = (missing_counts / len(df)) * 100
         high_missing_cols = missing_pct[missing_pct > 95].index.tolist()
-        params['missing_values']['high_missing_cols'] = high_missing_cols
+        missing_params['high_missing_cols'] = high_missing_cols
     else:
-        high_missing_cols = params['missing_values'].get('high_missing_cols', [])
+        high_missing_cols = missing_params.get('high_missing_cols', [])
     
     # Remover apenas as colunas que existem no DataFrame
     cols_to_drop = [col for col in high_missing_cols if col in df_result.columns]
@@ -296,10 +310,10 @@ def handle_missing_values(df, fit=True, params=None):
             if fit:
                 # Calcular e armazenar a mediana
                 median_value = df_result[col].median()
-                params['missing_values'][f'median_{col}'] = median_value
+                missing_params[f'median_{col}'] = median_value
             else:
                 # Usar mediana armazenada ou calcular se não existir
-                median_value = params['missing_values'].get(f'median_{col}')
+                median_value = missing_params.get(f'median_{col}')
                 if median_value is None:
                     median_value = df_result[col].median()
             
@@ -315,35 +329,43 @@ def handle_missing_values(df, fit=True, params=None):
             if fit:
                 # Calcular e armazenar a mediana
                 median_value = df_result[col].median()
-                params['missing_values'][f'median_{col}'] = median_value
+                missing_params[f'median_{col}'] = median_value
             else:
                 # Usar mediana armazenada ou calcular se não existir
-                median_value = params['missing_values'].get(f'median_{col}')
+                median_value = missing_params.get(f'median_{col}')
                 if median_value is None:
                     median_value = df_result[col].median()
             
             # Preencher valores ausentes
             df_result[col] = df_result[col].fillna(median_value)
     
-    return df_result, params
+    # Salvar parâmetros se estamos no modo fit
+    if fit:
+        param_manager.save_preprocessing_params('missing_values', missing_params)
+    
+    return df_result, param_manager
 
-def handle_outliers(df, fit=True, params=None):
+def handle_outliers(df, fit=True, param_manager=None):
     """Trata outliers com estratégias diferentes para colunas de qualidade.
     
     Args:
         df: DataFrame pandas com dados
         fit: Se True, calcular limites, caso contrário usar limites existentes
-        params: Dicionário com parâmetros aprendidos na fase de fit
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com outliers tratados
-        Dicionário com parâmetros atualizados
+        ParameterManager atualizado
     """
     # Inicializar parâmetros
-    if params is None:
-        params = {}
-    if 'outliers' not in params:
-        params['outliers'] = {}
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
+    
+    # Recuperar parâmetros de outliers
+    outlier_params = param_manager.get_preprocessing_params('outliers')
+    if not outlier_params:
+        outlier_params = {}
     
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
@@ -365,11 +387,11 @@ def handle_outliers(df, fit=True, params=None):
                     # Calcular limites
                     lower_bound = df_result[col].quantile(0.01)
                     upper_bound = df_result[col].quantile(0.99)
-                    params['outliers'][f'{col}_bounds'] = (lower_bound, upper_bound)
+                    outlier_params[f'{col}_bounds'] = (lower_bound, upper_bound)
                 else:
                     # Usar limites armazenados
-                    if f'{col}_bounds' in params['outliers']:
-                        lower_bound, upper_bound = params['outliers'][f'{col}_bounds']
+                    if f'{col}_bounds' in outlier_params:
+                        lower_bound, upper_bound = outlier_params[f'{col}_bounds']
                     else:
                         # Fallback
                         lower_bound = df_result[col].quantile(0.01)
@@ -386,11 +408,11 @@ def handle_outliers(df, fit=True, params=None):
                     iqr = q3 - q1
                     lower_bound = q1 - 1.5 * iqr
                     upper_bound = q3 + 1.5 * iqr
-                    params['outliers'][f'{col}_bounds'] = (lower_bound, upper_bound)
+                    outlier_params[f'{col}_bounds'] = (lower_bound, upper_bound)
                 else:
                     # Usar limites armazenados
-                    if f'{col}_bounds' in params['outliers']:
-                        lower_bound, upper_bound = params['outliers'][f'{col}_bounds']
+                    if f'{col}_bounds' in outlier_params:
+                        lower_bound, upper_bound = outlier_params[f'{col}_bounds']
                     else:
                         # Fallback
                         q1 = df_result[col].quantile(0.25)
@@ -402,25 +424,33 @@ def handle_outliers(df, fit=True, params=None):
                 # Aplicar capping
                 df_result[col] = df_result[col].clip(lower=lower_bound, upper=upper_bound)
     
-    return df_result, params
+    # Salvar parâmetros se estamos no modo fit
+    if fit:
+        param_manager.save_preprocessing_params('outliers', outlier_params)
+    
+    return df_result, param_manager
 
-def normalize_values(df, fit=True, params=None):
+def normalize_values(df, fit=True, param_manager=None):
     """Normaliza valores numéricos usando StandardScaler.
     
     Args:
         df: DataFrame pandas com dados
         fit: Se True, ajustar scaler, caso contrário usar scaler existente
-        params: Dicionário com parâmetros aprendidos na fase de fit
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com valores normalizados
-        Dicionário com parâmetros atualizados
+        ParameterManager atualizado
     """
     # Inicializar parâmetros
-    if params is None:
-        params = {}
-    if 'normalization' not in params:
-        params['normalization'] = {}
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
+    
+    # Recuperar parâmetros de normalization
+    norm_params = param_manager.get_preprocessing_params('normalization')
+    if not norm_params:
+        norm_params = {}
     
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
@@ -437,58 +467,69 @@ def normalize_values(df, fit=True, params=None):
     
     # Armazenar as colunas com variabilidade
     if fit:
-        params['normalization']['cols_with_std'] = cols_with_std
+        norm_params['cols_with_std'] = cols_with_std
     else:
         # No modo transform, usar as colunas identificadas no fit
-        cols_with_std = params['normalization'].get('cols_with_std', cols_with_std)
+        cols_with_std = norm_params.get('cols_with_std', cols_with_std)
     
     # Se temos colunas para normalizar
     if cols_with_std:
         if fit:
             # Ajustar o scaler e armazenar estatísticas
+            from sklearn.preprocessing import StandardScaler
             scaler = StandardScaler()
             df_normalized = scaler.fit_transform(df_result[cols_with_std])
             
             # Armazenar médias e desvios padrão para cada coluna
-            params['normalization']['means'] = dict(zip(cols_with_std, scaler.mean_))
-            params['normalization']['stds'] = dict(zip(cols_with_std, scaler.scale_))
+            norm_params['means'] = dict(zip(cols_with_std, scaler.mean_))
+            norm_params['stds'] = dict(zip(cols_with_std, scaler.scale_))
         else:
             # Usar estatísticas armazenadas para normalizar
-            if 'means' in params['normalization'] and 'stds' in params['normalization']:
+            if 'means' in norm_params and 'stds' in norm_params:
                 # Criar um array para os dados normalizados
                 df_normalized = np.zeros((len(df_result), len(cols_with_std)))
                 
                 # Normalizar cada coluna separadamente
                 for i, col in enumerate(cols_with_std):
-                    if col in params['normalization']['means'] and col in params['normalization']['stds']:
-                        mean = params['normalization']['means'][col]
-                        std = params['normalization']['stds'][col]
+                    if col in norm_params['means'] and col in norm_params['stds']:
+                        mean = norm_params['means'][col]
+                        std = norm_params['stds'][col]
                         df_normalized[:, i] = (df_result[col].values - mean) / std
                     else:
                         # Se não temos as estatísticas, usar os dados originais
                         df_normalized[:, i] = df_result[col].values
             else:
                 # Fallback: normalizar sem estatísticas anteriores
+                from sklearn.preprocessing import StandardScaler
                 scaler = StandardScaler()
                 df_normalized = scaler.fit_transform(df_result[cols_with_std])
         
         # Atualizar o DataFrame com os valores normalizados
         df_result[cols_with_std] = df_normalized
     
-    return df_result, params
+    # Salvar parâmetros se estamos no modo fit
+    if fit:
+        param_manager.save_preprocessing_params('normalization', norm_params)
+    
+    return df_result, param_manager
 
-def convert_data_types(df, fit=True, params=None):
+def convert_data_types(df, fit=True, param_manager=None):
     """Converte tipos de dados para formatos apropriados.
     
     Args:
         df: DataFrame pandas com dados
         fit: Flag para indicar se estamos no modo fit
-        params: Dicionário com parâmetros (não utilizado nesta função)
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com tipos de dados convertidos
-        Parâmetros inalterados
+        ParameterManager inalterado
     """
+    # Inicializar parâmetros
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
+    
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
     
@@ -499,4 +540,4 @@ def convert_data_types(df, fit=True, params=None):
     if 'DATA' in df_result.columns:
         df_result['DATA'] = pd.to_datetime(df_result['DATA'], errors='coerce')
     
-    return df_result, params
+    return df_result, param_manager

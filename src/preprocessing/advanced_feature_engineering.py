@@ -17,14 +17,19 @@ from src.utils.column_type_classifier import ColumnTypeClassifier
 
 warnings.filterwarnings('ignore')
 
-def identify_text_columns(df, params=None):
+def identify_text_columns(df, param_manager=None):
     """
     Identifica colunas de texto no DataFrame usando o sistema unificado.
     """
-    # Verificar primeiro nos params
-    if params and 'column_classifications' in params:
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
+    
+    # Verificar primeiro no param_manager
+    classifications = param_manager.get_preprocessing_params('column_classifications')
+    
+    if classifications:
         print("\n✓ Usando classificações existentes dos params")
-        classifications = params['column_classifications']
         
         exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
         text_cols = [
@@ -38,6 +43,7 @@ def identify_text_columns(df, params=None):
         # Fallback: reclassificar
         print("\n🔍 Detectando colunas de texto para processamento...")
         
+        from src.utils.column_type_classifier import ColumnTypeClassifier
         classifier = ColumnTypeClassifier(
             use_llm=False,
             use_classification_cache=True,
@@ -45,6 +51,7 @@ def identify_text_columns(df, params=None):
         )
         
         classifications = classifier.classify_dataframe(df)
+        param_manager.save_preprocessing_params('column_classifications', classifications)
         
         exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
         text_cols = [
@@ -55,7 +62,7 @@ def identify_text_columns(df, params=None):
         ]
     
     # ADICIONAR: Filtrar colunas excluídas
-    excluded_cols = params.get('excluded_from_text_processing', []) if params else []
+    excluded_cols = param_manager.params['feature_engineering'].get('excluded_columns', [])
     text_cols = [col for col in text_cols if col not in excluded_cols]
     
     print(f"Colunas de texto identificadas: {len(text_cols)}")
@@ -640,16 +647,17 @@ def perform_topic_modeling(df, text_cols, n_topics=3, fit=True, params=None):
     
     return df_result, params
 
-def create_salary_features(df, fit=True, params=None):
-    if params is None:
-        params = {}
+def create_salary_features(df, fit=True, param_manager=None):
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
     
-    if 'salary_features' not in params:
-        params['salary_features'] = {}
+    # Recuperar parâmetros
+    salary_params = param_manager.params.get('salary_features', {})
     
     df_result = df.copy()
     
-        # DEBUG
+    # DEBUG
     print("  Colunas disponíveis para salary features:")
     salary_cols = [col for col in df_result.columns if 'salary' in col or 'sueldo' in col or 'ganar' in col]
     print(f"    {salary_cols}")
@@ -657,7 +665,7 @@ def create_salary_features(df, fit=True, params=None):
     # Verificar se temos as colunas de salário
     if 'current_salary_encoded' not in df_result.columns or 'desired_salary_encoded' not in df_result.columns:
         print("    ⚠️ Colunas de salário encoded não encontradas!")
-        return df_result, params
+        return df_result, param_manager
     
     # Garantir que são numéricas
     df_result['current_salary_encoded'] = pd.to_numeric(df_result['current_salary_encoded'], errors='coerce')
@@ -687,43 +695,45 @@ def create_salary_features(df, fit=True, params=None):
     
     if fit:
         # Armazenar estatísticas para transformação
-        params['salary_features'] = {
+        salary_params = {
             'mean_diff': df_result[salary_diff_col].mean(),
             'std_diff': df_result[salary_diff_col].std(),
             'mean_ratio': df_result[standardize_feature_name('salary_ratio')].mean(),
             'std_ratio': df_result[standardize_feature_name('salary_ratio')].std()
         }
+        param_manager.params['salary_features'] = salary_params
     
     # 5. Z-score da diferença (normalizado)
-    df_result[standardize_feature_name('salary_diff_zscore')] = (df_result[salary_diff_col] - params['salary_features']['mean_diff']) / \
-                                     (params['salary_features']['std_diff'] if params['salary_features']['std_diff'] > 0 else 1)
+    df_result[standardize_feature_name('salary_diff_zscore')] = (df_result[salary_diff_col] - salary_params['mean_diff']) / \
+                                     (salary_params['std_diff'] if salary_params['std_diff'] > 0 else 1)
     
-    return df_result, params
+    return df_result, param_manager
 
-def create_country_interaction_features(df, fit=True, params=None):
+def create_country_interaction_features(df, fit=True, param_manager=None):
     """
     Cria features de interação entre país e outras variáveis.
     
     Args:
         df: DataFrame pandas
         fit: Se True, armazena estatísticas, caso contrário usa existentes
-        params: Parâmetros para transform
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com features de interação de país adicionadas
-        Dicionário com parâmetros atualizados
+        ParameterManager atualizado
     """
-    if params is None:
-        params = {}
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
     
-    if 'country_interactions' not in params:
-        params['country_interactions'] = {}
+    # Recuperar parâmetros
+    country_params = param_manager.params.get('country_interactions', {})
     
     df_result = df.copy()
     
     # Verificar se temos a coluna de país
     if 'country_encoded' not in df_result.columns:
-        return df_result, params
+        return df_result, param_manager
     
     # Lista de features para criar interações
     interacting_features = [
@@ -741,44 +751,50 @@ def create_country_interaction_features(df, fit=True, params=None):
         if fit:
             # Calcular estatísticas de cada país para cada feature
             country_stats = df_result.groupby('country_encoded')[feature].agg(['mean', 'std']).reset_index()
-            params['country_interactions'][feature] = country_stats.set_index('country_encoded').to_dict()
+            country_params[feature] = country_stats.set_index('country_encoded').to_dict()
         
         # Adicionar desvio em relação à média do país
         # Inicializar coluna com zeros
         df_result[standardize_feature_name(f'{feature}_country_deviation')] = 0
         
         # Para cada país, calcular o desvio
-        for country_code in params['country_interactions'][feature]['mean'].keys():
-            country_mean = params['country_interactions'][feature]['mean'][country_code]
-            mask = df_result['country_encoded'] == country_code
-            df_result.loc[mask, standardize_feature_name(f'{feature}_country_deviation')] = df_result.loc[mask, feature] - country_mean
+        if feature in country_params:
+            for country_code in country_params[feature]['mean'].keys():
+                country_mean = country_params[feature]['mean'][country_code]
+                mask = df_result['country_encoded'] == country_code
+                df_result.loc[mask, standardize_feature_name(f'{feature}_country_deviation')] = df_result.loc[mask, feature] - country_mean
     
-    return df_result, params
+    # Salvar parâmetros se estamos no modo fit
+    if fit:
+        param_manager.params['country_interactions'] = country_params
+    
+    return df_result, param_manager
 
-def create_age_interaction_features(df, fit=True, params=None):
+def create_age_interaction_features(df, fit=True, param_manager=None):
     """
     Cria features de interação entre idade e outras variáveis.
     
     Args:
         df: DataFrame pandas
         fit: Se True, armazena estatísticas, caso contrário usa existentes
-        params: Parâmetros para transform
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com features de interação de idade adicionadas
-        Dicionário com parâmetros atualizados
+        ParameterManager atualizado
     """
-    if params is None:
-        params = {}
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
     
-    if 'age_interactions' not in params:
-        params['age_interactions'] = {}
+    # Recuperar parâmetros
+    age_params = param_manager.params.get('age_interactions', {})
     
     df_result = df.copy()
     
     # Verificar se temos a coluna de idade
     if 'age_encoded' not in df_result.columns:
-        return df_result, params
+        return df_result, param_manager
     
     # Lista de features para criar interações
     interacting_features = [
@@ -801,7 +817,7 @@ def create_age_interaction_features(df, fit=True, params=None):
         if fit:
             # Calcular estatísticas de cada faixa etária para cada feature
             age_stats = df_result.groupby('age_group')[feature].agg(['mean', 'std']).reset_index()
-            params['age_interactions'][feature] = age_stats.set_index('age_group').to_dict()
+            age_params[feature] = age_stats.set_index('age_group').to_dict()
         
         # Adicionar índice de progressão (feature relativa à idade)
         if feature in ['current_salary_encoded', 'desired_salary_encoded']:
@@ -818,44 +834,54 @@ def create_age_interaction_features(df, fit=True, params=None):
             feature_std = df_result[per_age_col].std()
             
             if fit:
-                params['age_interactions'][f'{feature}_per_age'] = {
+                age_params[f'{feature}_per_age'] = {
                     'mean': feature_mean,
                     'std': feature_std
                 }
             
             # Calcular z-score
-            df_result[standardize_feature_name(f'{feature}_per_age_zscore')] = (df_result[per_age_col] - 
-                                                    params['age_interactions'][f'{feature}_per_age']['mean']) / \
-                                                   (params['age_interactions'][f'{feature}_per_age']['std'] 
-                                                    if params['age_interactions'][f'{feature}_per_age']['std'] > 0 else 1)
+            if f'{feature}_per_age' in age_params:
+                mean_val = age_params[f'{feature}_per_age']['mean']
+                std_val = age_params[f'{feature}_per_age']['std']
+            else:
+                mean_val = feature_mean
+                std_val = feature_std
+                
+            df_result[standardize_feature_name(f'{feature}_per_age_zscore')] = (df_result[per_age_col] - mean_val) / \
+                                                   (std_val if std_val > 0 else 1)
     
-    return df_result, params
+    # Salvar parâmetros se estamos no modo fit
+    if fit:
+        param_manager.params['age_interactions'] = age_params
+    
+    return df_result, param_manager
 
-def create_temporal_interaction_features(df, fit=True, params=None):
+def create_temporal_interaction_features(df, fit=True, param_manager=None):
     """
     Cria features de interação entre variáveis temporais (hora, dia) e outras.
     
     Args:
         df: DataFrame pandas
         fit: Se True, armazena estatísticas, caso contrário usa existentes
-        params: Parâmetros para transform
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com features de interação temporais adicionadas
-        Dicionário com parâmetros atualizados
+        ParameterManager atualizado
     """
-    if params is None:
-        params = {}
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
     
-    if 'temporal_interactions' not in params:
-        params['temporal_interactions'] = {}
+    # Recuperar parâmetros
+    temporal_params = param_manager.params.get('temporal_interactions', {})
     
     df_result = df.copy()
     
     # Verificar se temos as colunas temporais
     temporal_cols = ['hour', 'day_of_week', 'month']
     if not any(col in df_result.columns for col in temporal_cols):
-        return df_result, params
+        return df_result, param_manager
     
     # 1. Criar features categóricas de período do dia
     if 'hour' in df_result.columns:
@@ -914,30 +940,35 @@ def create_temporal_interaction_features(df, fit=True, params=None):
                 if temp_col == 'hour':
                     # Agrupar por período do dia para estatísticas mais robustas
                     temp_stats = df_result.groupby('period_simple')[feature].agg(['mean', 'median']).reset_index()
-                    params['temporal_interactions'][f'{temp_col}_{feature}'] = temp_stats.set_index('period_simple').to_dict()
+                    temporal_params[f'{temp_col}_{feature}'] = temp_stats.set_index('period_simple').to_dict()
                 else:
                     # Usar valor direto para outros temporais
                     temp_stats = df_result.groupby(temp_col)[feature].agg(['mean', 'median']).reset_index()
-                    params['temporal_interactions'][f'{temp_col}_{feature}'] = temp_stats.set_index(temp_col).to_dict()
+                    temporal_params[f'{temp_col}_{feature}'] = temp_stats.set_index(temp_col).to_dict()
     
-    return df_result, params
+    # Salvar parâmetros se estamos no modo fit
+    if fit:
+        param_manager.params['temporal_interactions'] = temporal_params
+    
+    return df_result, param_manager
 
-def advanced_feature_engineering(df, fit=True, params=None):
+def advanced_feature_engineering(df, fit=True, param_manager=None):
     """
     Executa engenharia de features avançada, mantendo apenas interações numéricas.
     
     Args:
         df: DataFrame pandas
         fit: Se True, aprende parâmetros, caso contrário usa existentes
-        params: Dicionário com parâmetros existentes
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com features avançadas adicionadas
-        Dicionário com parâmetros atualizados
+        ParameterManager atualizado
     """
     # Inicializar parâmetros
-    if params is None:
-        params = {}
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
     
     # Cópia para não modificar o original
     df_result = df.copy()
@@ -946,22 +977,22 @@ def advanced_feature_engineering(df, fit=True, params=None):
     
     # 4. Criando features de relação salarial
     print("1. Criando features de relação salarial...")
-    df_result, params = create_salary_features(df_result, fit, params)
+    df_result, param_manager = create_salary_features(df_result, fit, param_manager)
     
     # 5. Criando interações com país
     print("2. Criando interações com país...")
-    df_result, params = create_country_interaction_features(df_result, fit, params)
+    df_result, param_manager = create_country_interaction_features(df_result, fit, param_manager)
     
     # 6. Criando interações com idade
     print("3. Criando interações com idade...")
-    df_result, params = create_age_interaction_features(df_result, fit, params)
+    df_result, param_manager = create_age_interaction_features(df_result, fit, param_manager)
     
     # 7. Criando interações temporais
     print("4. Criando interações temporais...")
-    df_result, params = create_temporal_interaction_features(df_result, fit, params)
+    df_result, param_manager = create_temporal_interaction_features(df_result, fit, param_manager)
     
     # Contar número de features adicionadas
     num_added_features = df_result.shape[1] - df.shape[1]
     print(f"Engenharia de features avançada concluída. Adicionadas {num_added_features} novas features.")
     
-    return df_result, params
+    return df_result, param_manager

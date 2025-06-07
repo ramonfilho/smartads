@@ -35,22 +35,23 @@ def clean_text(text):
     
     return text
 
-def extract_basic_text_features(df, text_cols, fit=True, params=None):
+def extract_basic_text_features(df, text_cols, fit=True, param_manager=None):
     """Extrai features básicas de texto como comprimento, contagem de palavras, etc.
     
     Args:
         df: DataFrame pandas
         text_cols: Lista de colunas de texto para processamento
         fit: Flag para indicar se estamos no modo fit (não usado nesta função)
-        params: Dicionário com parâmetros (não usado nesta função)
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com features de texto básicas adicionadas
-        Dicionário com parâmetros inalterados
+        ParameterManager inalterado
     """
     # Inicializar parâmetros
-    if params is None:
-        params = {}
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
     
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
@@ -81,24 +82,25 @@ def extract_basic_text_features(df, text_cols, fit=True, params=None):
             lambda x: np.mean([len(w) for w in str(x).split()]) if pd.notna(x) and len(str(x).split()) > 0 else 0
         )
     
-    return df_result, params
+    return df_result, param_manager
 
-def extract_sentiment_features(df, text_cols, fit=True, params=None):
+def extract_sentiment_features(df, text_cols, fit=True, param_manager=None):
     """Extrai features de sentimento dos textos.
     
     Args:
         df: DataFrame pandas
         text_cols: Lista de colunas de texto para processamento
         fit: Flag para indicar se estamos no modo fit (não usado nesta função)
-        params: Dicionário com parâmetros (não usado nesta função)
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com features de sentimento adicionadas
-        Dicionário com parâmetros inalterados
+        ParameterManager inalterado
     """
     # Inicializar parâmetros
-    if params is None:
-        params = {}
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
     
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
@@ -119,18 +121,14 @@ def extract_sentiment_features(df, text_cols, fit=True, params=None):
     for col in text_cols:
         df_result[standardize_feature_name(f'{col}_sentiment')] = df_result[col].apply(get_sentiment)
     
-    return df_result, params
+    return df_result, param_manager
 
-def extract_tfidf_features(df, text_cols, fit=True, params=None, param_manager=None):
+def extract_tfidf_features(df, text_cols, fit=True, param_manager=None):
     """Extrai features TF-IDF dos textos - VERSÃO COM PARAMETER MANAGER"""
     
     # Compatibilidade: criar param_manager se não fornecido
     if param_manager is None:
         param_manager = ParameterManager()
-        # Se temos params antigos, migrar para param_manager
-        if params and 'tfidf' in params:
-            for col, data in params['tfidf'].items():
-                param_manager.save_vectorizer(data, col, 'tfidf')
     
     df_result = df.copy()
     
@@ -242,22 +240,23 @@ def extract_tfidf_features(df, text_cols, fit=True, params=None, param_manager=N
     # Retornar apenas DataFrame (params agora está no param_manager)
     return df_result, param_manager
 
-def extract_motivation_features(df, text_cols, fit=True, params=None):
+def extract_motivation_features(df, text_cols, fit=True, param_manager=None):
     """Extrai features de motivação baseadas em palavras-chave.
     
     Args:
         df: DataFrame pandas
         text_cols: Lista de colunas de texto para processamento
         fit: Flag para indicar se estamos no modo fit (não usado nesta função)
-        params: Dicionário com parâmetros (não usado nesta função)
+        param_manager: Instância do ParameterManager
         
     Returns:
         DataFrame com features de motivação adicionadas
-        Dicionário com parâmetros inalterados
+        ParameterManager inalterado
     """
     # Inicializar parâmetros
-    if params is None:
-        params = {}
+    if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
+        param_manager = ParameterManager()
     
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
@@ -307,9 +306,9 @@ def extract_motivation_features(df, text_cols, fit=True, params=None):
                 col_name = standardize_feature_name(f'{col}_motiv_{category}')
                 df_result.loc[mask, standardize_feature_name(f'{col_name}_norm')] = df_result.loc[mask, col_name] / df_result.loc[mask, word_count_col]
     
-    return df_result, params
+    return df_result, param_manager
 
-def extract_discriminative_features(df, text_cols, fit=True, params=None, param_manager=None):
+def extract_discriminative_features(df, text_cols, fit=True, param_manager=None):
     """Identifica e cria features para termos com maior poder discriminativo para conversão."""
     if param_manager is None:
         param_manager = ParameterManager()
@@ -462,21 +461,23 @@ def extract_discriminative_features(df, text_cols, fit=True, params=None, param_
     
     return df_result, param_manager
 
-def text_feature_engineering(df, fit=True, params=None):
+def text_feature_engineering(df, fit=True, param_manager=None):
     """Executa todo o pipeline de processamento de texto."""
 
     # Criar param_manager se não fornecido
     if param_manager is None:
+        from src.utils.parameter_manager import ParameterManager
         param_manager = ParameterManager()
     
-    print("\n=== DEBUG: RASTREAMENTO DE COLUNAS EM feature_engineering ===")
+    print("\n=== DEBUG: RASTREAMENTO DE COLUNAS EM text_feature_engineering ===")
     print(f"Colunas na entrada: {len(df.columns)}")
     initial_cols = set(df.columns)
 
-    # Verificar se temos classificações nos params
-    if 'column_classifications' in params:
+    # Verificar se temos classificações
+    classifications = param_manager.get_preprocessing_params('column_classifications')
+    
+    if classifications:
         print("\n✓ Usando classificações existentes para processamento de texto")
-        classifications = params['column_classifications']
         
         # Filtrar apenas colunas de texto
         exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
@@ -491,6 +492,7 @@ def text_feature_engineering(df, fit=True, params=None):
         # Fallback: reclassificar se necessário
         print("\n🔍 Detectando colunas de texto para processamento...")
         
+        from src.utils.column_type_classifier import ColumnTypeClassifier
         classifier = ColumnTypeClassifier(
             use_llm=False,
             use_classification_cache=True,
@@ -498,6 +500,7 @@ def text_feature_engineering(df, fit=True, params=None):
         )
         
         classifications = classifier.classify_dataframe(df)
+        param_manager.save_preprocessing_params('column_classifications', classifications)
         
         exclude_patterns = ['_encoded', '_norm', '_clean', '_tfidf', '_original']
         text_cols = [
@@ -507,8 +510,8 @@ def text_feature_engineering(df, fit=True, params=None):
             and not any(pattern in col for pattern in exclude_patterns)
         ]
     
-    # APLICAR EXCLUSÕES (FORA DO IF/ELSE)
-    excluded_cols = params.get('excluded_from_text_processing', [])
+    # APLICAR EXCLUSÕES
+    excluded_cols = param_manager.params['feature_engineering'].get('excluded_columns', [])
     original_text_cols = text_cols.copy()
     text_cols = [col for col in text_cols if col not in excluded_cols]
     
@@ -520,7 +523,7 @@ def text_feature_engineering(df, fit=True, params=None):
     
     if not text_cols:
         print("  ⚠️ Nenhuma coluna de texto para processar após exclusões")
-        return df, params
+        return df, param_manager
     
     print(f"\n✓ Processamento de texto iniciado para {len(text_cols)} colunas")
     
@@ -528,7 +531,7 @@ def text_feature_engineering(df, fit=True, params=None):
     text_cols = [col for col in text_cols if col in df.columns]
     
     if not text_cols:
-        return df, params
+        return df, param_manager
     
     # Cria uma cópia para não modificar o original
     df_result = df.copy()
@@ -536,9 +539,9 @@ def text_feature_engineering(df, fit=True, params=None):
     # Aplicar pipeline de processamento de texto
     df_result, param_manager = extract_basic_text_features(df_result, text_cols, fit, param_manager)
     df_result, param_manager = extract_sentiment_features(df_result, text_cols, fit, param_manager)
-    df_result, param_manager = extract_tfidf_features(df_result, text_cols, fit, params, param_manager)
+    df_result, param_manager = extract_tfidf_features(df_result, text_cols, fit, param_manager=param_manager)
     df_result, param_manager = extract_motivation_features(df_result, text_cols, fit, param_manager)
-    df_result, param_manager = extract_discriminative_features(df_result, text_cols, fit, param_manager)
+    df_result, param_manager = extract_discriminative_features(df_result, text_cols, fit, param_manager=param_manager)
     
     # Remover colunas temporárias de texto limpo
     columns_to_drop = [f'{col}_clean' for col in text_cols if f'{col}_clean' in df_result.columns]
@@ -552,7 +555,7 @@ def text_feature_engineering(df, fit=True, params=None):
     removed_cols = initial_cols - final_cols
     added_cols = final_cols - initial_cols
     
-    print(f"\nColunas removidas em feature_engineering: {len(removed_cols)}")
+    print(f"\nColunas removidas em text_feature_engineering: {len(removed_cols)}")
     for col in sorted(removed_cols):
         print(f"  - {col}")
     
