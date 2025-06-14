@@ -5,6 +5,7 @@ import numpy as np
 import logging
 from typing import Dict, Any, Optional, List
 import sys
+import re
 
 # Adicionar o diretório do projeto ao path
 project_root = "/Users/ramonmoreira/desktop/smart_ads"
@@ -32,11 +33,16 @@ class ProfessionalFeatures(BaseComponent):
     - LDA para extração de tópicos
     """
     
-    def __init__(self):
+    def __init__(self, n_topics: int = 5):
+        """
+        Inicializa o componente.
+        
+        Args:
+            n_topics: Número de tópicos para LDA
+        """
         super().__init__(name="professional_features")
         
-        # Este componente não mantém estado próprio
-        # Tudo é gerenciado pelo ParameterManager através das funções originais
+        self.n_topics = n_topics
         self._param_manager = None
         self._text_columns = []
         
@@ -118,6 +124,12 @@ class ProfessionalFeatures(BaseComponent):
         )
         X_work = pd.concat([X_work, tfidf_df], axis=1)
         
+        # 6. LDA para extração de tópicos (NOVO!)
+        logger.info(f"{self.name}: Aplicando LDA para extração de tópicos...")
+        X_work, self._param_manager = self._perform_topic_modeling(
+            X_work, self._text_columns, n_topics=self.n_topics, fit=True
+        )
+        
         # Marcar como fitted
         self.is_fitted = True
         
@@ -197,6 +209,11 @@ class ProfessionalFeatures(BaseComponent):
         )
         X_result = pd.concat([X_result, tfidf_df], axis=1)
         
+        # 6. LDA para extração de tópicos (NOVO!)
+        X_result, _ = self._perform_topic_modeling(
+            X_result, text_columns, n_topics=self.n_topics, fit=False
+        )
+        
         # Remover duplicatas de colunas se houver
         X_result = X_result.loc[:, ~X_result.columns.duplicated()]
         
@@ -204,6 +221,136 @@ class ProfessionalFeatures(BaseComponent):
         logger.info(f"{self.name}: Transform concluído. {features_created} features profissionais aplicadas")
         
         return X_result
+    
+    def _perform_topic_modeling(self, df: pd.DataFrame, text_cols: List[str], 
+                               n_topics: int = 5, fit: bool = True) -> tuple:
+        """
+        Aplica LDA para extração de tópicos.
+        
+        Esta função é adaptada de perform_topic_modeling_fixed() do unified_pipeline.py
+        """
+        df_result = df.copy()
+        
+        # Importar função standardize_feature_name
+        from src.utils.feature_naming import standardize_feature_name
+        
+        # Filtrar colunas existentes
+        text_cols = [col for col in text_cols if col in df.columns]
+        
+        if not text_cols:
+            return df_result, self._param_manager
+        
+        logger.info(f"Aplicando LDA para {len(text_cols)} colunas de texto com {n_topics} tópicos")
+        
+        for col_idx, col in enumerate(text_cols):
+            col_clean = re.sub(r'[^\w]', '', col.replace(' ', '_'))[:30]
+            
+            # Verificar se temos texto válido
+            texts = df[col].fillna('').astype(str)
+            valid_texts = texts[texts.str.len() > 5]
+            
+            min_texts_for_lda = 20
+            
+            if len(valid_texts) < min_texts_for_lda:
+                logger.debug(f"Poucos textos válidos para LDA em {col} ({len(valid_texts)} < {min_texts_for_lda})")
+                continue
+            
+            if fit:
+                try:
+                    from sklearn.feature_extraction.text import TfidfVectorizer
+                    from sklearn.decomposition import LatentDirichletAllocation
+                    
+                    # Vetorizar textos
+                    vectorizer = TfidfVectorizer(
+                        max_features=100,
+                        min_df=5,
+                        max_df=0.95,
+                        stop_words=None
+                    )
+                    
+                    doc_term_matrix = vectorizer.fit_transform(valid_texts)
+                    
+                    # Aplicar LDA
+                    lda = LatentDirichletAllocation(
+                        n_components=n_topics,
+                        max_iter=20,
+                        learning_method='online',
+                        random_state=42,
+                        n_jobs=-1
+                    )
+                    
+                    topic_dist_valid = lda.fit_transform(doc_term_matrix)
+                    
+                    # Criar distribuição completa
+                    topic_distribution = np.zeros((len(df), n_topics))
+                    valid_mask = texts.str.len() > 5
+                    valid_positions = np.where(valid_mask)[0]
+                    
+                    for i, pos in enumerate(valid_positions):
+                        topic_distribution[pos] = topic_dist_valid[i]
+                    
+                    # Salvar modelo LDA
+                    self._param_manager.save_lda_model(
+                        {
+                            'model': lda,
+                            'vectorizer': vectorizer,
+                            'n_topics': n_topics,
+                            'feature_names': vectorizer.get_feature_names_out().tolist()
+                        },
+                        name=col_clean
+                    )
+                    
+                    # Adicionar features
+                    for topic_idx in range(n_topics):
+                        feature_name = standardize_feature_name(f'{col_clean}_topic_{topic_idx+1}')
+                        df_result[feature_name] = topic_distribution[:, topic_idx]
+                    
+                    # Tópico dominante
+                    dominant_topic_name = standardize_feature_name(f'{col_clean}_dominant_topic')
+                    df_result[dominant_topic_name] = np.argmax(topic_distribution, axis=1) + 1
+                    
+                    logger.debug(f"LDA aplicado em {col}: {n_topics + 1} features criadas")
+                    
+                except Exception as e:
+                    logger.error(f"Erro ao aplicar LDA em {col}: {e}")
+            
+            else:  # transform mode
+                model_data = self._param_manager.get_lda_model(col_clean)
+                
+                if not model_data:
+                    logger.debug(f"Modelo LDA não encontrado para '{col_clean}'")
+                    continue
+                
+                try:
+                    lda = model_data['model']
+                    vectorizer = model_data['vectorizer']
+                    n_topics = model_data['n_topics']
+                    
+                    # Transformar
+                    doc_term_matrix = vectorizer.transform(valid_texts)
+                    topic_dist_valid = lda.transform(doc_term_matrix)
+                    
+                    # Criar distribuição completa
+                    topic_distribution = np.zeros((len(df), n_topics))
+                    valid_mask = texts.str.len() > 5
+                    valid_positions = np.where(valid_mask)[0]
+                    
+                    for i, pos in enumerate(valid_positions):
+                        topic_distribution[pos] = topic_dist_valid[i]
+                    
+                    # Adicionar features
+                    for topic_idx in range(n_topics):
+                        feature_name = standardize_feature_name(f'{col_clean}_topic_{topic_idx+1}')
+                        df_result[feature_name] = topic_distribution[:, topic_idx]
+                    
+                    # Tópico dominante
+                    dominant_topic_name = standardize_feature_name(f'{col_clean}_dominant_topic')
+                    df_result[dominant_topic_name] = np.argmax(topic_distribution, axis=1) + 1
+                    
+                except Exception as e:
+                    logger.error(f"Erro ao transformar com LDA em {col}: {e}")
+        
+        return df_result, self._param_manager
     
     def _identify_text_columns(self, df: pd.DataFrame) -> List[str]:
         """
@@ -244,7 +391,8 @@ class ProfessionalFeatures(BaseComponent):
             param_manager.save_component_params(self.name, {
                 'is_fitted': True,
                 'has_professional_params': True,
-                'text_columns': self._text_columns
+                'text_columns': self._text_columns,
+                'n_topics': self.n_topics
             })
     
     def _load_component_params(self, param_manager: ExtendedParameterManager) -> None:
@@ -267,6 +415,7 @@ class ProfessionalFeatures(BaseComponent):
             raise ValueError(f"{self.name}: Parâmetros profissionais não encontrados")
         
         self._text_columns = component_params.get('text_columns', [])
+        self.n_topics = component_params.get('n_topics', 5)
     
     def get_feature_info(self) -> Dict[str, Any]:
         """
@@ -286,7 +435,9 @@ class ProfessionalFeatures(BaseComponent):
             'has_commitment_phrases': 'commitment_phrases' in prof_params,
             'has_career_terms': 'career_terms' in prof_params,
             'n_career_tfidf_vectorizers': len(prof_params.get('career_tfidf_vectorizers', {})),
-            'text_columns_processed': self._text_columns
+            'n_lda_models': len(prof_params.get('lda_models', {})),
+            'text_columns_processed': self._text_columns,
+            'n_topics': self.n_topics
         }
         
         return info
