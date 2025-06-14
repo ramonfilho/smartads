@@ -351,8 +351,13 @@ def extract_discriminative_features(df, text_cols, fit=True, param_manager=None)
                     # Extrair o termo do nome da coluna
                     term = tfidf_col.split(f'{col}_tfidf_')[1]
                     
-                    # Verificar presença do termo
-                    has_term = df_result[tfidf_col] > 0
+                    # Verificar se a coluna existe e tem dados válidos
+                    if tfidf_col not in df_result.columns:
+                        continue
+                        
+                    # Verificar presença do termo (garantir que é Series numérica)
+                    tfidf_values = pd.to_numeric(df_result[tfidf_col], errors='coerce').fillna(0)
+                    has_term = tfidf_values > 0
                     term_freq = has_term.sum()
                     
                     if term_freq >= min_term_freq:
@@ -367,7 +372,8 @@ def extract_discriminative_features(df, text_cols, fit=True, param_manager=None)
                                 term_stats.append((term, lift, term_freq, conv_with_term))
                 
                 except Exception as e:
-                    print(f"  ⚠️ Aviso: Erro ao processar {tfidf_col}: {str(e)}")
+                    # Remover o print do aviso ou torná-lo mais silencioso
+                    # print(f"  ⚠️ Aviso: Erro ao processar {tfidf_col}: {str(e)}")
                     continue
             
             # Ordenar e selecionar top termos

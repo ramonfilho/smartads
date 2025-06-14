@@ -95,10 +95,6 @@ class TrainingPipeline:
         clear_cache = config.get('clear_cache', False)
         train_model = config.get('train_model', False)
         
-        # Desabilitar LLM para evitar chamadas ao Ollama
-        os.environ['DISABLE_LLM'] = 'true'
-        os.environ['USE_LLM'] = 'false'
-        
         # Armazenar config no state
         self.state.config = config
         

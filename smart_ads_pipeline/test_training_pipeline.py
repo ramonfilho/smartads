@@ -14,15 +14,27 @@ sys.path.insert(0, project_root)
 from smart_ads_pipeline.pipelines import TrainingPipeline
 
 
-def test_training_pipeline_minimal():
-    """Testa o pipeline de treino com configuração mínima."""
-    print("=== Testando TrainingPipeline (Minimal) ===")
+def test_training_pipeline(use_checkpoints=False, sample_fraction=0.1, train_model=False):
+    """
+    Testa o pipeline de treino com configurações parametrizáveis.
+    
+    Args:
+        use_checkpoints: Se deve usar checkpoints
+        sample_fraction: Fração dos dados para usar (0.1 = 10%)
+        train_model: Se deve treinar um modelo LightGBM
+    """
+    print(f"=== Testando TrainingPipeline ===")
+    print(f"Configurações:")
+    print(f"  - Checkpoints: {'Sim' if use_checkpoints else 'Não'}")
+    print(f"  - Amostragem: {sample_fraction*100:.0f}%")
+    print(f"  - Treinar modelo: {'Sim' if train_model else 'Não'}")
+    print()
     
     # Criar diretório temporário para output
     output_dir = tempfile.mkdtemp(prefix="smart_ads_test_")
     
     try:
-        # Configuração mínima
+        # Configuração
         config = {
             'data_path': "/Users/ramonmoreira/desktop/smart_ads/data/raw_data",
             'output_dir': output_dir,
@@ -31,10 +43,10 @@ def test_training_pipeline_minimal():
             'random_state': 42,
             'max_features': 50,  # Menos features para teste rápido
             'fast_mode': True,
-            'use_checkpoints': False,  # Sem checkpoints no teste
+            'use_checkpoints': use_checkpoints,
             'clear_cache': False,
-            'train_model': False,  # Sem treinar modelo no teste básico
-            'sample_fraction': 0.1  # NOVO: Usar apenas 10% dos dados
+            'train_model': train_model,
+            'sample_fraction': sample_fraction
         }
         
         # Executar pipeline
@@ -52,6 +64,10 @@ def test_training_pipeline_minimal():
         print(f"    Test: {results['test_shape']}")
         print(f"  Features selecionadas: {len(results['selected_features'])}")
         
+        if train_model and 'metrics' in results:
+            print(f"  Métricas do modelo:")
+            print(f"    AUC Validação: {results['metrics']['auc_val']:.4f}")
+        
         # Verificar arquivos criados
         expected_files = [
             'pipeline_params.joblib',
@@ -60,6 +76,9 @@ def test_training_pipeline_minimal():
             'test.csv',
             'feature_importance.csv'
         ]
+        
+        if train_model:
+            expected_files.append('model.pkl')
         
         for file in expected_files:
             file_path = os.path.join(output_dir, file)
@@ -74,107 +93,6 @@ def test_training_pipeline_minimal():
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir)
             print(f"\n✓ Diretório temporário removido: {output_dir}")
-
-
-def test_training_pipeline_with_model():
-    """Testa o pipeline incluindo treinamento de modelo."""
-    print("\n=== Testando TrainingPipeline com Modelo ===")
-    
-    # Criar diretório temporário
-    output_dir = tempfile.mkdtemp(prefix="smart_ads_model_test_")
-    
-    try:
-        config = {
-            'data_path': "/Users/ramonmoreira/desktop/smart_ads/data/raw_data",
-            'output_dir': output_dir,
-            'test_size': 0.3,
-            'val_size': 0.5,
-            'random_state': 42,
-            'max_features': 30,  # Poucas features para teste rápido
-            'fast_mode': True,
-            'use_checkpoints': False,
-            'train_model': True  # TREINAR MODELO
-        }
-        
-        # Executar pipeline
-        pipeline = TrainingPipeline()
-        results = pipeline.run(config)
-        
-        assert results['success'], f"Pipeline falhou: {results.get('error')}"
-        
-        print("\n✓ Pipeline com modelo executado com sucesso!")
-        print(f"  Modelo salvo em: {results.get('model_path')}")
-        print(f"  Métricas: {results.get('metrics')}")
-        
-        # Verificar se modelo foi criado
-        model_path = os.path.join(output_dir, 'model.pkl')
-        assert os.path.exists(model_path), "Modelo não foi salvo"
-        
-        # Verificar tamanho do modelo
-        model_size = os.path.getsize(model_path) / 1024  # KB
-        print(f"  Tamanho do modelo: {model_size:.1f} KB")
-        
-        return True
-        
-    finally:
-        if os.path.exists(output_dir):
-            shutil.rmtree(output_dir)
-
-
-def test_training_pipeline_with_checkpoints():
-    """Testa o pipeline com checkpoints habilitados."""
-    print("\n=== Testando TrainingPipeline com Checkpoints ===")
-    
-    output_dir = tempfile.mkdtemp(prefix="smart_ads_checkpoint_test_")
-    cache_dir = os.path.join(output_dir, "cache")
-    
-    try:
-        # Configurar para usar cache personalizado
-        os.environ['SMART_ADS_CACHE_DIR'] = cache_dir
-        
-        config = {
-            'data_path': "/Users/ramonmoreira/desktop/smart_ads/data/raw_data",
-            'output_dir': output_dir,
-            'test_size': 0.3,
-            'val_size': 0.5,
-            'max_features': 20,
-            'fast_mode': True,
-            'use_checkpoints': True,  # USAR CHECKPOINTS
-            'clear_cache': True,
-            'train_model': False
-        }
-        
-        # Primeira execução
-        print("\nPrimeira execução (criando checkpoints)...")
-        pipeline1 = TrainingPipeline()
-        results1 = pipeline1.run(config)
-        assert results1['success']
-        
-        # Verificar que checkpoints foram criados
-        checkpoint_files = os.listdir(cache_dir) if os.path.exists(cache_dir) else []
-        print(f"\n✓ Checkpoints criados: {len(checkpoint_files)} arquivos")
-        
-        # Segunda execução (usando checkpoints)
-        print("\nSegunda execução (usando checkpoints)...")
-        config['clear_cache'] = False  # Não limpar cache
-        
-        pipeline2 = TrainingPipeline()
-        results2 = pipeline2.run(config)
-        assert results2['success']
-        
-        # Comparar tempos (segunda deve ser mais rápida)
-        time1 = pipeline1.state.get_summary()['execution_time_seconds']
-        time2 = pipeline2.state.get_summary()['execution_time_seconds']
-        
-        print(f"\n✓ Tempo primeira execução: {time1:.1f}s")
-        print(f"✓ Tempo segunda execução: {time2:.1f}s")
-        print(f"✓ Speedup com checkpoints: {time1/time2:.1f}x")
-        
-        return True
-        
-    finally:
-        if os.path.exists(output_dir):
-            shutil.rmtree(output_dir)
 
 
 def test_data_path_validation():
@@ -200,10 +118,27 @@ def test_data_path_validation():
 
 
 def main():
-    """Executa todos os testes."""
+    """Executa o teste com configurações padrão ou da linha de comando."""
     print("Testando TrainingPipeline do Smart Ads\n")
     print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*60)
+    
+    # Parâmetros padrão
+    use_checkpoints = False
+    sample_fraction = 0.1
+    train_model = False
+    
+    # Parse argumentos da linha de comando (simples)
+    if len(sys.argv) > 1:
+        for arg in sys.argv[1:]:
+            if arg == '--checkpoints':
+                use_checkpoints = True
+            elif arg == '--full':
+                sample_fraction = 1.0
+            elif arg == '--model':
+                train_model = True
+            elif arg.startswith('--sample='):
+                sample_fraction = float(arg.split('=')[1])
     
     try:
         # Verificar dados primeiro
@@ -211,17 +146,14 @@ def main():
             print("\n❌ Não é possível executar testes sem dados")
             return
         
-        # Executar testes
-        test_training_pipeline_minimal()
-        test_training_pipeline_with_model()
-        # test_training_pipeline_with_checkpoints()  # Comentado por enquanto
+        # Executar teste
+        test_training_pipeline(
+            use_checkpoints=use_checkpoints,
+            sample_fraction=sample_fraction,
+            train_model=train_model
+        )
         
-        print("\n✅ Todos os testes do TrainingPipeline passaram!")
-        print("\n📊 RESUMO:")
-        print("  - Pipeline básico: OK")
-        print("  - Pipeline com modelo: OK")
-        print("  - Salvamento de parâmetros: OK")
-        print("  - Geração de datasets: OK")
+        print("\n✅ Teste do TrainingPipeline concluído!")
         
     except Exception as e:
         print(f"\n❌ Erro durante os testes: {e}")

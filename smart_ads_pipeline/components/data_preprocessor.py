@@ -37,6 +37,7 @@ class DataPreprocessor(BaseComponent):
         self.columns_to_convert = {}
         self.fillna_values = {}
         self.normalize_params = {}
+        self.inference_columns = []  # Será carregado dos parâmetros
         
         # Colunas permitidas para inferência (do pipeline original)
         self.INFERENCE_COLUMNS = [

@@ -426,21 +426,17 @@ class ProfessionalFeatures(BaseComponent):
             if classifications:
                 logger.info("Usando classificações existentes do param_manager")
                 # Usar exatamente a mesma lógica do text_processing.py
-                from src.utils.column_type_classifier import ColumnTypeClassifier
-                classifier = ColumnTypeClassifier()
-                
                 text_columns = [
                     col for col, info in classifications.items()
                     if col in df.columns 
-                    and info['type'] == classifier.TEXT 
+                    and info['type'] == 'text'
                     and info['confidence'] >= 0.7
                 ]
                 
                 if text_columns:
                     return text_columns
         
-        # Opção 3: Se não houver classificações prévias, lançar erro
-        # IMPORTANTE: Em produção, SEMPRE devemos ter classificações prévias
+        # Se chegou aqui, é um erro - não devemos classificar novamente
         logger.error("ERRO: Nenhuma classificação de colunas encontrada no param_manager!")
         logger.error("O ProfessionalFeatures requer que as colunas já tenham sido classificadas anteriormente.")
         raise ValueError(
