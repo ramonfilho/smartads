@@ -33,7 +33,8 @@ def test_training_pipeline_minimal():
             'fast_mode': True,
             'use_checkpoints': False,  # Sem checkpoints no teste
             'clear_cache': False,
-            'train_model': False  # Sem treinar modelo no teste básico
+            'train_model': False,  # Sem treinar modelo no teste básico
+            'sample_fraction': 0.1  # NOVO: Usar apenas 10% dos dados
         }
         
         # Executar pipeline

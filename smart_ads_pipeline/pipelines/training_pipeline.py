@@ -95,6 +95,10 @@ class TrainingPipeline:
         clear_cache = config.get('clear_cache', False)
         train_model = config.get('train_model', False)
         
+        # Desabilitar LLM para evitar chamadas ao Ollama
+        os.environ['DISABLE_LLM'] = 'true'
+        os.environ['USE_LLM'] = 'false'
+        
         # Armazenar config no state
         self.state.config = config
         
@@ -132,12 +136,39 @@ class TrainingPipeline:
                 # 1.2 Matching e criação de target
                 self.data_matcher = DataMatcher()
                 final_df = self.data_matcher.match_and_create_target(data_dict)
+                
+                # NOVO: Aplicar amostragem se configurado
+                sample_fraction = config.get('sample_fraction', None)
+                if sample_fraction and sample_fraction < 1.0:
+                    logger.info(f"Aplicando amostragem: {sample_fraction*100:.0f}% dos dados")
+                    n_before = len(final_df)
+                    final_df = final_df.sample(frac=sample_fraction, random_state=random_state)
+                    n_after = len(final_df)
+                    logger.info(f"Amostragem aplicada: {n_before} → {n_after} linhas")
+                
                 self.state.log_step("data_matching", {
                     'final_shape': final_df.shape,
                     'target_rate': (final_df['target'] == 1).mean() if 'target' in final_df.columns else 0
                 })
                 
-                # 1.3 Split train/val/test
+                # 1.3 CLASSIFICAR COLUNAS ANTES DE QUALQUER PROCESSAMENTO
+                logger.info("Classificando tipos de colunas...")
+                from src.utils.column_type_classifier import ColumnTypeClassifier
+                
+                classifier = ColumnTypeClassifier(
+                    use_llm=False,
+                    use_classification_cache=True,
+                    confidence_threshold=0.7
+                )
+                
+                # Classificar o DataFrame completo
+                classifications = classifier.classify_dataframe(final_df)
+                
+                # Salvar classificações no param_manager
+                self.param_manager.save_preprocessing_params('column_classifications', classifications)
+                logger.info(f"Classificações salvas para {len(classifications)} colunas")
+                
+                # 1.4 Split train/val/test
                 logger.info("Dividindo dados em train/val/test...")
                 
                 # Estratificar se possível
@@ -214,6 +245,8 @@ class TrainingPipeline:
                 # 2.3 TextProcessor
                 logger.info("Aplicando TextProcessor...")
                 self.text_processor = TextProcessor()
+                # IMPORTANTE: Passar o param_manager que já tem as classificações
+                self.text_processor._param_manager = self.param_manager._internal_param_manager
                 train_df = self.text_processor.fit_transform(train_df)
                 val_df = self.text_processor.transform(val_df)
                 test_df = self.text_processor.transform(test_df)
@@ -223,6 +256,8 @@ class TrainingPipeline:
                 # 2.4 ProfessionalFeatures
                 logger.info("Aplicando ProfessionalFeatures...")
                 self.professional_features = ProfessionalFeatures(n_topics=5)
+                # IMPORTANTE: Garantir que tem acesso ao param_manager com classificações
+                self.professional_features._param_manager = self.param_manager._internal_param_manager
                 train_df = self.professional_features.fit_transform(train_df)
                 val_df = self.professional_features.transform(val_df)
                 test_df = self.professional_features.transform(test_df)
