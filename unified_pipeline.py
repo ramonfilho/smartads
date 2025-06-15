@@ -840,18 +840,25 @@ def ensure_column_consistency(train_df, test_df):
             test_df[col] = 0
         else:
             test_df[col] = None
-        print(f"  Adicionada coluna ausente: {col}")
+        # REMOVIDO: print(f"  Adicionada coluna ausente: {col}")
     
     # Remover colunas extras no teste não presentes no treino
     extra_cols = set(test_df.columns) - set(train_df.columns)
     if extra_cols:
         test_df = test_df.drop(columns=list(extra_cols))
-        print(f"  Removidas colunas extras: {', '.join(list(extra_cols)[:5])}" + 
-              (f" e mais {len(extra_cols)-5} outras" if len(extra_cols) > 5 else ""))
+        # MODIFICADO: Mostrar apenas resumo em vez de listar todas
+        # print(f"  Removidas colunas extras: {', '.join(list(extra_cols)[:5])}" + 
+        #       (f" e mais {len(extra_cols)-5} outras" if len(extra_cols) > 5 else ""))
     
     # Garantir a mesma ordem de colunas
     test_df = test_df[train_df.columns]
-    print(f"Alinhamento concluído: {len(missing_cols)} colunas adicionadas, {len(extra_cols)} removidas")
+    
+    # MODIFICADO: Mostrar apenas resumo
+    if missing_cols or extra_cols:
+        print(f"Alinhamento concluído: {len(missing_cols)} colunas adicionadas, {len(extra_cols)} removidas")
+    else:
+        print("Alinhamento concluído: nenhuma alteração necessária")
+    
     return test_df
 
 # ============================================================================
@@ -1847,9 +1854,19 @@ def unified_data_pipeline(raw_data_path="/Users/ramonmoreira/desktop/smart_ads/d
         for col in dataset.select_dtypes(include=[np.number]).columns:
             if col == 'target':
                 continue
-            # CORREÇÃO: usar .eq() para comparação elemento por elemento
-            if dataset[col].eq(0).all():
-                zero_features.append(col)
+            try:
+                # Usar .eq(0) em vez de == para evitar ambiguidade
+                if dataset[col].eq(0).all():
+                    zero_features.append(col)
+            except Exception as e:
+                # Ignorar colunas que não podem ser comparadas
+                pass
+        
+        if zero_features:
+            print(f"  ⚠️ {len(zero_features)} features com todos valores = 0")
+            print(f"     Exemplos: {zero_features[:5]}")
+        else:
+            print("  ✓ Nenhuma feature com todos valores = 0")
         
         if zero_features:
             print(f"  ❌ {len(zero_features)} features com TODOS zeros:")
