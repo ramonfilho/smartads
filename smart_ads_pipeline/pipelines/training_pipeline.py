@@ -259,6 +259,12 @@ class TrainingPipeline:
                 test_df = self.professional_features.transform(test_df)
                 self.professional_features.save_params(self.param_manager)
                 self.state.log_step("professional_features", {"shape_after": train_df.shape})
+                logger.info(f"Val após ProfessionalFeatures: {val_df.shape}")
+                logger.info(f"Test após ProfessionalFeatures: {test_df.shape}")
+                train_df, val_df, test_df = self._align_datasets(train_df, val_df, test_df)
+
+                # Atualizar state
+                self.state.update_dataframes(train=train_df, val=val_df, test=test_df)
                 
                 # Salvar checkpoint
                 if use_checkpoints:
@@ -388,7 +394,67 @@ class TrainingPipeline:
                 'error': str(e),
                 'summary': self.state.get_summary()
             }
-    
+    def _align_datasets(self, train_df: pd.DataFrame, val_df: pd.DataFrame, 
+                   test_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """
+        Garante que todos os datasets tenham exatamente as mesmas colunas.
+        
+        Args:
+            train_df: DataFrame de treino
+            val_df: DataFrame de validação  
+            test_df: DataFrame de teste
+            
+        Returns:
+            Tupla com os três DataFrames alinhados
+        """
+        logger.info("Alinhando colunas entre datasets...")
+        
+        # Usar colunas do treino como referência
+        train_columns = train_df.columns.tolist()
+        numeric_columns = set(train_df.select_dtypes(include=['number']).columns)
+        
+        # Função auxiliar para alinhar um dataset com o treino
+        def align_to_train(df: pd.DataFrame, reference_columns: list, 
+                        numeric_cols: set) -> pd.DataFrame:
+            """Alinha um DataFrame para ter as mesmas colunas que o treino"""
+            
+            # Colunas faltantes
+            missing_cols = set(reference_columns) - set(df.columns)
+            
+            # Adicionar colunas faltantes com valores padrão
+            for col in missing_cols:
+                if col in numeric_cols:
+                    df[col] = 0
+                else:
+                    df[col] = None
+            
+            # Remover colunas extras
+            extra_cols = set(df.columns) - set(reference_columns)
+            if extra_cols:
+                df = df.drop(columns=list(extra_cols))
+            
+            # Garantir mesma ordem
+            df = df[reference_columns]
+            
+            return df
+        
+        # Alinhar validação e teste
+        val_aligned = align_to_train(val_df, train_columns, numeric_columns)
+        test_aligned = align_to_train(test_df, train_columns, numeric_columns)
+        
+        # Verificar alinhamento
+        if list(train_df.columns) == list(val_aligned.columns) == list(test_aligned.columns):
+            logger.info("✓ Datasets alinhados com sucesso")
+        else:
+            logger.warning("⚠️ Possível problema no alinhamento de colunas")
+        
+        # Log estatísticas
+        logger.debug(f"Train: {train_df.shape}")
+        logger.debug(f"Val: {val_aligned.shape}")
+        logger.debug(f"Test: {test_aligned.shape}")
+        
+        return train_df, val_aligned, test_aligned
+
     def _train_model(self, train_df: pd.DataFrame, val_df: pd.DataFrame) -> Any:
         """
         Treina um modelo LightGBM (placeholder).

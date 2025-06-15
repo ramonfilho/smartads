@@ -61,16 +61,15 @@ PARTE 4: FEATURE SELECTION
 CHECK - Criar uma lógica universal de reconhecimento de tipos colunas e verificar sua utilização ao longo do pipeline
 CHECK - Criar uma lógica universão de nomenclatura de colunas e verificar sua utilização ao longo do pipeline
 CHECK - Unificar a estrutura de parâmetros
--  Unificar Processamento de Texto em um pipeline, e a criacão de Features Numéricas em outro, com um centralizado que orquestra os 2. 
-
-
+- Tornar o script orientado a objetos, com módulos individuais integrados através de um pipeline.
+- Implementar stopwords para deixar de produzir features TF-IDF irrelevantes.
+- Verificar se tem alguma etapa “eliminável” porque está produzindo features de baixíssima importância.
+- Verificar a eficiência do processo de feature selection 
 
 ### Outros
 - Certificar por que a coluna "Data" está sendo removida junto com as `COLUMNS_REMOVED_FOR_PRODUCTION_COMPATIBILITY`.
 - Normalização é realmente necessária para esse dataset? Por que? 
 - Verificar a função column_type_classifier e ver o que ela realmente faz e porque está tão grande. E garantir que ele tenha uma lógica confiável, nem que seja pelo conhecimento de domínio, mas que seja faiclmente expansível.
-- Fazer cada processamento de acordo com o classificador de colunas. 
-- Verificar se tem alguma etapa “eliminável” porque está produzindo features de baixíssima importância.
 
 ### Futuras implementações:
 - Chamar LLM (langchain?) para determinar o vocabulário de palavras a serem usadas para criar as features de texto.
