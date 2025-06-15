@@ -9,22 +9,61 @@ import time
 
 logger = logging.getLogger(__name__)
 
+import numpy as np
+from src.utils.feature_naming import standardize_feature_name
 
 class DataMatcher:
     """
     Responsável por fazer o matching entre surveys e buyers e criar a variável target.
-    
-    Esta classe encapsula toda a lógica de:
-    - Matching por email normalizado
-    - Criação da variável target
-    - Merge com dados UTM
-    - Preparação final do dataset
     """
     
     def __init__(self):
         """Inicializa o DataMatcher."""
         self.match_stats = {}
         logger.info("DataMatcher inicializado")
+        
+        # Definir INFERENCE_COLUMNS conforme o pipeline original
+        self.INFERENCE_COLUMNS = [
+            # Dados de UTM
+            'data',
+            'e_mail',
+            'utm_campaing',
+            'utm_source',
+            'utm_medium',
+            'utm_content',
+            'utm_term',
+            'gclid',
+            
+            # Dados da pesquisa
+            'marca_temporal',
+            'como_te_llamas',
+            'cual_es_tu_genero',
+            'cual_es_tu_edad',
+            'cual_es_tu_pais',
+            'cual_es_tu_e_mail',
+            'cual_es_tu_telefono',
+            'cual_es_tu_instagram',
+            'hace_quanto_tiempo_me_conoces',
+            'cual_es_tu_disponibilidad_de_tiempo_para_estudiar_ingles',
+            'cuando_hables_ingles_con_fluidez_que_cambiara_en_tu_vida_que_oportunidades_se_abriran_para_ti',
+            'cual_es_tu_profesion',
+            'cual_es_tu_sueldo_anual_en_dolares',
+            'cuanto_te_gustaria_ganar_al_ano',
+            'crees_que_aprender_ingles_te_acercaria_mas_al_salario_que_mencionaste_anteriormente',
+            'crees_que_aprender_ingles_puede_ayudarte_en_el_trabajo_o_en_tu_vida_diaria',
+            'que_esperas_aprender_en_el_evento_cero_a_ingles_fluido',
+            'dejame_un_mensaje',
+            
+            # Features novas do L22
+            'cuales_son_tus_principales_razones_para_aprender_ingles',
+            'has_comprado_algun_curso_para_aprender_ingles_antes',
+            
+            # Qualidade
+            'qualidade_nome',
+            'qualidade_numero',
+            
+            # Target será adicionado dinamicamente
+        ]
     
     def match_and_create_target(self, data_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
         """
@@ -237,29 +276,149 @@ class DataMatcher:
     
     def _prepare_final_dataset(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Prepara o dataset final removendo colunas temporárias.
+        Prepara o dataset final removendo colunas temporárias e 
+        garantindo compatibilidade com produção.
         
         Args:
             df: DataFrame para preparar
             
         Returns:
-            DataFrame preparado
+            DataFrame preparado e filtrado para produção
         """
         logger.info("Preparando dataset final...")
+        logger.info(f"   Dataset original: {df.shape[0]} linhas, {df.shape[1]} colunas")
         
-        # Remover email_norm (usado apenas para matching)
-        if 'email_norm' in df.columns:
-            df = df.drop(columns=['email_norm'])
-            logger.debug("Coluna email_norm removida")
+        # Guardar colunas originais para relatório
+        original_columns = set(df.columns)
         
-        # Remover coluna 'email' genérica se existir
-        if 'email' in df.columns:
-            df = df.drop(columns=['email'])
-            logger.debug("Coluna email genérica removida")
+        # Passo 1: Remover colunas temporárias específicas
+        temp_columns = ['email_norm', 'email']
+        for col in temp_columns:
+            if col in df.columns:
+                df = df.drop(columns=[col])
+                logger.debug(f"Coluna temporária '{col}' removida")
         
-        logger.info(f"Dataset final: {df.shape[0]} linhas, {df.shape[1]} colunas")
+        # Passo 2: Identificar colunas válidas para produção
+        # Incluir apenas colunas que estão em INFERENCE_COLUMNS ou é target
+        valid_columns = []
+        for col in df.columns:
+            if col in self.INFERENCE_COLUMNS or col == 'target':
+                valid_columns.append(col)
         
-        return df
+        # Aplicar filtro mantendo apenas colunas válidas
+        df_filtered = df[valid_columns].copy()
+        
+        # Passo 3: Adicionar colunas faltantes de INFERENCE_COLUMNS com NaN
+        missing_columns = []
+        for col in self.INFERENCE_COLUMNS:
+            if col not in df_filtered.columns:
+                df_filtered[col] = np.nan
+                missing_columns.append(col)
+        
+        # Passo 4: Reordenar colunas conforme INFERENCE_COLUMNS
+        # Manter ordem consistente: primeiro INFERENCE_COLUMNS, depois target se existir
+        column_order = [col for col in self.INFERENCE_COLUMNS if col in df_filtered.columns]
+        if 'target' in df_filtered.columns:
+            column_order.append('target')
+        
+        df_filtered = df_filtered[column_order]
+        
+        # Relatório de colunas removidas
+        final_columns = set(df_filtered.columns)
+        removed_columns = original_columns - final_columns
+        
+        logger.info(f"\n   COLUMNS REMOVED FOR PRODUCTION COMPATIBILITY:")
+        logger.info(f"   Total columns removed: {len(removed_columns)}")
+        if removed_columns:
+            logger.info(f"   Removed columns list:")
+            # Ordenar para consistência no log
+            for col in sorted(removed_columns):
+                logger.info(f"      - {col}")
+        else:
+            logger.info(f"   No additional columns removed")
+        
+        if missing_columns:
+            logger.info(f"\n   Added {len(missing_columns)} missing INFERENCE_COLUMNS with NaN values")
+            if len(missing_columns) <= 10:
+                logger.info(f"   Missing columns: {missing_columns}")
+            else:
+                logger.info(f"   Missing columns: {missing_columns[:5]} ... and {len(missing_columns)-5} more")
+        
+        logger.info(f"\n   Dataset final: {df_filtered.shape[0]} linhas, {df_filtered.shape[1]} colunas")
+        
+        # Salvar estatísticas para relatório posterior
+        self.match_stats['removed_columns'] = list(removed_columns)
+        self.match_stats['missing_columns_added'] = missing_columns
+        self.match_stats['final_shape'] = df_filtered.shape
+        self.match_stats['final_columns'] = list(df_filtered.columns)
+        
+        return df_filtered
+    
+    def validate_production_compatibility(self, df: pd.DataFrame) -> tuple[bool, dict]:
+        """
+        Valida se o DataFrame é compatível com produção.
+        
+        Args:
+            df: DataFrame para validar
+            
+        Returns:
+            Tupla (is_compatible, validation_report)
+        """
+        validation_report = {
+            'is_compatible': True,
+            'errors': [],
+            'warnings': [],
+            'info': []
+        }
+        
+        # Colunas esperadas em produção (sem target)
+        production_columns = self.INFERENCE_COLUMNS
+        
+        # Verificar colunas obrigatórias
+        df_columns = set(df.columns)
+        missing_required = set(production_columns) - df_columns
+        extra_columns = df_columns - set(production_columns) - {'target'}
+        
+        if missing_required:
+            validation_report['is_compatible'] = False
+            validation_report['errors'].append(f"Missing required columns: {list(missing_required)}")
+        
+        if extra_columns:
+            validation_report['warnings'].append(f"Extra columns found: {list(extra_columns)}")
+        
+        # Verificar ordem das colunas
+        expected_order = [col for col in production_columns if col in df.columns]
+        actual_order = [col for col in df.columns if col in production_columns]
+        
+        if expected_order != actual_order:
+            validation_report['warnings'].append("Column order differs from expected")
+        
+        # Verificar colunas críticas de dados
+        critical_columns = ['cual_es_tu_e_mail', 'e_mail', 'data', 'marca_temporal']
+        for col in critical_columns:
+            if col in df.columns:
+                non_null_count = df[col].notna().sum()
+                total_count = len(df)
+                coverage_pct = (non_null_count / total_count * 100) if total_count > 0 else 0
+                
+                validation_report['info'].append(f"{col}: {coverage_pct:.1f}% coverage ({non_null_count}/{total_count})")
+                
+                if coverage_pct < 10:
+                    validation_report['warnings'].append(f"{col} has very low coverage: {coverage_pct:.1f}%")
+        
+        # Verificar target se presente
+        if 'target' in df.columns:
+            unique_values = df['target'].dropna().unique()
+            valid_targets = set(unique_values).issubset({0, 1, 0.0, 1.0})
+            
+            if not valid_targets:
+                validation_report['errors'].append(f"Invalid target values found: {list(unique_values)}")
+                validation_report['is_compatible'] = False
+            else:
+                positive_rate = (df['target'] == 1).sum() / len(df) * 100 if len(df) > 0 else 0
+                validation_report['info'].append(f"Target positive rate: {positive_rate:.2f}%")
+        
+        return validation_report['is_compatible'], validation_report
     
     def _log_statistics(self, df: pd.DataFrame) -> None:
         """
