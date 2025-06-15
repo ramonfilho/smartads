@@ -64,8 +64,10 @@ CHECK - Unificar a estrutura de parâmetros
 - Tornar o script orientado a objetos, com módulos individuais integrados através de um pipeline.
 - Implementar stopwords para deixar de produzir features TF-IDF irrelevantes.
 - Verificar se tem alguma etapa “eliminável” porque está produzindo features de baixíssima importância.
-- Verificar a eficiência do processo de feature selection 
+- Verificar a eficiência do processo de feature selection.
 - Para que serve o pipeline state, onde ele está sendo usado e onde deveria ser? 
+- Garantir que os decis estão sendo passados pela estrutura de parâmetros.
+- Testes unitários
 
 ### Outros
 - Certificar por que a coluna "Data" está sendo removida junto com as `COLUMNS_REMOVED_FOR_PRODUCTION_COMPATIBILITY`.
