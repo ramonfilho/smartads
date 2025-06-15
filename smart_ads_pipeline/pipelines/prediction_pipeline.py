@@ -16,8 +16,10 @@ if project_root not in sys.path:
 from smart_ads_pipeline.core import PipelineState, ExtendedParameterManager
 from smart_ads_pipeline.components import (
     DataPreprocessor, FeatureEngineer, TextProcessor, 
-    ProfessionalFeatures, FeatureSelector
+    ProfessionalFeatures
 )
+from smart_ads_pipeline.core.columns_config import INFERENCE_COLUMNS, CRITICAL_COLUMNS
+from smart_ads_pipeline.data_handlers import DataMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -25,20 +27,20 @@ logger = logging.getLogger(__name__)
 class PredictionPipeline:
     """
     Pipeline para fazer predições em novos dados.
-    
-    Carrega parâmetros salvos e aplica todas as transformações
-    exatamente como foram aprendidas durante o treino.
     """
     
     def __init__(self, params_path: str, model_path: Optional[str] = None):
         """
         Inicializa o pipeline de predição.
-        
-        Args:
-            params_path: Caminho para os parâmetros salvos
-            model_path: Caminho para o modelo treinado (opcional)
         """
         logger.info("Inicializando PredictionPipeline")
+        
+        # Usar a definição importada
+        self.INFERENCE_COLUMNS = INFERENCE_COLUMNS
+        self.CRITICAL_COLUMNS = CRITICAL_COLUMNS
+        
+        # Inicializar DataMatcher para reutilizar lógica de merge
+        self.data_matcher = DataMatcher()
         
         self.params_path = Path(params_path)
         self.model_path = Path(model_path) if model_path else None
@@ -90,13 +92,16 @@ class PredictionPipeline:
         
         logger.info("Componentes inicializados com sucesso")
     
-    def predict(self, df: pd.DataFrame, return_proba: bool = False) -> np.ndarray:
+    def predict(self, df: pd.DataFrame, return_proba: bool = False, 
+                prepare_data: bool = True) -> np.ndarray:
         """
         Faz predições em novos dados.
         
         Args:
-            df: DataFrame com novos dados (formato de surveys)
+            df: DataFrame com novos dados
             return_proba: Se True, retorna probabilidades de ambas as classes
+            prepare_data: Se True, aplica preparação e transformações completas
+                         Se False, assume que df já está pronto (apenas aplica transformações)
             
         Returns:
             Array com predições ou probabilidades
@@ -110,7 +115,20 @@ class PredictionPipeline:
         # Criar cópia para não modificar original
         df_work = df.copy()
         
-        # Aplicar transformações
+        if prepare_data:
+            # Validar colunas esperadas
+            validation = self.validate_input(df_work)
+            if not validation['is_valid']:
+                raise ValueError(f"Dados inválidos: {validation['errors']}")
+            
+            # Aplicar preparação de dados (filtro de produção)
+            df_work = self.data_matcher._prepare_final_dataset(df_work)
+            
+            # Remover target se existir
+            if 'target' in df_work.columns:
+                df_work = df_work.drop(columns=['target'])
+        
+        # Aplicar transformações (sempre necessário)
         df_work = self._apply_transformations(df_work)
         
         # Filtrar apenas features selecionadas
@@ -180,12 +198,6 @@ class PredictionPipeline:
     def validate_input(self, df: pd.DataFrame) -> Dict[str, Any]:
         """
         Valida se o DataFrame de entrada tem as colunas esperadas.
-        
-        Args:
-            df: DataFrame para validar
-            
-        Returns:
-            Dicionário com relatório de validação
         """
         report = {
             'is_valid': True,
@@ -194,18 +206,13 @@ class PredictionPipeline:
             'info': []
         }
         
-        # Colunas esperadas (de INFERENCE_COLUMNS)
-        expected_columns = [
-            'marca_temporal', 'cual_es_tu_e_mail', 'cual_es_tu_genero',
-            'cual_es_tu_edad', 'cual_es_tu_pais', 'utm_source', 'utm_medium',
-            'cuando_hables_ingles_con_fluidez_que_cambiara_en_tu_vida_que_oportunidades_se_abriran_para_ti',
-            'que_esperas_aprender_en_el_evento_cero_a_ingles_fluido',
-            'dejame_un_mensaje'
-        ]
+        # Usar as colunas importadas
+        expected_columns = self.INFERENCE_COLUMNS
+        critical_columns = self.CRITICAL_COLUMNS
         
         # Verificar colunas críticas
         missing_critical = []
-        for col in expected_columns[:5]:  # Primeiras 5 são mais críticas
+        for col in critical_columns:
             if col not in df.columns:
                 missing_critical.append(col)
         
@@ -227,6 +234,43 @@ class PredictionPipeline:
     def get_feature_names(self) -> list:
         """Retorna lista de features usadas pelo modelo."""
         return self.selected_features
+    
+    def prepare_prediction_data(self, survey_df: pd.DataFrame, 
+                            utm_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+        """
+        Prepara dados para predição reutilizando componentes existentes.
+        
+        Args:
+            survey_df: DataFrame com respostas da pesquisa
+            utm_df: DataFrame com dados UTM (opcional)
+            
+        Returns:
+            DataFrame pronto para predição
+        """
+        logger.info("Preparando dados para predição...")
+        
+        # Se não tiver UTM, usar apenas survey
+        if utm_df is None or utm_df.empty:
+            logger.info("Sem dados UTM - usando apenas survey")
+            df = survey_df.copy()
+        else:
+            # Reutilizar método _merge_with_utms do DataMatcher
+            from src.preprocessing.email_processing import normalize_emails_preserving_originals
+            
+            survey_normalized = normalize_emails_preserving_originals(survey_df)
+            utm_normalized = normalize_emails_preserving_originals(utm_df)
+            
+            # Usar método interno do DataMatcher
+            df = self.data_matcher._merge_with_utms(survey_normalized, utm_normalized)
+        
+        # Aplicar filtro de produção
+        df = self.data_matcher._prepare_final_dataset(df)
+        
+        # Remover target se existir (não faz sentido em predição)
+        if 'target' in df.columns:
+            df = df.drop(columns=['target'])
+        
+        return df
     
     def get_summary(self) -> Dict[str, Any]:
         """Retorna resumo do pipeline."""
