@@ -352,12 +352,19 @@ class TrainingPipeline:
             
             if train_model:
                 logger.info("\n=== PARTE 5: Treinamento de Modelo ===")
-                model = self._train_model(train_df, val_df)
-                
-                # Salvar modelo
-                model_path = os.path.join(output_dir, "model.pkl")
-                joblib.dump(model, model_path)
-                logger.info(f"Modelo salvo em: {model_path}")
+                # Atualizar state com os dataframes finais
+                self.state.update_dataframes(train=train_df, val=val_df, test=test_df)                
+                self._train_model(train_df, val_df, test_df, output_dir)
+                # Adicionar informações do modelo ao resultado
+                if hasattr(self, 'model_trainer'):
+                    results['model_metrics'] = self.state.metrics
+                    results['model_artifacts_dir'] = os.path.join(output_dir, "model_artifacts")
+                    results['top_decile_lift'] = self.state.metrics.get('test_top_decile_lift', 0)
+                    
+                    logger.info(f"\n📊 Métricas do Modelo:")
+                    logger.info(f"   AUC Test: {self.state.metrics.get('test_auc', 0):.4f}")
+                    logger.info(f"   GINI: {self.state.metrics.get('test_gini', 0):.4f}")
+                    logger.info(f"   Top Decile Lift: {self.state.metrics.get('test_top_decile_lift', 0):.2f}x")
             
             # ========================================================================
             # RESUMO FINAL
@@ -382,7 +389,6 @@ class TrainingPipeline:
             }
             
             if train_model:
-                results['model_path'] = model_path
                 results['metrics'] = self.state.metrics
             
             return results
