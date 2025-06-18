@@ -1,110 +1,194 @@
-# diagnose_email_error.py
-# Script para diagnosticar onde está ocorrendo o erro com 'e_mail'
+#!/usr/bin/env python
+"""
+Script para comparar features entre modelo original e novo pipeline OOP.
+Identifica diferenças críticas que podem explicar a diferença de performance.
+"""
 
+import json
+import pandas as pd
+import joblib
+from pathlib import Path
 import sys
-import os
 
-# Adicionar o diretório do projeto ao path
-project_root = "/Users/ramonmoreira/desktop/smart_ads"
-sys.path.insert(0, project_root)
+# Adicionar ao path
+sys.path.insert(0, '/Users/ramonmoreira/desktop/smart_ads')
 
-from smart_ads_pipeline.pipelines import TrainingPipeline
-
-def test_with_debug():
-    """Executa o pipeline com debug detalhado"""
-    print("=== Diagnóstico do Erro 'e_mail' ===\n")
+def compare_model_features():
+    """Compara features entre modelo original e novo."""
     
-    # Configuração mínima
-    config = {
-        'data_path': "/Users/ramonmoreira/desktop/smart_ads/data/raw_data",
-        'output_dir': "/tmp/smart_ads_debug",
-        'test_size': 0.3,
-        'val_size': 0.5,
-        'random_state': 42,
-        'max_features': 50,
-        'fast_mode': True,
-        'use_checkpoints': False,
-        'clear_cache': False,
-        'train_model': False,
-        'sample_fraction': 0.01  # Apenas 1% para debug rápido
+    print("=== ANÁLISE COMPARATIVA DE FEATURES ===\n")
+    
+    # 1. Carregar features do modelo original
+    print("1. Carregando features do modelo original...")
+    with open('/Users/ramonmoreira/desktop/smart_ads/models/artifacts/direct_ranking/model_config.json', 'r') as f:
+        original_config = json.load(f)
+    
+    features_original = set(original_config['feature_columns'])
+    print(f"   Features originais: {len(features_original)}")
+    
+    # 2. Carregar features do novo modelo
+    print("\n2. Carregando features do novo modelo...")
+    try:
+        # Tentar carregar do teste
+        importance_df = pd.read_csv('/tmp/smart_ads_model_test/feature_importance.csv')
+        features_novo = set(importance_df['feature'].tolist())
+        print(f"   Features novo modelo: {len(features_novo)}")
+    except:
+        print("   ❌ Arquivo de feature importance não encontrado")
+        return
+    
+    # 3. Análise de diferenças
+    print("\n3. ANÁLISE DE DIFERENÇAS:")
+    print("-" * 60)
+    
+    # Features únicas em cada modelo
+    only_original = features_original - features_novo
+    only_novo = features_novo - features_original
+    common = features_original & features_novo
+    
+    print(f"Features em comum: {len(common)} ({len(common)/len(features_original)*100:.1f}%)")
+    print(f"Features apenas no original: {len(only_original)}")
+    print(f"Features apenas no novo: {len(only_novo)}")
+    
+    # 4. Análise qualitativa das features perdidas
+    print("\n4. ANÁLISE QUALITATIVA DAS FEATURES PERDIDAS:")
+    print("-" * 60)
+    
+    # Categorizar features perdidas
+    categories = {
+        'salary': [],
+        'country': [],
+        'age': [],
+        'utm': [],
+        'text_tfidf': [],
+        'topic': [],
+        'professional': [],
+        'temporal': [],
+        'other': []
     }
     
-    try:
-        pipeline = TrainingPipeline()
-        results = pipeline.run(config)
-        
-        if results['success']:
-            print("✓ Pipeline executado com sucesso!")
+    for feat in only_original:
+        feat_lower = feat.lower()
+        if 'salary' in feat_lower or 'sueldo' in feat_lower:
+            categories['salary'].append(feat)
+        elif 'country' in feat_lower or 'pais' in feat_lower:
+            categories['country'].append(feat)
+        elif 'age' in feat_lower or 'edad' in feat_lower:
+            categories['age'].append(feat)
+        elif 'utm' in feat_lower:
+            categories['utm'].append(feat)
+        elif '_tfidf_' in feat_lower:
+            categories['text_tfidf'].append(feat)
+        elif '_topic_' in feat_lower:
+            categories['topic'].append(feat)
+        elif any(term in feat_lower for term in ['professional', 'career', 'motiv']):
+            categories['professional'].append(feat)
+        elif any(term in feat_lower for term in ['hour', 'day', 'month', 'morning']):
+            categories['temporal'].append(feat)
         else:
-            print(f"✗ Pipeline falhou: {results.get('error')}")
-            print(f"\nÚltimo passo executado: {pipeline.state.get_last_step()}")
-            print(f"\nPassos completados:")
-            for step in pipeline.state.steps:
-                print(f"  - {step['name']}: {step.get('status', 'unknown')}")
+            categories['other'].append(feat)
     
-    except Exception as e:
-        print(f"❌ Erro: {type(e).__name__}: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        # Tentar identificar onde parou
-        print("\n=== Estado do Pipeline ===")
-        try:
-            summary = pipeline.state.get_summary()
-            print(f"Tempo de execução: {summary.get('execution_time_seconds', 'N/A')}s")
-            print(f"Passos executados: {summary.get('steps_completed', 'N/A')}")
-            print(f"Último passo: {summary.get('last_step', 'N/A')}")
-        except:
-            print("Não foi possível obter o estado do pipeline")
-
-
-def check_data_columns():
-    """Verifica as colunas após cada etapa"""
-    print("\n=== Verificando Colunas em Cada Etapa ===\n")
+    # Mostrar resumo por categoria
+    for cat, features in categories.items():
+        if features:
+            print(f"\n{cat.upper()} ({len(features)} features perdidas):")
+            # Mostrar até 5 exemplos
+            for i, feat in enumerate(features[:5]):
+                print(f"   - {feat}")
+            if len(features) > 5:
+                print(f"   ... e mais {len(features)-5} features")
     
-    from smart_ads_pipeline.data_handlers import DataLoader, DataMatcher
+    # 5. Top features críticas perdidas
+    print("\n5. TOP 20 FEATURES CRÍTICAS DO MODELO ORIGINAL:")
+    print("-" * 60)
     
-    # 1. Carregar dados
-    print("1. Carregando dados...")
-    loader = DataLoader("/Users/ramonmoreira/desktop/smart_ads/data/raw_data")
-    data_dict = loader.load_training_data()
+    # As primeiras features no config geralmente são as mais importantes
+    top_20_original = original_config['feature_columns'][:20]
     
-    print(f"\nColunas em surveys: {list(data_dict['surveys'].columns)[:10]}...")
-    print(f"Tem 'e_mail'? {'e_mail' in data_dict['surveys'].columns}")
-    print(f"Tem 'E-MAIL'? {'E-MAIL' in data_dict['surveys'].columns}")
+    missing_critical = []
+    for i, feat in enumerate(top_20_original):
+        status = "✅" if feat in features_novo else "❌"
+        print(f"{i+1:2d}. {status} {feat}")
+        if feat not in features_novo:
+            missing_critical.append(feat)
     
-    # 2. Matching
-    print("\n2. Aplicando matching...")
-    matcher = DataMatcher()
-    try:
-        final_df = matcher.match_and_create_target(data_dict)
-        print(f"\nColunas após matching: {list(final_df.columns)}")
-        print(f"Tem 'e_mail'? {'e_mail' in final_df.columns}")
-        print(f"Shape: {final_df.shape}")
-    except Exception as e:
-        print(f"❌ Erro no matching: {e}")
-        
-        # Verificar se o erro é antes ou depois da filtragem
-        print("\nVerificando etapas do matching...")
-        surveys = data_dict['surveys']
-        buyers = data_dict['buyers']
-        
-        print(f"Surveys shape: {surveys.shape}")
-        print(f"Buyers shape: {buyers.shape}")
-        
-        # Verificar normalização
-        if 'e_mail' in surveys.columns:
-            print("✓ 'e_mail' existe em surveys")
-        elif 'E-MAIL' in surveys.columns:
-            print("⚠️ Coluna está como 'E-MAIL' (maiúscula)")
-        else:
-            print("❌ Nenhuma coluna de email encontrada em surveys")
-
+    # 6. Análise de padrões de nomenclatura
+    print("\n6. ANÁLISE DE PADRÕES DE NOMENCLATURA:")
+    print("-" * 60)
+    
+    # Verificar caracteres especiais nas features originais
+    special_chars = set()
+    for feat in features_original:
+        for char in feat:
+            if not (char.isalnum() or char == '_'):
+                special_chars.add(char)
+    
+    if special_chars:
+        print(f"Caracteres especiais encontrados nas features originais: {special_chars}")
+    
+    # Comparar um exemplo de nomenclatura
+    print("\nExemplo de diferenças de nomenclatura:")
+    
+    # Procurar features similares mas com nomes diferentes
+    for orig_feat in list(only_original)[:5]:
+        # Tentar encontrar correspondente no novo
+        base_name = orig_feat.lower().replace('é', 'e').replace('á', 'a').replace('í', 'i').replace('ñ', 'n')
+        possible_matches = [f for f in features_novo if base_name[:20] in f.lower()]
+        if possible_matches:
+            print(f"\nOriginal: {orig_feat}")
+            print(f"Possível match: {possible_matches[0]}")
+    
+    # 7. Salvar análise completa
+    analysis_path = '/tmp/feature_comparison_analysis.json'
+    analysis = {
+        'summary': {
+            'total_features_original': len(features_original),
+            'total_features_novo': len(features_novo),
+            'common_features': len(common),
+            'only_original': len(only_original),
+            'only_novo': len(only_novo),
+            'overlap_percentage': len(common)/len(features_original)*100
+        },
+        'missing_critical_features': missing_critical,
+        'features_only_original': list(only_original),
+        'features_only_novo': list(only_novo),
+        'category_analysis': {k: len(v) for k, v in categories.items() if v}
+    }
+    
+    with open(analysis_path, 'w') as f:
+        json.dump(analysis, f, indent=2)
+    
+    print(f"\n✅ Análise completa salva em: {analysis_path}")
+    
+    # 8. Recomendações
+    print("\n8. DIAGNÓSTICO E RECOMENDAÇÕES:")
+    print("=" * 60)
+    
+    overlap_pct = len(common)/len(features_original)*100
+    
+    if overlap_pct < 50:
+        print("🚨 PROBLEMA CRÍTICO: Menos de 50% de overlap nas features!")
+        print("   Isso explica completamente a diferença de performance.")
+        print("\n   CAUSA PROVÁVEL:")
+        print("   - Mudança na padronização de nomes (acentos, caracteres especiais)")
+        print("   - Diferente processo de feature engineering")
+        print("   - Perda de features críticas durante o processamento")
+    elif overlap_pct < 80:
+        print("⚠️  PROBLEMA SIGNIFICATIVO: Overlap de features abaixo de 80%")
+        print("   Isso pode explicar parte da diferença de performance.")
+    else:
+        print("✅ Overlap de features aceitável, procurar outras causas")
+    
+    print("\n   PRÓXIMOS PASSOS:")
+    print("   1. Revisar o processo de padronização de nomes")
+    print("   2. Garantir que TODAS as etapas de feature engineering foram aplicadas")
+    print("   3. Verificar se o FeatureSelector está usando os mesmos critérios")
+    
+    return analysis
 
 if __name__ == "__main__":
-    # Primeiro verificar as colunas
-    check_data_columns()
+    analysis = compare_model_features()
     
-    # Depois tentar executar com debug
-    print("\n" + "="*60 + "\n")
-    test_with_debug()
+    print("\n" + "="*60)
+    print("CONCLUSÃO DA ANÁLISE")
+    print("="*60)

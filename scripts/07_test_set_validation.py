@@ -41,8 +41,8 @@ def validate_on_test_set():
     print("=== VALIDAÇÃO NO CONJUNTO DE TESTE ===\n")
     
     # 1. Carregar modelo e limiares
-    model_path = os.path.join(project_root, "models/artifacts/lightgbm_direct_ranking.joblib")
-    thresholds_path = os.path.join(project_root, "models/artifacts/decile_thresholds.pkl")
+    model_path = os.path.join(project_root, "models/artifacts/direct_ranking/lightgbm_direct_ranking.joblib")
+    thresholds_path = os.path.join(project_root, "models/artifacts/direct_ranking/decile_thresholds.pkl")
     
     print(f"Carregando modelo...")
     model = joblib.load(model_path)
@@ -131,7 +131,7 @@ def validate_on_test_set():
     print(f"\nCOMPARAÇÃO TREINO vs TESTE:")
     
     # Carregar estatísticas do treino
-    json_path = os.path.join(project_root, "models/artifacts/decile_thresholds.json")
+    json_path = os.path.join(project_root, "models/artifacts/direct_ranking/decile_thresholds.json")
     import json
     with open(json_path, 'r') as f:
         train_stats = json.load(f)
