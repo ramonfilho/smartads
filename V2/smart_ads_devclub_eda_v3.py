@@ -3830,6 +3830,8 @@ def analisar_mudanca_perfil_leads_cutoff():
 # Executar análise
 analisar_mudanca_perfil_leads_cutoff()
 
+
+
 """## 16.3- Investigação
 Padrões temporais para dias da semana
 """
@@ -4122,7 +4124,11 @@ def normalizar_telefone_robusto(telefone):
         return None
 
     # Converter para string e lidar com notação científica
-    tel_str = str(telefone)
+    # CORREÇÃO: Se é float, converter diretamente para int para remover .0
+    if isinstance(telefone, float):
+        tel_str = str(int(telefone))
+    else:
+        tel_str = str(telefone)
 
     # Se está em notação científica, converter para número inteiro
     if 'e+' in tel_str.lower() or 'E+' in tel_str:
@@ -4209,6 +4215,19 @@ def criar_features_derivadas_completo():
         df['telefone_normalizado'] = df['Telefone'].apply(normalizar_telefone_robusto)
         df['telefone_valido'] = df['telefone_normalizado'].notna()
         df['telefone_comprimento'] = df['telefone_normalizado'].astype(str).str.len()
+
+        # ANÁLISE DE TELEFONES VÁLIDOS POR ARQUIVO DE ORIGEM
+        if 'arquivo_origem' in df.columns:
+            print(f"\n% de telefones válidos por arquivo de origem:")
+            telefone_por_arquivo = df.groupby('arquivo_origem')['telefone_valido'].agg(['count', 'sum', 'mean']).round(3)
+            telefone_por_arquivo['pct_valido'] = (telefone_por_arquivo['mean'] * 100).round(1)
+            telefone_por_arquivo = telefone_por_arquivo.sort_values('pct_valido', ascending=False)
+
+            for arquivo in telefone_por_arquivo.index:
+                total = telefone_por_arquivo.loc[arquivo, 'count']
+                validos = telefone_por_arquivo.loc[arquivo, 'sum']
+                pct = telefone_por_arquivo.loc[arquivo, 'pct_valido']
+                print(f"  {arquivo}: {validos:,}/{total:,} ({pct}%)")
 
         # 3. REMOVER COLUNAS DESNECESSÁRIAS
         colunas_remover = [
@@ -7604,4 +7623,471 @@ def registrar_features_e_modelo():
 
 # Executar registro completo
 resultado_registro = registrar_features_e_modelo()
+
+import pandas as pd
+  import numpy as np
+  import json
+  import joblib
+  from datetime import datetime
+  from sklearn.ensemble import RandomForestClassifier
+  from sklearn.metrics import roc_auc_score
+  import lightgbm as lgb
+  import sklearn
+
+  def registrar_features_e_modelos():
+      """Registra features e salva os 4 modelos para produção"""
+
+      print("REGISTRO DE FEATURES E MODELOS PARA PRODUÇÃO")
+      print("=" * 55)
+
+      # Definir os 4 modelos baseados nos resultados da validação
+      modelos_para_salvar = [
+          {
+              "nome": "v1_devclub_rf_sem_utm",
+              "dataset": dataset_v1_devclub_encoded,
+              "dados_originais": dataset_v1_devclub,
+              "remover_utm": True,
+              "usar_cutoff": False,
+              "algoritmo": "RandomForest"
+          },
+          {
+              "nome": "v1_devclub_lgbm_cutoff",
+              "dataset": dataset_v1_devclub_encoded,
+              "dados_originais": dataset_v1_devclub,
+              "remover_utm": False,
+              "usar_cutoff": True,
+              "algoritmo": "LightGBM"
+          },
+          {
+              "nome": "v2_devclub_rf_cutoff",
+              "dataset": dataset_v2_devclub_encoded,
+              "dados_originais": dataset_v2_devclub,
+              "remover_utm": False,
+              "usar_cutoff": True,
+              "algoritmo": "RandomForest"
+          },
+          {
+              "nome": "v2_todos_rf_cutoff",
+              "dataset": dataset_v2_todos_encoded,
+              "dados_originais": dataset_v2_todos,
+              "remover_utm": False,
+              "usar_cutoff": True,
+              "algoritmo": "RandomForest"
+          }
+      ]
+
+      resultados_salvos = []
+
+      for modelo_config in modelos_para_salvar:
+
+          print(f"\n{'='*60}")
+          print(f"PROCESSANDO: {modelo_config['nome'].upper()}")
+          print("=" * 60)
+
+          # 1. PREPARAR DADOS E TREINAR MODELO FINAL
+          print("\n1. PREPARANDO DADOS E TREINANDO MODELO FINAL")
+          print("-" * 50)
+
+          # Dataset final
+          dataset_final = modelo_config['dataset'].copy()
+
+          # Remover UTM se necessário
+          if modelo_config['remover_utm']:
+              colunas_utm = ['Source', 'Medium', 'Term']
+              colunas_remover = []
+              for col in dataset_final.columns:
+                  for utm in colunas_utm:
+                      if col.startswith(f'{utm}_') or col == utm:
+                          colunas_remover.append(col)
+              dataset_final = dataset_final.drop(columns=colunas_remover, errors='ignore')
+
+          # Split temporal
+          data_dt = pd.to_datetime(modelo_config['dados_originais']['Data'], errors='coerce')
+
+          # Aplicar cutoff se necessário
+          if modelo_config['usar_cutoff']:
+              data_cutoff = pd.to_datetime('2025-08-10')
+              mask_cutoff = data_dt <= data_cutoff
+              data_dt = data_dt[mask_cutoff]
+              dataset_final = dataset_final[mask_cutoff]
+
+          data_min = data_dt.min()
+          data_max = data_dt.max()
+          dias_totais = (data_max - data_min).days
+          dias_treino = int(dias_totais * 0.7)
+          data_corte = data_min + pd.Timedelta(days=dias_treino)
+
+          mask_treino = data_dt <= data_corte
+          mask_teste = data_dt > data_corte
+
+          X = dataset_final.drop(columns=['target'])
+          y = dataset_final['target']
+
+          # Limpar nomes das colunas
+          X_clean = X.copy()
+          X_clean.columns = X_clean.columns.str.replace('[^A-Za-z0-9_]', '_', regex=True)
+          X_clean.columns = X_clean.columns.str.replace('__+', '_', regex=True)
+          X_clean.columns = X_clean.columns.str.strip('_')
+
+          X_train = X_clean[mask_treino]
+          X_test = X_clean[mask_teste]
+          y_train = y[mask_treino]
+          y_test = y[mask_teste]
+
+          print(f"Dataset: {len(dataset_final):,} registros")
+          print(f"Features: {len(X_clean.columns)} colunas")
+          print(f"Período treino: {data_min.strftime('%Y-%m-%d')} a {data_corte.strftime('%Y-%m-%d')}")
+          print(f"Período teste: {data_corte.strftime('%Y-%m-%d')} a {data_max.strftime('%Y-%m-%d')}")
+          print(f"Split: {len(X_train):,} treino / {len(X_test):,} teste")
+
+          # Treinar modelo final baseado no algoritmo
+          if modelo_config['algoritmo'] == 'RandomForest':
+              modelo_final = RandomForestClassifier(
+                  n_estimators=100,
+                  max_depth=10,
+                  min_samples_split=2,
+                  min_samples_leaf=1,
+                  max_features='sqrt',
+                  class_weight='balanced',
+                  random_state=42,
+                  n_jobs=-1
+              )
+              modelo_final.fit(X_train, y_train)
+              y_prob = modelo_final.predict_proba(X_test)[:, 1]
+
+          elif modelo_config['algoritmo'] == 'LightGBM':
+              lgbm_params = {
+                  'objective': 'binary',
+                  'metric': 'binary_logloss',
+                  'boosting_type': 'gbdt',
+                  'num_leaves': 31,
+                  'learning_rate': 0.05,
+                  'feature_fraction': 0.8,
+                  'bagging_fraction': 0.8,
+                  'bagging_freq': 5,
+                  'min_child_samples': 100,
+                  'verbose': -1,
+                  'random_state': 42,
+                  'is_unbalance': True
+              }
+              train_data = lgb.Dataset(X_train, label=y_train)
+              modelo_final = lgb.train(lgbm_params, train_data, num_boost_round=500, callbacks=[lgb.log_evaluation(0)])
+              y_prob = modelo_final.predict(X_test, num_iteration=modelo_final.best_iteration)
+
+          auc_final = roc_auc_score(y_test, y_prob)
+          print(f"Modelo treinado - AUC: {auc_final:.3f}")
+
+          # 2. CRIAR REGISTRY DE FEATURES
+          print("\n2. CRIANDO FEATURE REGISTRY")
+          print("-" * 50)
+
+          # Categorizar features
+          features_utm = []
+          features_pesquisa = []
+          features_derivadas = []
+          features_outras = []
+
+          for col in X.columns:
+              if any(utm in col for utm in ['Source_', 'Medium_', 'Term_']):
+                  features_utm.append(col)
+              elif any(pesq in col for pesq in ['gênero', 'idade', 'faz', 'faixa', 'cartão', 'estudou', 'faculdade', 'evento']):
+                  features_pesquisa.append(col)
+              elif any(deriv in col for deriv in ['nome_', 'email_', 'telefone_', 'dia_semana']):
+                  features_derivadas.append(col)
+              else:
+                  features_outras.append(col)
+
+          # Mapeamento nome original -> nome limpo
+          mapeamento_nomes = {}
+          for orig, limpo in zip(X.columns, X_clean.columns):
+              mapeamento_nomes[orig] = limpo
+
+          # Feature importance
+          if modelo_config['algoritmo'] == 'RandomForest':
+              feature_importance = pd.DataFrame({
+                  'feature_original': X.columns,
+                  'feature_clean': X_clean.columns,
+                  'importance': modelo_final.feature_importances_
+              }).sort_values('importance', ascending=False)
+          else:
+              # Para LightGBM, usar importances do modelo
+              importances = modelo_final.feature_importance(importance_type='gain')
+              feature_importance = pd.DataFrame({
+                  'feature_original': X.columns,
+                  'feature_clean': X_clean.columns,
+                  'importance': importances
+              }).sort_values('importance', ascending=False)
+
+          # Criar registry completo
+          feature_registry = {
+              "metadata": {
+                  "created_at": datetime.now().isoformat(),
+                  "model_name": modelo_config['nome'],
+                  "dataset_name": f"dataset_{modelo_config['nome']}",
+                  "total_features": len(X.columns),
+                  "total_records": len(dataset_final),
+                  "target_column": "target",
+                  "model_type": modelo_config['algoritmo'],
+                  "sklearn_version": sklearn.__version__
+              },
+              "data_split": {
+                  "method": "temporal",
+                  "train_start": data_min.strftime('%Y-%m-%d'),
+                  "train_end": data_corte.strftime('%Y-%m-%d'),
+                  "test_start": data_corte.strftime('%Y-%m-%d'),
+                  "test_end": data_max.strftime('%Y-%m-%d'),
+                  "train_records": len(X_train),
+                  "test_records": len(X_test),
+                  "train_positive_rate": float(y_train.mean()),
+                  "test_positive_rate": float(y_test.mean())
+              },
+              "feature_categories": {
+                  "utm_features": {
+                      "count": len(features_utm),
+                      "description": "Features derived from UTM parameters (Source, Medium, Term)",
+                      "features": features_utm
+                  },
+                  "survey_features": {
+                      "count": len(features_pesquisa),
+                      "description": "Features from lead survey responses",
+                      "features": features_pesquisa
+                  },
+                  "derived_features": {
+                      "count": len(features_derivadas),
+                      "description": "Features engineered from raw data (name, email, phone, temporal)",
+                      "features": features_derivadas
+                  },
+                  "other_features": {
+                      "count": len(features_outras),
+                      "description": "Additional features not in main categories",
+                      "features": features_outras
+                  }
+              },
+              "feature_transformations": {
+                  "description": "Mapping from original feature names to model-ready names",
+                  "name_mapping": mapeamento_nomes,
+                  "encoding_applied": {
+                      "categorical_encoding": "one-hot",
+                      "ordinal_features": ["Qual a sua idade?", "Atualmente, qual a sua faixa salarial?"],
+                      "binary_features": ["dia_semana"]
+                  },
+                  "column_cleaning": {
+                      "regex_pattern": "[^A-Za-z0-9_] -> _",
+                      "multiple_underscores": "__ -> _",
+                      "strip_underscores": "leading/trailing removed"
+                  }
+              },
+              "feature_importance": {
+                  "description": f"Feature importance from trained {modelo_config['algoritmo']}",
+                  "top_10_features": [
+                      {
+                          "rank": i+1,
+                          "feature_original": row['feature_original'],
+                          "feature_clean": row['feature_clean'],
+                          "importance": float(row['importance'])
+                      }
+                      for i, (_, row) in enumerate(feature_importance.head(10).iterrows())
+                  ],
+                  "utm_total_importance": float(
+                      feature_importance[
+                          feature_importance['feature_original'].str.contains('Source_|Medium_|Term_', case=False, na=False)
+                      ]['importance'].sum()
+                  )
+              },
+              "expected_dtypes": {
+                  feature: str(dataset_final[feature].dtype) if feature in dataset_final.columns else "float64"
+                  for feature in X.columns
+              },
+              "validation_rules": {
+                  "required_features": list(X.columns),
+                  "optional_features": [],
+                  "total_expected_features": len(X.columns),
+                  "target_required": True,
+                  "missing_value_strategy": "model_will_fail_if_missing_features"
+              }
+          }
+
+          print(f"Feature registry criado:")
+          print(f"  - Features UTM: {len(features_utm)}")
+          print(f"  - Features Pesquisa: {len(features_pesquisa)}")
+          print(f"  - Features Derivadas: {len(features_derivadas)}")
+          print(f"  - Features Outras: {len(features_outras)}")
+          print(f"  - Mapeamentos de nomes: {len(mapeamento_nomes)}")
+          print(f"  - Feature importance calculada para {len(feature_importance)} features")
+
+          # 3. CRIAR METADADOS DO MODELO
+          print("\n3. CRIANDO METADADOS DO MODELO")
+          print("-" * 50)
+
+          # Calcular métricas detalhadas
+          df_analise = pd.DataFrame({
+              'probabilidade': y_prob,
+              'target_real': y_test.reset_index(drop=True)
+          })
+
+          df_analise['decil'] = pd.qcut(
+              df_analise['probabilidade'],
+              q=10,
+              labels=[f'D{i}' for i in range(1, 11)],
+              duplicates='drop'
+          )
+
+          analise_decis = df_analise.groupby('decil', observed=True).agg({
+              'target_real': ['count', 'sum', 'mean']
+          }).round(4)
+
+          analise_decis.columns = ['total_leads', 'conversoes', 'taxa_conversao']
+          analise_decis['pct_total_conversoes'] = (
+              analise_decis['conversoes'] / analise_decis['conversoes'].sum() * 100
+          ).round(2)
+
+          taxa_base = y_test.mean()
+          analise_decis['lift'] = (analise_decis['taxa_conversao'] / taxa_base).round(2)
+
+          top3_conversoes = analise_decis.tail(3)['pct_total_conversoes'].sum()
+          top5_conversoes = analise_decis.tail(5)['pct_total_conversoes'].sum()
+          lift_maximo = analise_decis['lift'].max()
+
+          # Monotonia
+          taxas = analise_decis['taxa_conversao'].values
+          crescimentos = sum(1 for i in range(1, len(taxas)) if taxas[i] >= taxas[i-1])
+          monotonia = (crescimentos / (len(taxas) - 1)) * 100 if len(taxas) > 1 else 100.0
+
+          # Metadados do modelo
+          model_metadata = {
+              "model_info": {
+                  "model_name": modelo_config['nome'],
+                  "model_type": modelo_config['algoritmo'],
+                  "library": "scikit-learn" if modelo_config['algoritmo'] == 'RandomForest' else "lightgbm",
+                  "library_version": sklearn.__version__,
+                  "trained_at": datetime.now().isoformat(),
+                  "training_duration_info": "Trained on full pipeline with temporal split"
+              },
+              "hyperparameters": {
+                  "n_estimators": 100,
+                  "max_depth": 10,
+                  "min_samples_split": 2,
+                  "min_samples_leaf": 1,
+                  "max_features": "sqrt",
+                  "class_weight": "balanced",
+                  "random_state": 42,
+                  "n_jobs": -1
+              } if modelo_config['algoritmo'] == 'RandomForest' else {
+                  "objective": "binary",
+                  "boosting_type": "gbdt",
+                  "num_leaves": 31,
+                  "learning_rate": 0.05,
+                  "feature_fraction": 0.8,
+                  "bagging_fraction": 0.8,
+                  "random_state": 42
+              },
+              "training_data": {
+                  "dataset_name": modelo_config['nome'],
+                  "total_records": len(dataset_final),
+                  "training_records": len(X_train),
+                  "test_records": len(X_test),
+                  "features_count": len(X_clean.columns),
+                  "target_distribution": {
+                      "training_positive_rate": float(y_train.mean()),
+                      "test_positive_rate": float(y_test.mean()),
+                      "training_positive_count": int(y_train.sum()),
+                      "test_positive_count": int(y_test.sum())
+                  }
+              },
+              "performance_metrics": {
+                  "auc": float(auc_final),
+                  "top3_decil_concentration": float(top3_conversoes),
+                  "top5_decil_concentration": float(top5_conversoes),
+                  "lift_maximum": float(lift_maximo),
+                  "monotonia_percentage": float(monotonia),
+                  "baseline_conversion_rate": float(taxa_base)
+              },
+              "decil_analysis": {
+                  f"decil_{i+1}": {
+                      "total_leads": int(row['total_leads']),
+                      "conversions": int(row['conversoes']),
+                      "conversion_rate": float(row['taxa_conversao']),
+                      "pct_total_conversions": float(row['pct_total_conversoes']),
+                      "lift": float(row['lift'])
+                  }
+                  for i, (_, row) in enumerate(analise_decis.iterrows())
+              },
+              "production_notes": {
+                  "use_case": "Lead scoring for budget allocation",
+                  "prediction_interpretation": "Higher probability = higher priority for budget allocation",
+                  "calibration_status": "Not calibrated - use for ranking only",
+                  "recommended_deployment": "Batch scoring with temporal validation",
+                  "monitoring_requirements": "Track AUC degradation and decil stability over time"
+              }
+          }
+
+          print(f"Metadados do modelo criados:")
+          print(f"  - AUC: {auc_final:.3f}")
+          print(f"  - Top 3 decis: {top3_conversoes:.1f}%")
+          print(f"  - Top 5 decis: {top5_conversoes:.1f}%")
+          print(f"  - Lift máximo: {lift_maximo:.1f}x")
+          print(f"  - Monotonia: {monotonia:.1f}%")
+          print(f"  - Análise de 10 decis incluída")
+
+          # 4. SALVAR ARQUIVOS
+          print("\n4. SALVANDO ARQUIVOS")
+          print("-" * 50)
+
+          # Salvar feature registry
+          registry_filename = f'feature_registry_{modelo_config["nome"]}.json'
+          with open(registry_filename, 'w', encoding='utf-8') as f:
+              json.dump(feature_registry, f, indent=2, ensure_ascii=False)
+          print(f"✓ {registry_filename} salvo")
+
+          # Salvar metadados do modelo
+          metadata_filename = f'model_metadata_{modelo_config["nome"]}.json'
+          with open(metadata_filename, 'w', encoding='utf-8') as f:
+              json.dump(model_metadata, f, indent=2, ensure_ascii=False)
+          print(f"✓ {metadata_filename} salvo")
+
+          # Salvar modelo
+          model_filename = f'modelo_lead_scoring_{modelo_config["nome"]}.pkl'
+          joblib.dump(modelo_final, model_filename)
+          print(f"✓ {model_filename} salvo")
+
+          # Salvar features ordenadas (para garantir ordem correta em produção)
+          features_filename = f'features_ordenadas_{modelo_config["nome"]}.json'
+          features_ordenadas = {
+              "feature_names": list(X_clean.columns),
+              "feature_count": len(X_clean.columns),
+              "created_at": datetime.now().isoformat()
+          }
+          with open(features_filename, 'w', encoding='utf-8') as f:
+              json.dump(features_ordenadas, f, indent=2, ensure_ascii=False)
+          print(f"✓ {features_filename} salvo")
+
+          resultados_salvos.append({
+              "modelo": modelo_config['nome'],
+              "auc": auc_final,
+              "arquivos": [registry_filename, metadata_filename, model_filename, features_filename]
+          })
+
+      # 5. RESUMO FINAL
+      print(f"\n{'='*60}")
+      print("RESUMO DOS MODELOS SALVOS")
+      print("=" * 60)
+
+      for resultado in resultados_salvos:
+          print(f"\n📁 {resultado['modelo']}:")
+          print(f"   AUC: {resultado['auc']:.3f}")
+          print(f"   Arquivos: {len(resultado['arquivos'])} salvos")
+
+      total_arquivos = sum(len(r['arquivos']) for r in resultados_salvos)
+      print(f"\nTotal: {len(resultados_salvos)} modelos = {total_arquivos} arquivos salvos")
+
+      print("\nPRÓXIMOS PASSOS:")
+      print("1. Copiar arquivos para ambiente de produção")
+      print("2. Implementar pipeline de scoring usando os 4 modelos")
+      print("3. Validar pipeline com features_ordenadas_*.json")
+      print("4. Implementar monitoramento baseado em model_metadata_*.json")
+
+      return resultados_salvos
+
+  # Executar registro completo dos 4 modelos
+  resultado_registro_multiplo = registrar_features_e_modelos()
 
