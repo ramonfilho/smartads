@@ -40,11 +40,10 @@
     "telefone_valido_False",
     "telefone_valido_True",
     "telefone_comprimento_4",
-    "telefone_comprimento_8",
     "telefone_comprimento_9",
     "telefone_comprimento_10",
     "telefone_comprimento_11"
   ],
-  "feature_count": 44,
-  "created_at": "2025-09-17T17:28:38.472437"
+  "feature_count": 43,
+  "created_at": "2025-09-18T17:03:45.212415"
 }

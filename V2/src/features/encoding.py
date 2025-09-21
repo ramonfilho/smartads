@@ -7,7 +7,7 @@ import pandas as pd
 from typing import Dict
 
 
-def apply_categorical_encoding(df_original: pd.DataFrame) -> pd.DataFrame:
+def apply_categorical_encoding(df_original: pd.DataFrame, versao: str = "v1") -> pd.DataFrame:
     """
     Aplica encoding em um dataset específico.
 
@@ -55,6 +55,14 @@ def apply_categorical_encoding(df_original: pd.DataFrame) -> pd.DataFrame:
     # Aplicar one-hot encoding
     df_encoded = pd.get_dummies(df, columns=variaveis_one_hot, prefix_sep='_', dtype=int)
 
+
+    # REMOVER DUPLICATAS DE COLUNAS (se houver) - CRÍTICO para evitar features extras
+    colunas_antes_duplicatas = len(df_encoded.columns)
+    df_encoded = df_encoded.loc[:, ~df_encoded.columns.duplicated()]
+    duplicatas_removidas = colunas_antes_duplicatas - len(df_encoded.columns)
+    if duplicatas_removidas > 0:
+        print(f"⚠️  Duplicatas removidas: {duplicatas_removidas} colunas")
+
     # Reportar criação de colunas
     colunas_criadas = len(df_encoded.columns) - len(df.columns)
     for var in variaveis_one_hot:
@@ -64,6 +72,34 @@ def apply_categorical_encoding(df_original: pd.DataFrame) -> pd.DataFrame:
     print(f"\nResultado:")
     print(f"  Colunas one-hot originais: {len(variaveis_one_hot)}")
     print(f"  Colunas binárias criadas: {colunas_criadas}")
+
+    # NORMALIZAÇÃO DOS NOMES DAS COLUNAS (linhas 4976-4978 do notebook)
+    # CRÍTICO: Esta etapa estava faltando e causava incompatibilidade com o modelo
+    print(f"\nNormalizando nomes das colunas...")
+
+    # Guardar nomes originais para comparação
+    colunas_antes = list(df_encoded.columns)
+
+    # Aplicar normalização EXATA do notebook
+    df_encoded.columns = df_encoded.columns.str.replace('[^A-Za-z0-9_]', '_', regex=True)
+    df_encoded.columns = df_encoded.columns.str.replace('__+', '_', regex=True)
+    df_encoded.columns = df_encoded.columns.str.strip('_')
+
+    # MAPEAMENTOS ESPECÍFICOS para manter consistência com arquivo de features
+    mapeamentos_especificos = {
+        'O_que_voc_faz_atualmente_Sou_autonomo': 'O_que_voc_faz_atualmente_Sou_aut_nomo',
+        'Tem_computador_notebook_SIM': 'Tem_computador_notebook_Sim',
+        'Medium_outros': 'Medium_Outros'  # Corrigir capitalização
+    }
+
+    # Aplicar mapeamentos
+    df_encoded.columns = [mapeamentos_especificos.get(col, col) for col in df_encoded.columns]
+
+    # Contar quantas colunas foram alteradas
+    colunas_alteradas = sum(1 for antes, depois in zip(colunas_antes, list(df_encoded.columns))
+                            if antes != depois)
+    print(f"  Colunas normalizadas: {colunas_alteradas}")
+
     print(f"  Total de colunas final: {len(df_encoded.columns)}")
 
     # Verificar tipos de dados finais

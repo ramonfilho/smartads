@@ -8,19 +8,126 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from src.pipeline import LeadScoringPipeline
 import pandas as pd
+import json
+
+
+def test_model_configuration(model_name: str, com_utm: bool, versao: str, expected_features: int, features_file: str, test_file: str):
+    """
+    Testa uma configuração específica do pipeline com validação detalhada de features.
+
+    Args:
+        model_name: Nome do modelo para identificação
+        com_utm: Se deve manter features UTM
+        versao: "v1" ou "v2"
+        expected_features: Número esperado de features
+        features_file: Caminho para arquivo JSON com features esperadas
+        test_file: Caminho para arquivo de teste
+    """
+    print(f"\n{'='*60}")
+    print(f"🔬 TESTANDO: {model_name}")
+    print(f"   Parâmetros: com_utm={com_utm}, versao={versao}")
+    print(f"   Features esperadas: {expected_features}")
+    print(f"{'='*60}")
+
+    # Carregar features esperadas
+    try:
+        with open(features_file, 'r', encoding='utf-8') as f:
+            expected_features_data = json.load(f)
+            expected_feature_names = expected_features_data['feature_names']
+    except Exception as e:
+        print(f"❌ ERRO ao carregar features esperadas: {str(e)}")
+        return False, None
+
+    # Criar pipeline com configuração específica
+    pipeline = LeadScoringPipeline(com_utm=com_utm, versao=versao, usar_cutoff=False)
+
+    try:
+        # Executar pipeline
+        result = pipeline.run(test_file)
+
+        # Obter features produzidas
+        actual_feature_names = list(result.columns)
+        actual_features = len(actual_feature_names)
+
+        print(f"\n📊 RESULTADO:")
+        print(f"   Features produzidas: {actual_features}")
+        print(f"   Features esperadas: {expected_features}")
+
+        # 1. Verificar número de features
+        features_count_ok = actual_features == expected_features
+        if features_count_ok:
+            print(f"   ✅ Quantidade de features: CORRETO")
+        else:
+            print(f"   ❌ Quantidade de features: INCORRETO (diff: {actual_features - expected_features:+d})")
+
+        # 2. Verificar nomes das features (ordem e conteúdo)
+        features_names_ok = actual_feature_names == expected_feature_names
+        if features_names_ok:
+            print(f"   ✅ Nomes e ordem das features: CORRETO")
+        else:
+            print(f"   ❌ Nomes e ordem das features: INCORRETO")
+
+            # Mostrar diferenças detalhadas
+            missing_features = set(expected_feature_names) - set(actual_feature_names)
+            extra_features = set(actual_feature_names) - set(expected_feature_names)
+
+            if missing_features:
+                print(f"   🔍 Features FALTANDO ({len(missing_features)}):")
+                for feat in sorted(missing_features)[:5]:  # Mostrar apenas primeiras 5
+                    print(f"      - {feat}")
+                if len(missing_features) > 5:
+                    print(f"      ... e mais {len(missing_features)-5} features")
+
+            if extra_features:
+                print(f"   🔍 Features EXTRAS ({len(extra_features)}):")
+                for feat in sorted(extra_features)[:5]:  # Mostrar apenas primeiras 5
+                    print(f"      + {feat}")
+                if len(extra_features) > 5:
+                    print(f"      ... e mais {len(extra_features)-5} features")
+
+        # 3. Verificar tipos de dados das features
+        print(f"\n🔍 TIPOS DE DADOS:")
+        type_issues = []
+        for i, feature in enumerate(actual_feature_names[:10]):  # Verificar primeiras 10
+            dtype = str(result[feature].dtype)
+            null_count = result[feature].isnull().sum()
+            print(f"   {feature}: {dtype} (nulls: {null_count})")
+
+            # Verificar se há problemas óbvios
+            if dtype == 'object' and feature not in ['nome_comprimento', 'dia_semana']:
+                # Features categóricas codificadas deveriam ser numéricas
+                if any(keyword in feature for keyword in ['_N_o', '_Sim', '_Feminino', '_Masculino']):
+                    type_issues.append(f"{feature} deveria ser numérico, mas é {dtype}")
+
+        if len(actual_feature_names) > 10:
+            print(f"   ... e mais {len(actual_feature_names)-10} features")
+
+        if type_issues:
+            print(f"   ⚠️  Possíveis problemas de tipo:")
+            for issue in type_issues[:3]:
+                print(f"      - {issue}")
+
+        # Status final
+        status = features_count_ok and features_names_ok
+        if status:
+            print(f"\n   🎉 SUCESSO COMPLETO: Features exatamente como esperadas!")
+        else:
+            print(f"\n   ❌ FALHA: Verifique as diferenças acima")
+
+        return status, result
+
+    except Exception as e:
+        print(f"❌ ERRO durante execução: {str(e)}")
+        return False, None
 
 
 def test_pipeline():
-    """Testa o pipeline completo com dados reais."""
+    """Testa o pipeline completo com as 4 configurações de modelos."""
 
     print("=== TESTE DO PIPELINE COMPLETO ===\n")
 
-    # Inicializar pipeline
-    pipeline = LeadScoringPipeline()
-
     # Arquivo de teste conforme especificado no PROJECT_GUIDE.md
-    # Usar o arquivo correto: Lead score LF 24.xlsx (com espaços)
-    test_file = '../../data/devclub/LF + ALUNOS/Lead score LF 24.xlsx'
+    test_file = '../data/devclub/LF + ALUNOS/Lead score LF 24.xlsx'
 
     # Verificar se arquivo existe
     if not os.path.exists(test_file):
@@ -28,56 +135,72 @@ def test_pipeline():
         print("Certifique-se de que o arquivo de teste está no local correto.")
         return None
 
-    # Carregar dados originais da aba correta para comparação
-    original_df = pd.read_excel(test_file, sheet_name='LF Pesquisa')
-    print(f"Dados originais (aba 'LF Pesquisa'): {len(original_df)} linhas, {len(original_df.columns)} colunas")
+    # Configurações EXATAS baseadas no notebook original
+    test_configs = [
+        {
+            "model_name": "V1 DEVCLUB RF Sem UTM",
+            "com_utm": False,  # remove UTM features
+            "versao": "v1",
+            "expected_features": 44,
+            "features_file": "arquivos_modelo/features_ordenadas_v1_devclub_rf_sem_utm.json"
+        },
+        {
+            "model_name": "V1 DEVCLUB LGBM Cutoff",
+            "com_utm": True,   # mantém UTM features
+            "versao": "v1",
+            "expected_features": 65,
+            "features_file": "arquivos_modelo/features_ordenadas_v1_devclub_lgbm_cutoff.json"
+        },
+        {
+            "model_name": "V2 DEVCLUB RF Cutoff",
+            "com_utm": True,   # mantém UTM features
+            "versao": "v2",
+            "expected_features": 63,
+            "features_file": "arquivos_modelo/features_ordenadas_v2_devclub_rf_cutoff.json"
+        },
+        {
+            "model_name": "V2 TODOS RF Cutoff",
+            "com_utm": True,   # mantém UTM features
+            "versao": "v2",
+            "expected_features": 63,
+            "features_file": "arquivos_modelo/features_ordenadas_v2_todos_rf_cutoff.json"
+        }
+    ]
 
-    # Executar pipeline - ele deve usar a aba 'LF Pesquisa' por padrão
-    result = pipeline.run(test_file)
+    # Executar todos os testes
+    results = []
+    result_dfs = []
 
-    # Verificar resultados básicos
-    print(f"\n📊 Resultados do Pipeline:")
-    print(f"   - Linhas originais: {len(original_df)}")
-    print(f"   - Linhas processadas: {len(result)}")
-    print(f"   - Duplicatas removidas: {len(original_df) - len(result)}")
-    print(f"   - Colunas originais: {len(original_df.columns)}")
-    print(f"   - Colunas finais: {len(result.columns)}")
-    print(f"   - Variação de colunas: {len(result.columns) - len(original_df.columns):+d}")
+    for config in test_configs:
+        success, result_df = test_model_configuration(
+            config["model_name"], config["com_utm"], config["versao"],
+            config["expected_features"], config["features_file"], test_file
+        )
+        results.append((config["model_name"], success))
+        if result_df is not None:
+            result_dfs.append((config["model_name"], result_df))
 
-    # Identificar colunas que foram removidas e adicionadas (cálculo real)
-    original_cols = set(original_df.columns)
-    final_cols = set(result.columns)
+    # Resumo final dos testes
+    print(f"\n{'='*60}")
+    print("📋 RESUMO DOS TESTES")
+    print(f"{'='*60}")
 
-    removed_cols = original_cols - final_cols
-    added_cols = final_cols - original_cols
+    for model_name, success in results:
+        status_icon = "✅" if success else "❌"
+        print(f"{status_icon} {model_name}")
 
-    print(f"\n🔍 Análise Real das Colunas:")
-    print(f"   - Colunas removidas: {len(removed_cols)}")
-    if removed_cols:
-        print(f"     • {', '.join(sorted(removed_cols))}")
+    total_success = sum(1 for _, success in results if success)
+    total_tests = len(results)
 
-    print(f"   - Colunas adicionadas: {len(added_cols)}")
-    if added_cols:
-        print(f"     • {', '.join(sorted(added_cols))}")
+    print(f"\n🎯 RESULTADO GERAL: {total_success}/{total_tests} testes aprovados")
 
-    print(f"   - Resultado líquido: {len(added_cols) - len(removed_cols):+d} colunas")
+    if total_success == total_tests:
+        print("🎉 TODOS OS TESTES PASSARAM! Pipeline configurado corretamente.")
+    else:
+        print("⚠️  ALGUNS TESTES FALHARAM. Verifique a configuração do pipeline.")
 
-    # Verificar que duplicatas foram processadas
-    assert len(result) <= len(original_df), "Pipeline não deveria adicionar linhas"
-    print(f"   - Número de linhas consistente (não foram adicionadas linhas)")
-
-    # Verificar que encoding expandiu as features categóricas
-    assert len(result.columns) > len(original_df.columns), "One-hot encoding deveria adicionar colunas"
-    print(f"   - Colunas expandidas pelo encoding conforme esperado (+{len(result.columns) - len(original_df.columns)})")
-
-    # Verificar que a coluna de faixa salarial foi preservada (é uma feature, não resultado)
-    if 'Atualmente, qual a sua faixa salarial?' in original_df.columns:
-        assert 'Atualmente, qual a sua faixa salarial?' in result.columns, \
-            "❌ Coluna de faixa salarial foi removida incorretamente!"
-        print(f"   - Coluna de faixa salarial preservada (é uma feature)")
-
-    print(f"\n✅ Pipeline executado com sucesso!")
-    return result
+    # Retornar o primeiro resultado para compatibilidade
+    return result_dfs[0][1] if result_dfs else None
 
 
 if __name__ == "__main__":

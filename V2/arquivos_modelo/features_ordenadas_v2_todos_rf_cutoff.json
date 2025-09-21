@@ -35,9 +35,6 @@
     "Medium_Lookalike_2_Alunos_Interesse_Ci_ncia_da_Computa_o",
     "Medium_Lookalike_2_Alunos_Interesse_Linguagem_de_Programa_o",
     "Medium_Lookalike_2_Cadastrados_DEV_2_0_Interesses",
-    "Medium_Lookalike_3_Alunos_Interesses",
-    "Medium_Lookalike_3_Cadastrados_DEV_2_0",
-    "Medium_Lookalike_Envolvimento_Salvou",
     "Medium_Outros",
     "Medium_dgen",
     "Term_facebook",
@@ -59,11 +56,10 @@
     "telefone_valido_False",
     "telefone_valido_True",
     "telefone_comprimento_4",
-    "telefone_comprimento_8",
     "telefone_comprimento_9",
     "telefone_comprimento_10",
     "telefone_comprimento_11"
   ],
-  "feature_count": 63,
-  "created_at": "2025-09-17T17:28:50.911611"
+  "feature_count": 59,
+  "created_at": "2025-09-18T17:04:01.832211"
 }

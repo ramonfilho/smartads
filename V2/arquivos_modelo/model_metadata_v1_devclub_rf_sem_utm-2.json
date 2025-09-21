@@ -1,0 +1,120 @@
+{
+  "model_info": {
+    "model_name": "v1_devclub_rf_sem_utm",
+    "model_type": "RandomForest",
+    "library": "scikit-learn",
+    "library_version": "1.6.1",
+    "trained_at": "2025-09-18T17:03:44.995220",
+    "training_duration_info": "Trained on full pipeline with temporal split"
+  },
+  "hyperparameters": {
+    "n_estimators": 100,
+    "max_depth": 10,
+    "min_samples_split": 2,
+    "min_samples_leaf": 1,
+    "max_features": "sqrt",
+    "class_weight": "balanced",
+    "random_state": 42,
+    "n_jobs": -1
+  },
+  "training_data": {
+    "dataset_name": "v1_devclub_rf_sem_utm",
+    "total_records": 48156,
+    "training_records": 34604,
+    "test_records": 13552,
+    "features_count": 43,
+    "target_distribution": {
+      "training_positive_rate": 0.016183100219627787,
+      "test_positive_rate": 0.00878099173553719,
+      "training_positive_count": 560,
+      "test_positive_count": 119
+    }
+  },
+  "performance_metrics": {
+    "auc": 0.6214164665345033,
+    "top3_decil_concentration": 44.53,
+    "top5_decil_concentration": 66.37,
+    "lift_maximum": 2.44,
+    "monotonia_percentage": 55.55555555555556,
+    "baseline_conversion_rate": 0.00878099173553719
+  },
+  "decil_analysis": {
+    "decil_1": {
+      "total_leads": 1356,
+      "conversions": 5,
+      "conversion_rate": 0.0037,
+      "pct_total_conversions": 4.2,
+      "lift": 0.42
+    },
+    "decil_2": {
+      "total_leads": 1355,
+      "conversions": 1,
+      "conversion_rate": 0.0007,
+      "pct_total_conversions": 0.84,
+      "lift": 0.08
+    },
+    "decil_3": {
+      "total_leads": 1355,
+      "conversions": 15,
+      "conversion_rate": 0.0111,
+      "pct_total_conversions": 12.61,
+      "lift": 1.26
+    },
+    "decil_4": {
+      "total_leads": 1355,
+      "conversions": 9,
+      "conversion_rate": 0.0066,
+      "pct_total_conversions": 7.56,
+      "lift": 0.75
+    },
+    "decil_5": {
+      "total_leads": 1355,
+      "conversions": 10,
+      "conversion_rate": 0.0074,
+      "pct_total_conversions": 8.4,
+      "lift": 0.84
+    },
+    "decil_6": {
+      "total_leads": 1355,
+      "conversions": 14,
+      "conversion_rate": 0.0103,
+      "pct_total_conversions": 11.76,
+      "lift": 1.17
+    },
+    "decil_7": {
+      "total_leads": 1355,
+      "conversions": 12,
+      "conversion_rate": 0.0089,
+      "pct_total_conversions": 10.08,
+      "lift": 1.01
+    },
+    "decil_8": {
+      "total_leads": 1355,
+      "conversions": 14,
+      "conversion_rate": 0.0103,
+      "pct_total_conversions": 11.76,
+      "lift": 1.17
+    },
+    "decil_9": {
+      "total_leads": 1355,
+      "conversions": 10,
+      "conversion_rate": 0.0074,
+      "pct_total_conversions": 8.4,
+      "lift": 0.84
+    },
+    "decil_10": {
+      "total_leads": 1356,
+      "conversions": 29,
+      "conversion_rate": 0.0214,
+      "pct_total_conversions": 24.37,
+      "lift": 2.44
+    }
+  },
+  "production_notes": {
+    "use_case": "Lead scoring for budget allocation",
+    "prediction_interpretation": "Higher probability = higher priority for budget allocation",
+    "calibration_status": "Not calibrated - use for ranking only",
+    "recommended_deployment": "Batch scoring with temporal validation",
+    "monitoring_requirements": "Track AUC degradation and decil stability over time"
+  }
+}
