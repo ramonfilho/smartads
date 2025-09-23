@@ -11,7 +11,7 @@ from .data.utm_unification import unify_utm_columns
 from .data.medium_unification import unify_medium_columns
 from .features.engineering import create_derived_features
 from .features.encoding import apply_categorical_encoding
-from .features.utm_removal import remove_utm_features
+from .model.prediction import LeadScoringPredictor
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -25,19 +25,20 @@ class LeadScoringPipeline:
     Reproduz EXATAMENTE a lógica do notebook com parâmetros configuráveis.
     """
 
-    def __init__(self, com_utm: bool = True, versao: str = "v1", usar_cutoff: bool = False):
+    def __init__(self, model_name: str = "v1_devclub_rf_temporal"):
         """
-        Inicializa o pipeline com parâmetros de configuração.
+        Inicializa o pipeline com configuração fixa.
 
         Args:
-            com_utm: Se True, mantém features UTM. Se False, remove após encoding
-            versao: "v1" ou "v2" (v2 tem algumas features a menos)
-            usar_cutoff: Se True, aplica cutoff temporal (apenas para referência)
+            model_name: Nome do modelo a usar para predições (default: v1_devclub_rf_temporal)
+
+        Configuração:
+        - Mantém features UTM (com_utm=True)
+        - Dataset V1 (versao="v1")
+        - Sem cutoff temporal
         """
         self.data = None
-        self.com_utm = com_utm
-        self.versao = versao
-        self.usar_cutoff = usar_cutoff
+        self.predictor = LeadScoringPredictor(model_name)
 
     def load_data(self, filepath: str) -> pd.DataFrame:
         """
@@ -129,7 +130,6 @@ class LeadScoringPipeline:
 
         # 7. Renomear colunas longas (usando componente importado)
         logger.info("🔄 [7/10] Renomeando colunas longas...")
-        cols_before_rename = len(self.data.columns)
         self.data = rename_long_column_names(self.data)
 
         # Número de colunas deveria permanecer o mesmo (renomeação não adiciona/remove)
@@ -147,18 +147,6 @@ class LeadScoringPipeline:
 
         self.data = create_derived_features(self.data)
 
-        # DIFERENÇAS V1 vs V2: V2 remove 3 features específicas (conforme notebook original)
-        if self.versao == "v2":
-            features_v2_remover = [
-                'Já estudou programação?',
-                'Você já fez/faz/pretende fazer faculdade?',
-                'Tem computador/notebook?'
-                # NOTA: 'Qual o seu nível em programação?' já foi removido no pré-processamento
-            ]
-            cols_before_v2_removal = len(self.data.columns)
-            self.data = self.data.drop(columns=features_v2_remover, errors='ignore')
-            cols_removed_v2 = cols_before_v2_removal - len(self.data.columns)
-            logger.info(f"   ➤ V2: Features específicas removidas: {cols_removed_v2}")
 
         cols_added = len(self.data.columns) - cols_before_fe
         logger.info(f"   ➤ Features criadas/processadas: {cols_added} novas colunas")
@@ -168,23 +156,14 @@ class LeadScoringPipeline:
         logger.info("🔄 [9/10] Aplicando encoding categórico...")
         cols_before_encoding = len(self.data.columns)
 
-        self.data = apply_categorical_encoding(self.data, versao=self.versao)
+        self.data = apply_categorical_encoding(self.data, versao="v1")
 
         encoding_cols_added = len(self.data.columns) - cols_before_encoding
         logger.info(f"   ➤ Colunas adicionadas pelo encoding: {encoding_cols_added}")
         logger.info(f"   ➤ Estado atual: {len(self.data)} linhas, {len(self.data.columns)} colunas")
 
-        # 10. Remoção condicional de UTM (baseada no parâmetro com_utm)
-        if not self.com_utm:
-            logger.info("🔄 [10/10] Removendo features UTM...")
-            cols_before_utm = len(self.data.columns)
-
-            self.data = remove_utm_features(self.data)
-
-            utm_cols_removed = cols_before_utm - len(self.data.columns)
-            logger.info(f"   ➤ Estado atual: {len(self.data)} linhas, {len(self.data.columns)} colunas")
-        else:
-            logger.info("🔄 [10/10] Mantendo features UTM")
+        # 10. Manter features UTM (configuração fixa)
+        logger.info("🔄 [10/10] Mantendo features UTM")
 
         # Resumo final
         final_rows = len(self.data)
@@ -192,22 +171,43 @@ class LeadScoringPipeline:
         total_rows_removed = initial_rows - final_rows
         net_cols_change = final_cols - initial_cols
 
-        config_info = f" (com_utm={self.com_utm}, versao={self.versao})"
-        logger.info(f"📊 RESUMO FINAL{config_info}:")
+        logger.info(f"📊 RESUMO FINAL (v1, com UTM):")
         logger.info(f"   ➤ Linhas: {initial_rows}→{final_rows} (removidas: {total_rows_removed})")
         logger.info(f"   ➤ Colunas: {initial_cols}→{final_cols} (variação: {net_cols_change:+d})")
 
         return self.data
 
-    def run(self, filepath: str) -> pd.DataFrame:
+    def predict(self, df: pd.DataFrame = None) -> pd.DataFrame:
+        """
+        Realiza predições no DataFrame processado.
+
+        Args:
+            df: DataFrame a ser usado (se None, usa self.data)
+
+        Returns:
+            DataFrame com scores de predição
+        """
+        if df is None:
+            if self.data is None:
+                raise ValueError("Nenhum dado disponível para predição. Execute preprocess() primeiro.")
+            df = self.data
+
+        logger.info("=== Iniciando Predições ===")
+        result = self.predictor.predict(df)
+        logger.info("=== Predições Concluídas ===")
+
+        return result
+
+    def run(self, filepath: str, with_predictions: bool = False) -> pd.DataFrame:
         """
         Executa o pipeline completo.
 
         Args:
             filepath: Caminho para o arquivo de entrada
+            with_predictions: Se True, inclui predições no resultado
 
         Returns:
-            DataFrame processado
+            DataFrame processado (com predições se solicitado)
         """
         logger.info("=== Iniciando Pipeline de Lead Scoring ===")
 
@@ -216,6 +216,10 @@ class LeadScoringPipeline:
 
         # Pré-processar
         self.preprocess()
+
+        # Fazer predições se solicitado
+        if with_predictions:
+            self.data = self.predict()
 
         logger.info("=== Pipeline concluído ===")
         return self.data

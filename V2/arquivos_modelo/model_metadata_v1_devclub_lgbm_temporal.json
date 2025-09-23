@@ -1,0 +1,120 @@
+{
+  "model_info": {
+    "model_name": "v1_devclub_lgbm_temporal",
+    "model_type": "LightGBM",
+    "split_type": "temporal",
+    "library": "lightgbm",
+    "library_version": "1.6.1",
+    "trained_at": "2025-09-23T14:04:05.387969",
+    "training_duration_info": "Trained with temporal split"
+  },
+  "hyperparameters": {
+    "objective": "binary",
+    "boosting_type": "gbdt",
+    "num_leaves": 31,
+    "learning_rate": 0.05,
+    "feature_fraction": 0.8,
+    "bagging_fraction": 0.8,
+    "random_state": 42
+  },
+  "training_data": {
+    "dataset_name": "v1_devclub_lgbm_temporal",
+    "total_records": 45982,
+    "training_records": 34246,
+    "test_records": 11736,
+    "features_count": 57,
+    "target_distribution": {
+      "training_positive_rate": 0.01626467324651054,
+      "test_positive_rate": 0.01031015678254942,
+      "training_positive_count": 557,
+      "test_positive_count": 121
+    }
+  },
+  "performance_metrics": {
+    "auc": 0.6300608716998182,
+    "top3_decil_concentration": 45.45,
+    "top5_decil_concentration": 65.28,
+    "lift_maximum": 2.07,
+    "monotonia_percentage": 77.77777777777779,
+    "baseline_conversion_rate": 0.01031015678254942
+  },
+  "decil_analysis": {
+    "decil_1": {
+      "total_leads": 1174,
+      "conversions": 3,
+      "conversion_rate": 0.0026,
+      "pct_total_conversions": 2.48,
+      "lift": 0.25
+    },
+    "decil_2": {
+      "total_leads": 1175,
+      "conversions": 7,
+      "conversion_rate": 0.006,
+      "pct_total_conversions": 5.79,
+      "lift": 0.58
+    },
+    "decil_3": {
+      "total_leads": 1172,
+      "conversions": 7,
+      "conversion_rate": 0.006,
+      "pct_total_conversions": 5.79,
+      "lift": 0.58
+    },
+    "decil_4": {
+      "total_leads": 1174,
+      "conversions": 8,
+      "conversion_rate": 0.0068,
+      "pct_total_conversions": 6.61,
+      "lift": 0.66
+    },
+    "decil_5": {
+      "total_leads": 1173,
+      "conversions": 17,
+      "conversion_rate": 0.0145,
+      "pct_total_conversions": 14.05,
+      "lift": 1.41
+    },
+    "decil_6": {
+      "total_leads": 1174,
+      "conversions": 13,
+      "conversion_rate": 0.0111,
+      "pct_total_conversions": 10.74,
+      "lift": 1.08
+    },
+    "decil_7": {
+      "total_leads": 1173,
+      "conversions": 11,
+      "conversion_rate": 0.0094,
+      "pct_total_conversions": 9.09,
+      "lift": 0.91
+    },
+    "decil_8": {
+      "total_leads": 1174,
+      "conversions": 13,
+      "conversion_rate": 0.0111,
+      "pct_total_conversions": 10.74,
+      "lift": 1.08
+    },
+    "decil_9": {
+      "total_leads": 1173,
+      "conversions": 17,
+      "conversion_rate": 0.0145,
+      "pct_total_conversions": 14.05,
+      "lift": 1.41
+    },
+    "decil_10": {
+      "total_leads": 1174,
+      "conversions": 25,
+      "conversion_rate": 0.0213,
+      "pct_total_conversions": 20.66,
+      "lift": 2.07
+    }
+  },
+  "production_notes": {
+    "use_case": "Lead scoring for budget allocation",
+    "prediction_interpretation": "Higher probability = higher priority for budget allocation",
+    "calibration_status": "Not calibrated - use for ranking only",
+    "recommended_deployment": "Batch scoring with real-world validation on LF25",
+    "monitoring_requirements": "Compare performance on LF25 to select best model for production"
+  }
+}

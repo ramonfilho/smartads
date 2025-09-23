@@ -1,0 +1,1 @@
+"""Módulo de modelo para lead scoring."""

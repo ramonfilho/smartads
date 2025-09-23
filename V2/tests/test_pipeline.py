@@ -38,8 +38,8 @@ def test_model_configuration(model_name: str, com_utm: bool, versao: str, expect
         print(f"❌ ERRO ao carregar features esperadas: {str(e)}")
         return False, None
 
-    # Criar pipeline com configuração específica
-    pipeline = LeadScoringPipeline(com_utm=com_utm, versao=versao, usar_cutoff=False)
+    # Criar pipeline com configuração fixa (V1 com UTM)
+    pipeline = LeadScoringPipeline()
 
     try:
         # Executar pipeline
@@ -71,19 +71,52 @@ def test_model_configuration(model_name: str, com_utm: bool, versao: str, expect
             missing_features = set(expected_feature_names) - set(actual_feature_names)
             extra_features = set(actual_feature_names) - set(expected_feature_names)
 
+            # DEBUG: Confirmar que os conjuntos são idênticos
+            conjuntos_identicos = missing_features == set() and extra_features == set()
+            print(f"   🔍 CONJUNTOS DE FEATURES IDÊNTICOS: {'✅ SIM' if conjuntos_identicos else '❌ NÃO'}")
+
             if missing_features:
                 print(f"   🔍 Features FALTANDO ({len(missing_features)}):")
-                for feat in sorted(missing_features)[:5]:  # Mostrar apenas primeiras 5
+                for feat in sorted(missing_features)[:10]:  # Mostrar primeiras 10
                     print(f"      - {feat}")
-                if len(missing_features) > 5:
-                    print(f"      ... e mais {len(missing_features)-5} features")
+                if len(missing_features) > 10:
+                    print(f"      ... e mais {len(missing_features)-10} features")
 
             if extra_features:
                 print(f"   🔍 Features EXTRAS ({len(extra_features)}):")
-                for feat in sorted(extra_features)[:5]:  # Mostrar apenas primeiras 5
+                for feat in sorted(extra_features)[:10]:  # Mostrar primeiras 10
                     print(f"      + {feat}")
-                if len(extra_features) > 5:
-                    print(f"      ... e mais {len(extra_features)-5} features")
+                if len(extra_features) > 10:
+                    print(f"      ... e mais {len(extra_features)-10} features")
+
+            # Mostrar comparação ordenada se mesmo conjunto mas ordem diferente
+            if not missing_features and not extra_features:
+                print(f"   🔍 MESMAS FEATURES, ORDEM DIFERENTE:")
+                print(f"   Verificando todas as {len(actual_feature_names)} features:")
+
+                # Encontrar primeira divergência
+                primeira_divergencia = None
+                for i in range(len(actual_feature_names)):
+                    esperada = expected_feature_names[i] if i < len(expected_feature_names) else "N/A"
+                    atual = actual_feature_names[i] if i < len(actual_feature_names) else "N/A"
+                    if atual != esperada:
+                        primeira_divergencia = i
+                        break
+
+                if primeira_divergencia is None:
+                    print(f"      ✅ TODAS AS FEATURES ESTÃO EM ORDEM CORRETA!")
+                else:
+                    print(f"      ❌ Primeira divergência na posição {primeira_divergencia+1}")
+                    print(f"      Comparação ao redor da divergência:")
+                    start = max(0, primeira_divergencia - 2)
+                    end = min(len(actual_feature_names), primeira_divergencia + 8)
+
+                    for i in range(start, end):
+                        esperada = expected_feature_names[i] if i < len(expected_feature_names) else "N/A"
+                        atual = actual_feature_names[i] if i < len(actual_feature_names) else "N/A"
+                        match = "✓" if atual == esperada else "✗"
+                        destaque = " <<<" if i == primeira_divergencia else ""
+                        print(f"      {i+1:2d}. {match} {atual[:50]:<52} | {esperada[:50]}{destaque}")
 
         # 3. Verificar tipos de dados das features
         print(f"\n🔍 TIPOS DE DADOS:")
@@ -127,7 +160,7 @@ def test_pipeline():
     print("=== TESTE DO PIPELINE COMPLETO ===\n")
 
     # Arquivo de teste conforme especificado no PROJECT_GUIDE.md
-    test_file = '../data/devclub/LF + ALUNOS/Lead score LF 24.xlsx'
+    test_file = '../Lead score LF 24.xlsx'
 
     # Verificar se arquivo existe
     if not os.path.exists(test_file):
@@ -135,35 +168,39 @@ def test_pipeline():
         print("Certifique-se de que o arquivo de teste está no local correto.")
         return None
 
-    # Configurações EXATAS baseadas no notebook original
+    # Listar arquivos de modelos disponíveis
+    import glob
+    model_files = glob.glob("../arquivos_modelo/features_ordenadas_*.json")
+
+    if not model_files:
+        print("❌ Nenhum arquivo de modelo encontrado em ../arquivos_modelo/")
+        return None
+
+    print(f"📁 Arquivos de modelo encontrados: {len(model_files)}")
+    for i, file in enumerate(model_files, 1):
+        filename = file.split('/')[-1]
+        print(f"  {i}. {filename}")
+
+    # Usar o primeiro arquivo encontrado
+    features_file = model_files[0]
+    print(f"\n🎯 Usando arquivo: {features_file.split('/')[-1]}")
+
+    # Carregar features esperadas
+    try:
+        with open(features_file, 'r', encoding='utf-8') as f:
+            expected_features_data = json.load(f)
+            expected_feature_names = expected_features_data['feature_names']
+            expected_features = len(expected_feature_names)
+    except Exception as e:
+        print(f"❌ ERRO ao carregar features esperadas: {str(e)}")
+        return None
+
+    # Configuração única - V1 com UTM
     test_configs = [
         {
-            "model_name": "V1 DEVCLUB RF Sem UTM",
-            "com_utm": False,  # remove UTM features
-            "versao": "v1",
-            "expected_features": 44,
-            "features_file": "arquivos_modelo/features_ordenadas_v1_devclub_rf_sem_utm.json"
-        },
-        {
-            "model_name": "V1 DEVCLUB LGBM Cutoff",
-            "com_utm": True,   # mantém UTM features
-            "versao": "v1",
-            "expected_features": 65,
-            "features_file": "arquivos_modelo/features_ordenadas_v1_devclub_lgbm_cutoff.json"
-        },
-        {
-            "model_name": "V2 DEVCLUB RF Cutoff",
-            "com_utm": True,   # mantém UTM features
-            "versao": "v2",
-            "expected_features": 63,
-            "features_file": "arquivos_modelo/features_ordenadas_v2_devclub_rf_cutoff.json"
-        },
-        {
-            "model_name": "V2 TODOS RF Cutoff",
-            "com_utm": True,   # mantém UTM features
-            "versao": "v2",
-            "expected_features": 63,
-            "features_file": "arquivos_modelo/features_ordenadas_v2_todos_rf_cutoff.json"
+            "model_name": "V1 DEVCLUB com UTM",
+            "expected_features": expected_features,
+            "features_file": features_file
         }
     ]
 
@@ -173,7 +210,7 @@ def test_pipeline():
 
     for config in test_configs:
         success, result_df = test_model_configuration(
-            config["model_name"], config["com_utm"], config["versao"],
+            config["model_name"], True, "v1",
             config["expected_features"], config["features_file"], test_file
         )
         results.append((config["model_name"], success))
