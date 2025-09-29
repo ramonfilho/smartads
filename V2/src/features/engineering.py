@@ -6,6 +6,9 @@ Mantém a lógica EXATA do notebook original para garantir reprodutibilidade.
 import pandas as pd
 import re
 from typing import Dict, List, Tuple
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def normalizar_telefone_robusto(telefone):
@@ -104,17 +107,17 @@ def create_derived_features(df: pd.DataFrame) -> pd.DataFrame:
         DataFrame com features derivadas
     """
     # Print do cabeçalho para comparação com notebook
-    print("FEATURE ENGINEERING COMPLETO - 4 DATASETS")
-    print("=" * 45)
+    logger.info("FEATURE ENGINEERING COMPLETO - 4 DATASETS")
+    logger.info("=" * 45)
 
     df_fe = df.copy()
 
-    print(f"\nProcessando DATASET V1 DEVCLUB...")
-    print(f"Registros: {len(df_fe):,}")
-    print(f"Colunas antes: {len(df_fe.columns)}")
-    print(f"Nomes das colunas antes:")
+    logger.info(f"\nProcessando DATASET V1 DEVCLUB...")
+    logger.info(f"Registros: {len(df_fe):,}")
+    logger.info(f"Colunas antes: {len(df_fe.columns)}")
+    logger.info(f"Nomes das colunas antes:")
     for i, col in enumerate(df_fe.columns, 1):
-        print(f"  {i:2d}. {col}")
+        logger.info(f"  {i:2d}. {col}")
 
     # 1. FEATURES TEMPORAIS
     if 'Data' in df_fe.columns:
@@ -140,11 +143,11 @@ def create_derived_features(df: pd.DataFrame) -> pd.DataFrame:
         df_fe['telefone_comprimento'] = df_fe['telefone_normalizado'].astype(str).str.len()
 
         # ANÁLISE DE TELEFONES VÁLIDOS POR ARQUIVO DE ORIGEM (simulação para ambiente de produção)
-        print(f"\n% de telefones válidos por arquivo de origem:")
+        logger.info(f"\n% de telefones válidos por arquivo de origem:")
         total_registros = len(df_fe)
         telefones_validos = df_fe['telefone_valido'].sum()
         pct_valido = (telefones_validos / total_registros * 100) if total_registros > 0 else 0
-        print(f"  Lead score LF 24.xlsx: {telefones_validos:,}/{total_registros:,} ({pct_valido:.1f}%)")
+        logger.info(f"  Lead score LF 24.xlsx: {telefones_validos:,}/{total_registros:,} ({pct_valido:.1f}%)")
 
     # 3. REMOVER COLUNAS DESNECESSÁRIAS
     colunas_remover = [
@@ -157,14 +160,14 @@ def create_derived_features(df: pd.DataFrame) -> pd.DataFrame:
 
     if colunas_existentes:
         df_fe = df_fe.drop(columns=colunas_existentes)
-        print(f"Colunas removidas: {len(colunas_existentes)}")
+        logger.info(f"Colunas removidas: {len(colunas_existentes)}")
         for col in colunas_existentes:
-            print(f"  - {col}")
+            logger.info(f"  - {col}")
 
-    print(f"Colunas depois: {len(df_fe.columns)}")
-    print(f"Nomes das colunas depois:")
+    logger.info(f"Colunas depois: {len(df_fe.columns)}")
+    logger.info(f"Nomes das colunas depois:")
     for i, col in enumerate(df_fe.columns, 1):
-        print(f"  {i:2d}. {col}")
+        logger.info(f"  {i:2d}. {col}")
 
     # Mostrar features criadas
     features_criadas = []
@@ -174,35 +177,35 @@ def create_derived_features(df: pd.DataFrame) -> pd.DataFrame:
             features_criadas.append(col)
 
     # Estatísticas das features criadas
-    print(f"\nEstatísticas das features criadas:")
+    logger.info(f"\nEstatísticas das features criadas:")
     if 'nome_valido' in df_fe.columns:
         nome_valido_count = df_fe['nome_valido'].sum()
         nome_valido_pct = df_fe['nome_valido'].mean() * 100
-        print(f"Nome válido: {nome_valido_count:,} ({nome_valido_pct:.1f}%)")
+        logger.info(f"Nome válido: {nome_valido_count:,} ({nome_valido_pct:.1f}%)")
 
     if 'nome_tem_sobrenome' in df_fe.columns:
         sobrenome_count = df_fe['nome_tem_sobrenome'].sum()
         sobrenome_pct = df_fe['nome_tem_sobrenome'].mean() * 100
-        print(f"Nome com sobrenome: {sobrenome_count:,} ({sobrenome_pct:.1f}%)")
+        logger.info(f"Nome com sobrenome: {sobrenome_count:,} ({sobrenome_pct:.1f}%)")
 
     if 'email_valido' in df_fe.columns:
         email_count = df_fe['email_valido'].sum()
         email_pct = df_fe['email_valido'].mean() * 100
-        print(f"Email válido: {email_count:,} ({email_pct:.1f}%)")
+        logger.info(f"Email válido: {email_count:,} ({email_pct:.1f}%)")
 
     if 'telefone_valido' in df_fe.columns:
         telefone_count = df_fe['telefone_valido'].sum()
         telefone_pct = df_fe['telefone_valido'].mean() * 100
-        print(f"Telefone válido: {telefone_count:,} ({telefone_pct:.1f}%)")
+        logger.info(f"Telefone válido: {telefone_count:,} ({telefone_pct:.1f}%)")
 
     # Distribuição da feature temporal
     if 'dia_semana' in df_fe.columns:
-        print(f"\nDistribuição da feature temporal:")
+        logger.info(f"\nDistribuição da feature temporal:")
         dia_semana_counts = df_fe['dia_semana'].value_counts().sort_index()
         nomes_dias = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo']
         for dia, count in dia_semana_counts.items():
             pct = (count / len(df_fe)) * 100
-            print(f"  {dia} ({nomes_dias[dia]}): {count:,} ({pct:.1f}%)")
+            logger.info(f"  {dia} ({nomes_dias[dia]}): {count:,} ({pct:.1f}%)")
 
     return df_fe
 

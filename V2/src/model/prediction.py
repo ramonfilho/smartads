@@ -33,8 +33,8 @@ class LeadScoringPredictor:
     def load_model(self):
         """Carrega o modelo pickle e seus metadados."""
         model_file = self.model_path / f"modelo_lead_scoring_{self.model_name}.pkl"
-        features_file = self.model_path / f"features_ordenadas_{self.model_name}.json"
-        metadata_file = self.model_path / f"model_metadata_{self.model_name}.json"
+        features_file = self.model_path / f"features_ordenadas_{self.model_name}-3.json"
+        metadata_file = self.model_path / f"model_metadata_{self.model_name}-3.json"
 
         logger.info(f"Carregando modelo: {model_file}")
         try:
@@ -94,15 +94,16 @@ class LeadScoringPredictor:
         logger.info(f"Features preparadas: {X.shape}")
         return X
 
-    def predict(self, df: pd.DataFrame) -> pd.DataFrame:
+    def predict(self, df: pd.DataFrame, original_df: pd.DataFrame = None) -> pd.DataFrame:
         """
         Realiza predições no DataFrame processado.
 
         Args:
             df: DataFrame processado pelo pipeline
+            original_df: DataFrame original com todas as colunas (opcional)
 
         Returns:
-            DataFrame original com colunas de score adicionadas
+            DataFrame com colunas de score adicionadas (original se fornecido, processado caso contrário)
         """
         if self.model is None:
             self.load_model()
@@ -119,16 +120,22 @@ class LeadScoringPredictor:
         # Score é a probabilidade da classe positiva (1)
         scores = probabilities[:, 1]
 
-        # Adicionar scores ao DataFrame original
-        result_df = df.copy()
-        result_df['lead_score'] = scores
-        result_df['lead_score_percentual'] = scores * 100
+        # Usar DataFrame original se fornecido, senão usar o processado
+        if original_df is not None:
+            result_df = original_df.copy()
+            logger.info("Preservando DataFrame original com todas as colunas")
+        else:
+            result_df = df.copy()
+            logger.info("Usando DataFrame processado")
 
-        # Calcular decil (1 = melhor, 10 = pior)
+        # Adicionar apenas score e decil
+        result_df['lead_score'] = scores
+
+        # Calcular decil (EXATAMENTE como no notebook Colab)
         result_df['decil'] = pd.qcut(
             scores,
             q=10,
-            labels=range(10, 0, -1),  # 10 = melhor score, 1 = pior score
+            labels=[f'D{i}' for i in range(1, 11)],
             duplicates='drop'
         )
 

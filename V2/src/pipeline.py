@@ -25,12 +25,12 @@ class LeadScoringPipeline:
     Reproduz EXATAMENTE a lógica do notebook com parâmetros configuráveis.
     """
 
-    def __init__(self, model_name: str = "v1_devclub_rf_temporal"):
+    def __init__(self, model_name: str = "v1_devclub_rf_temporal_single"):
         """
         Inicializa o pipeline com configuração fixa.
 
         Args:
-            model_name: Nome do modelo a usar para predições (default: v1_devclub_rf_temporal)
+            model_name: Nome do modelo a usar para predições (default: v1_devclub_rf_temporal_single)
 
         Configuração:
         - Mantém features UTM (com_utm=True)
@@ -38,6 +38,7 @@ class LeadScoringPipeline:
         - Sem cutoff temporal
         """
         self.data = None
+        self.original_data = None  # Preservar dados originais
         self.predictor = LeadScoringPredictor(model_name)
 
     def load_data(self, filepath: str) -> pd.DataFrame:
@@ -52,6 +53,7 @@ class LeadScoringPipeline:
         """
         logger.info(f"Carregando arquivo: {filepath}")
         self.data = pd.read_excel(filepath)
+        self.original_data = self.data.copy()  # Preservar cópia original
         logger.info(f"Arquivo carregado: {len(self.data)} linhas, {len(self.data.columns)} colunas")
         return self.data
 
@@ -185,7 +187,7 @@ class LeadScoringPipeline:
             df: DataFrame a ser usado (se None, usa self.data)
 
         Returns:
-            DataFrame com scores de predição
+            DataFrame original com scores de predição
         """
         if df is None:
             if self.data is None:
@@ -193,7 +195,8 @@ class LeadScoringPipeline:
             df = self.data
 
         logger.info("=== Iniciando Predições ===")
-        result = self.predictor.predict(df)
+        # Passar tanto o DataFrame processado quanto o original
+        result = self.predictor.predict(df, self.original_data)
         logger.info("=== Predições Concluídas ===")
 
         return result

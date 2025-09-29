@@ -1,4 +1,7 @@
 """
+import logging
+
+logger = logging.getLogger(__name__)
 Componente para remoção de features UTM EXATAMENTE como no notebook original.
 Baseado nas linhas 5223-5229 e 7696-7702 do smart_ads_devclub_eda_v3.py
 """
@@ -36,9 +39,9 @@ def remove_utm_features(df: pd.DataFrame) -> pd.DataFrame:
     # Aplicar remoção EXATA do notebook
     df_clean = df_clean.drop(columns=colunas_remover, errors='ignore')
 
-    print(f"   ➤ Features UTM removidas: {len(colunas_remover)}")
+    logger.info(f"   ➤ Features UTM removidas: {len(colunas_remover)}")
     if colunas_remover:
-        print(f"   ➤ Colunas removidas: {', '.join(colunas_remover[:5])}{'...' if len(colunas_remover) > 5 else ''}")
+        logger.info(f"   ➤ Colunas removidas: {', '.join(colunas_remover[:5])}{'...' if len(colunas_remover) > 5 else ''}")
 
     return df_clean
 

@@ -5,6 +5,9 @@ Mantém a lógica EXATA do notebook original para garantir reprodutibilidade.
 
 import pandas as pd
 from typing import Dict
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def apply_categorical_encoding(df_original: pd.DataFrame, versao: str = "v1") -> pd.DataFrame:
@@ -14,19 +17,19 @@ def apply_categorical_encoding(df_original: pd.DataFrame, versao: str = "v1") ->
     Função EXATA copiada da Seção 20 do notebook original.
     """
     # Print do cabeçalho para comparação com notebook
-    print("ENCODING ESTRATÉGICO DOS 4 DATASETS")
-    print("=" * 45)
+    logger.info("ENCODING ESTRATÉGICO DOS 4 DATASETS")
+    logger.info("=" * 45)
 
     df = df_original.copy()
 
-    print(f"\nProcessando dataset...")
-    print(f"Colunas antes do encoding: {len(df.columns)}")
+    logger.info(f"\nProcessando dataset...")
+    logger.info(f"Colunas antes do encoding: {len(df.columns)}")
 
     # DEBUG: Listar colunas exatas que chegam no encoding
-    print(f"\nColunas que chegam no encoding (total: {len(df.columns)}):")
+    logger.info(f"\nColunas que chegam no encoding (total: {len(df.columns)}):")
     for i, col in enumerate(sorted(df.columns), 1):
-        print(f"{i:2d}. {col}")
-    print()
+        logger.info(f"{i:2d}. {col}")
+    logger.info("")
 
     # 1. ENCODING ORDINAL para variáveis com ordem natural
     variaveis_ordinais = {
@@ -39,17 +42,17 @@ def apply_categorical_encoding(df_original: pd.DataFrame, versao: str = "v1") ->
         'dia_semana': [0, 1, 2, 3, 4, 5, 6]  # Já é numérico
     }
 
-    print(f"\nAplicando ORDINAL ENCODING:")
+    logger.info(f"\nAplicando ORDINAL ENCODING:")
     for var, ordem in variaveis_ordinais.items():
         if var in df.columns:
             if var == 'dia_semana':
                 # Já é numérico, apenas reportar
-                print(f"  {var}: mantido como numérico (0-6)")
+                logger.info(f"  {var}: mantido como numérico (0-6)")
             else:
                 # Criar mapeamento ordinal
                 mapeamento = {categoria: i for i, categoria in enumerate(ordem)}
                 df[var] = df[var].map(mapeamento)
-                print(f"  {var}: {len(ordem)} categorias → 0-{len(ordem)-1}")
+                logger.info(f"  {var}: {len(ordem)} categorias → 0-{len(ordem)-1}")
 
     # 2. ONE-HOT ENCODING para variáveis categóricas nominais
     variaveis_one_hot = []
@@ -61,10 +64,10 @@ def apply_categorical_encoding(df_original: pd.DataFrame, versao: str = "v1") ->
             if df[col].dtype == 'object' or df[col].nunique() <= 20:
                 variaveis_one_hot.append(col)
 
-    print(f"\nAplicando ONE-HOT ENCODING para {len(variaveis_one_hot)} variáveis:")
-    print(f"ORDEM das variáveis one-hot:")
+    logger.info(f"\nAplicando ONE-HOT ENCODING para {len(variaveis_one_hot)} variáveis:")
+    logger.info(f"ORDEM das variáveis one-hot:")
     for i, var in enumerate(variaveis_one_hot, 1):
-        print(f"  {i:2d}. {var}")
+        logger.info(f"  {i:2d}. {var}")
 
     # Aplicar one-hot encoding
     df_encoded = pd.get_dummies(df, columns=variaveis_one_hot, prefix_sep='_', dtype=int)
@@ -72,28 +75,28 @@ def apply_categorical_encoding(df_original: pd.DataFrame, versao: str = "v1") ->
     # REMOVER telefone_comprimento_8 (EXATO do notebook - linha 5076-5078)
     if 'telefone_comprimento_8' in df_encoded.columns:
         df_encoded = df_encoded.drop(columns=['telefone_comprimento_8'])
-        print(f"  ⚠️  telefone_comprimento_8 removida (conforme notebook)")
+        logger.info(f"  ⚠️  telefone_comprimento_8 removida (conforme notebook)")
 
     # REMOVER DUPLICATAS DE COLUNAS (se houver) - CRÍTICO para evitar features extras
     colunas_antes_duplicatas = len(df_encoded.columns)
     df_encoded = df_encoded.loc[:, ~df_encoded.columns.duplicated()]
     duplicatas_removidas = colunas_antes_duplicatas - len(df_encoded.columns)
     if duplicatas_removidas > 0:
-        print(f"⚠️  Duplicatas removidas: {duplicatas_removidas} colunas")
+        logger.info(f"⚠️  Duplicatas removidas: {duplicatas_removidas} colunas")
 
     # Reportar criação de colunas
     colunas_criadas = len(df_encoded.columns) - len(df.columns)
     for var in variaveis_one_hot:
         categorias_unicas = df[var].nunique()
-        print(f"  {var}: {categorias_unicas} categorias → {categorias_unicas} colunas binárias")
+        logger.info(f"  {var}: {categorias_unicas} categorias → {categorias_unicas} colunas binárias")
 
-    print(f"\nResultado:")
-    print(f"  Colunas one-hot originais: {len(variaveis_one_hot)}")
-    print(f"  Colunas binárias criadas: {colunas_criadas}")
+    logger.info(f"\nResultado:")
+    logger.info(f"  Colunas one-hot originais: {len(variaveis_one_hot)}")
+    logger.info(f"  Colunas binárias criadas: {colunas_criadas}")
 
     # NORMALIZAÇÃO DOS NOMES DAS COLUNAS (linhas 4976-4978 do notebook)
     # CRÍTICO: Esta etapa estava faltando e causava incompatibilidade com o modelo
-    print(f"\nNormalizando nomes das colunas...")
+    logger.info(f"\nNormalizando nomes das colunas...")
 
     # Guardar nomes originais para comparação
     colunas_antes = list(df_encoded.columns)
@@ -116,13 +119,13 @@ def apply_categorical_encoding(df_original: pd.DataFrame, versao: str = "v1") ->
     # Contar quantas colunas foram alteradas
     colunas_alteradas = sum(1 for antes, depois in zip(colunas_antes, list(df_encoded.columns))
                             if antes != depois)
-    print(f"  Colunas normalizadas: {colunas_alteradas}")
+    logger.info(f"  Colunas normalizadas: {colunas_alteradas}")
 
-    print(f"  Total de colunas final: {len(df_encoded.columns)}")
+    logger.info(f"  Total de colunas final: {len(df_encoded.columns)}")
 
     # REORDENAR COLUNAS PARA ORDEM ESPERADA PELOS MODELOS (HARDCODED)
     # Ordem exata baseada nos arquivos features_ordenadas_*.json dos modelos treinados
-    print(f"\nReordenando colunas para compatibilidade com modelos...")
+    logger.info(f"\nReordenando colunas para compatibilidade com modelos...")
 
     ordem_esperada = [
         "Qual_a_sua_idade",
@@ -189,27 +192,27 @@ def apply_categorical_encoding(df_original: pd.DataFrame, versao: str = "v1") ->
     colunas_extras = [col for col in df_encoded.columns if col not in ordem_esperada]
 
     if colunas_faltando:
-        print(f"  ⚠️  ERRO: {len(colunas_faltando)} colunas esperadas estão faltando!")
+        logger.info(f"  ⚠️  ERRO: {len(colunas_faltando)} colunas esperadas estão faltando!")
         for col in colunas_faltando[:5]:
-            print(f"    - {col}")
+            logger.info(f"    - {col}")
 
     if colunas_extras:
-        print(f"  ⚠️  ERRO: {len(colunas_extras)} colunas extras encontradas!")
+        logger.info(f"  ⚠️  ERRO: {len(colunas_extras)} colunas extras encontradas!")
         for col in colunas_extras[:5]:
-            print(f"    + {col}")
+            logger.info(f"    + {col}")
 
     if not colunas_faltando and not colunas_extras:
         # Reordenar DataFrame para ordem exata esperada pelos modelos
         df_encoded = df_encoded[ordem_esperada]
-        print(f"  ✅ Colunas reordenadas para ordem dos modelos: {len(ordem_esperada)} features")
+        logger.info(f"  ✅ Colunas reordenadas para ordem dos modelos: {len(ordem_esperada)} features")
     else:
-        print(f"  ❌ Mantendo ordem original devido a incompatibilidades")
+        logger.info(f"  ❌ Mantendo ordem original devido a incompatibilidades")
 
     # Verificar tipos de dados finais
     tipos_dados = df_encoded.dtypes.value_counts()
-    print(f"\nTipos de dados no dataset final:")
+    logger.info(f"\nTipos de dados no dataset final:")
     for tipo, count in tipos_dados.items():
-        print(f"  {tipo}: {count} colunas")
+        logger.info(f"  {tipo}: {count} colunas")
 
     return df_encoded
 
