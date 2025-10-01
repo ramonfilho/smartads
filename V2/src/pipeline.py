@@ -43,16 +43,28 @@ class LeadScoringPipeline:
 
     def load_data(self, filepath: str) -> pd.DataFrame:
         """
-        Carrega arquivo de leads no formato Excel.
+        Carrega arquivo de leads no formato Excel ou CSV.
 
         Args:
-            filepath: Caminho para o arquivo Excel
+            filepath: Caminho para o arquivo Excel ou CSV
 
         Returns:
             DataFrame com os dados carregados
         """
         logger.info(f"Carregando arquivo: {filepath}")
-        self.data = pd.read_excel(filepath)
+
+        # Detectar formato do arquivo pela extensão
+        if filepath.lower().endswith('.csv'):
+            self.data = pd.read_csv(filepath)
+        elif filepath.lower().endswith(('.xlsx', '.xls')):
+            self.data = pd.read_excel(filepath)
+        else:
+            # Tentar CSV primeiro, depois Excel
+            try:
+                self.data = pd.read_csv(filepath)
+            except:
+                self.data = pd.read_excel(filepath)
+
         self.original_data = self.data.copy()  # Preservar cópia original
         logger.info(f"Arquivo carregado: {len(self.data)} linhas, {len(self.data.columns)} colunas")
         return self.data

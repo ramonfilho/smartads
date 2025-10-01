@@ -49,10 +49,39 @@ def apply_categorical_encoding(df_original: pd.DataFrame, versao: str = "v1") ->
                 # Já é numérico, apenas reportar
                 logger.info(f"  {var}: mantido como numérico (0-6)")
             else:
+                # ANTES DO MAPEAMENTO: verificar valores que não estão no dicionário
+                valores_unicos_antes = df[var].value_counts(dropna=False).head(20)
+                valores_esperados_set = set(ordem)
+
+                # Identificar valores problemáticos
+                valores_problematicos = []
+                for valor in df[var].unique():
+                    if pd.isna(valor):
+                        valores_problematicos.append(('NaN/vazio', df[var].isna().sum()))
+                    elif valor not in valores_esperados_set:
+                        count = (df[var] == valor).sum()
+                        valores_problematicos.append((repr(valor), count))
+
+                if valores_problematicos:
+                    total_problematicos = sum(count for _, count in valores_problematicos)
+                    logger.warning(f"  ⚠️  {var}: {total_problematicos}/{len(df)} registros com valores NÃO MAPEADOS:")
+                    for valor, count in valores_problematicos[:10]:
+                        pct = (count / len(df)) * 100
+                        logger.warning(f"      - {valor}: {count} registros ({pct:.1f}%)")
+
+                    if len(valores_problematicos) > 10:
+                        logger.warning(f"      ... e mais {len(valores_problematicos) - 10} valores diferentes")
+
                 # Criar mapeamento ordinal
                 mapeamento = {categoria: i for i, categoria in enumerate(ordem)}
                 df[var] = df[var].map(mapeamento)
                 logger.info(f"  {var}: {len(ordem)} categorias → 0-{len(ordem)-1}")
+
+                # DEPOIS DO MAPEAMENTO: contar NaN resultantes
+                nan_depois = df[var].isna().sum()
+                if nan_depois > 0:
+                    pct_nan = (nan_depois / len(df)) * 100
+                    logger.warning(f"      → Resultado: {nan_depois} NaN ({pct_nan:.1f}%) - serão preenchidos com 0")
 
     # 2. ONE-HOT ENCODING para variáveis categóricas nominais
     variaveis_one_hot = []
@@ -207,6 +236,33 @@ def apply_categorical_encoding(df_original: pd.DataFrame, versao: str = "v1") ->
         logger.info(f"  ✅ Colunas reordenadas para ordem dos modelos: {len(ordem_esperada)} features")
     else:
         logger.info(f"  ❌ Mantendo ordem original devido a incompatibilidades")
+
+    # TRATAMENTO DE NaN REMANESCENTES
+    logger.info(f"\nVerificando NaN remanescentes após encoding...")
+
+    # Identificar colunas com NaN
+    colunas_com_nan = df_encoded.columns[df_encoded.isna().any()].tolist()
+
+    if colunas_com_nan:
+        logger.warning(f"⚠️  ENCONTRADOS NaN EM {len(colunas_com_nan)} COLUNAS:")
+
+        # Detalhar cada coluna com NaN
+        for col in colunas_com_nan:
+            nan_count = df_encoded[col].isna().sum()
+            nan_pct = (nan_count / len(df_encoded)) * 100
+            logger.warning(f"  - {col}: {nan_count} NaN ({nan_pct:.1f}% dos {len(df_encoded)} registros)")
+
+            # Mostrar alguns valores únicos não-NaN dessa coluna (para debug)
+            valores_nao_nan = df_encoded[col].dropna().unique()[:5]
+            if len(valores_nao_nan) > 0:
+                logger.info(f"    Valores não-NaN: {valores_nao_nan}")
+
+        # Preencher NaN com 0
+        logger.info(f"\n🔧 Preenchendo {len(colunas_com_nan)} colunas com NaN...")
+        df_encoded = df_encoded.fillna(0)
+        logger.info(f"✅ NaN preenchidos com 0")
+    else:
+        logger.info(f"✅ Nenhum NaN encontrado - dados limpos")
 
     # Verificar tipos de dados finais
     tipos_dados = df_encoded.dtypes.value_counts()

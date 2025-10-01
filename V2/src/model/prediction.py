@@ -120,24 +120,56 @@ class LeadScoringPredictor:
         # Score é a probabilidade da classe positiva (1)
         scores = probabilities[:, 1]
 
-        # Usar DataFrame original se fornecido, senão usar o processado
-        if original_df is not None:
-            result_df = original_df.copy()
-            logger.info("Preservando DataFrame original com todas as colunas")
-        else:
-            result_df = df.copy()
-            logger.info("Usando DataFrame processado")
+        # SEMPRE usar DataFrame processado (sem duplicatas)
+        # O original pode ter mais linhas se houve remoção de duplicatas no pipeline
+        result_df = df.copy()
+        logger.info(f"Usando DataFrame processado ({len(df)} registros únicos)")
+
+        if original_df is not None and len(original_df) != len(df):
+            duplicatas_removidas = len(original_df) - len(df)
+            logger.warning(f"⚠️  {duplicatas_removidas} duplicatas foram removidas no pipeline")
+            logger.info("Retornando apenas registros únicos com scores")
 
         # Adicionar apenas score e decil
         result_df['lead_score'] = scores
 
-        # Calcular decil (EXATAMENTE como no notebook Colab)
-        result_df['decil'] = pd.qcut(
-            scores,
-            q=10,
-            labels=[f'D{i}' for i in range(1, 11)],
-            duplicates='drop'
-        )
+        # Calcular decil (adaptado para lotes pequenos)
+        if len(scores) >= 10:
+            # Para lotes grandes: usar quantis exatos como no Colab
+            result_df['decil'] = pd.qcut(
+                scores,
+                q=10,
+                labels=[f'D{i}' for i in range(1, 11)],
+                duplicates='drop'
+            )
+        else:
+            # Para lotes pequenos: calcular decil baseado na probabilidade
+            # Usar os mesmos thresholds que seriam usados em um conjunto maior
+            # D10 = top 10% (score >= 0.9), D9 = 80-90%, etc.
+            decil_values = []
+            for score in scores:
+                if score >= 0.9:
+                    decil = 'D10'
+                elif score >= 0.8:
+                    decil = 'D9'
+                elif score >= 0.7:
+                    decil = 'D8'
+                elif score >= 0.6:
+                    decil = 'D7'
+                elif score >= 0.5:
+                    decil = 'D6'
+                elif score >= 0.4:
+                    decil = 'D5'
+                elif score >= 0.3:
+                    decil = 'D4'
+                elif score >= 0.2:
+                    decil = 'D3'
+                elif score >= 0.1:
+                    decil = 'D2'
+                else:
+                    decil = 'D1'
+                decil_values.append(decil)
+            result_df['decil'] = decil_values
 
         logger.info(f"Predições concluídas para {len(result_df)} registros")
         logger.info(f"Score médio: {scores.mean():.4f}")

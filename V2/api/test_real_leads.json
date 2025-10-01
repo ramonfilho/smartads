@@ -1,0 +1,76 @@
+{
+  "leads": [
+    {
+      "data": {
+        "Data": "2025-06-23 00:02:26",
+        "Nome Completo": "Gabriel Mello",
+        "E-mail": "bielmello159@gmail.com",
+        "Telefone": "55992606494.0",
+        "O seu gênero:": "Masculino",
+        "Qual a sua idade?": "18 - 24 anos",
+        "O que você faz atualmente?": "Sou apenas estudante",
+        "Atualmente, qual a sua faixa salarial?": "Não tenho renda",
+        "Você possui cartão de crédito?": "Sim",
+        "Já estudou programação?": "Não",
+        "Você já fez/faz/pretende fazer faculdade?": "Sim",
+        "Já investiu em algum curso online para aprender uma nova forma de ganhar dinheiro?": "Não",
+        "O que mais te chama atenção na profissão de Programador?": "Poder trabalhar de qualquer lugar do mundo",
+        "O que mais você quer ver no evento?": "Fazer freelancer como programador",
+        "Source": "facebook-ads",
+        "Medium": "ADV | Linguagem de programação",
+        "Term": "ig",
+        "Tem computador/notebook?": "SIM"
+      },
+      "email": "bielmello159@gmail.com",
+      "row_id": "1"
+    },
+    {
+      "data": {
+        "Data": "2025-06-23 00:07:05",
+        "Nome Completo": "Isaque da Silva de Oliveira Luiz",
+        "E-mail": "isaquemalboro@gmail.com",
+        "Telefone": "5521968582506.0",
+        "O seu gênero:": "Masculino",
+        "Qual a sua idade?": "18 - 24 anos",
+        "O que você faz atualmente?": "Não trabalho e nem estudo",
+        "Atualmente, qual a sua faixa salarial?": "Entre R$1.000 a R$2.000 reais ao mês",
+        "Você possui cartão de crédito?": "Sim",
+        "Já estudou programação?": "Não",
+        "Você já fez/faz/pretende fazer faculdade?": "Sim",
+        "Já investiu em algum curso online para aprender uma nova forma de ganhar dinheiro?": "Não",
+        "O que mais te chama atenção na profissão de Programador?": "Todas as alternativas",
+        "O que mais você quer ver no evento?": "Fazer transição de carreira e conseguir meu primeiro emprego na área",
+        "Source": "facebook-ads",
+        "Medium": "ADV | Linguagem de programação",
+        "Term": "ig",
+        "Tem computador/notebook?": "SIM"
+      },
+      "email": "isaquemalboro@gmail.com",
+      "row_id": "2"
+    },
+    {
+      "data": {
+        "Data": "2025-06-23 00:07:44",
+        "Nome Completo": "Otávio Cabalheiro Salton",
+        "E-mail": "tavinhosalton@gmail.com",
+        "Telefone": "5554991949292.0",
+        "O seu gênero:": "Masculino",
+        "Qual a sua idade?": "18 - 24 anos",
+        "O que você faz atualmente?": "Sou CLT/Funcionário Público",
+        "Atualmente, qual a sua faixa salarial?": "Entre R$1.000 a R$2.000 reais ao mês",
+        "Você possui cartão de crédito?": "Não",
+        "Já estudou programação?": "Sim",
+        "Você já fez/faz/pretende fazer faculdade?": "Sim",
+        "Já investiu em algum curso online para aprender uma nova forma de ganhar dinheiro?": "Não",
+        "O que mais te chama atenção na profissão de Programador?": "Todas as alternativas",
+        "O que mais você quer ver no evento?": "Fazer transição de carreira e conseguir meu primeiro emprego na área",
+        "Source": "google-ads",
+        "Medium": "dgen",
+        "Term": "22527413714--180108372678--750940275538",
+        "Tem computador/notebook?": "SIM"
+      },
+      "email": "tavinhosalton@gmail.com",
+      "row_id": "3"
+    }
+  ]
+}
