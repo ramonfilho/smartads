@@ -1,54 +1,208 @@
-# Guia do Projeto - Pipeline de Lead Scoring DevClub
+# Guia do Projeto - Pipeline Configurável de Lead Scoring
 
 ## Contexto do Projeto
-Este projeto visa replicar um pipeline de treinamento para lead scoring, baseado em um modelo de Machine Learning desenvolvido e validado em ambiente de notebook (Google Colab). O modelo foi treinado com dados históricos de leads e alunos da DevClub, para priorização de budget em campanhas de marketing.
+Este projeto visa criar um sistema de pipelines configuráveis para lead scoring, baseado em modelos de Machine Learning validados. O objetivo é evoluir de um sistema single-client (DevClub) para uma arquitetura multi-client reutilizável, mantendo toda a lógica de negócio já validada.
 
-## Estrutura de Arquivos
+## Fase Atual: Profissionalização (FASE 2)
+**Pré-requisito:** Cliente DevClub validado e pagando pela solução
 
-### Arquivos do Modelo na pasta arquivos_modelo
-- Arquivos .pkl : Modelos treinados
-- `model_metadata*.json`: Metadados dos modelos (hiperparâmetros, métricas de performance)
-- `features_ordenadas*.json`: Lista ordenada das features esperadas pelos modelos
-- `feature_registry*.json`: Registro detalhado das features
-- `smart_ads_devclub_eda_v3.py`: Script Python extraído do notebook original
-- `smart_ads_devclub_eda_v4.py`: Script Python extraído do notebook mais atualizado
+### Objetivos da FASE 2
+1. **Extrair componentes reutilizáveis** do notebook/pipeline atual
+2. **Criar arquitetura configurável** por cliente
+3. **Separar pipelines de treino e produção** mantendo componentes compartilhados
+4. **Implementar MLflow** para tracking de experimentos
+5. **Preparar base** para escala futura (FASE 3: MLOps completo)
 
-### Dados de Treinamento
-- Pasta: `data/devclub/LF + ALUNOS/`
-- 29 arquivos utilizados no treinamento
-- `Lead Score LF24.xlsx`: Template de entrada em produção (aba: LF Pesquisa)
+## Nova Estrutura de Arquivos Proposta
+src/
+├── investigation/
+│   ├── data_profiling.py      # Análise exploratória de dados
+│   ├── column_analysis.py     # Análise de colunas (tipos, valores, missing)
+│   ├── category_discovery.py  # Descoberta de categorias únicas
+│   └── config_generator.py    # Gera configs/cliente.yaml baseado nas investigações
+├── data_processing/
+│   ├── ingestion.py           # Consolidação de datasets
+│   ├── cleaning.py            # Limpeza e tratamento
+│   ├── matching.py            # Matching email/telefone
+│   └── feature_engineering.py # Criação de features
+├── training/
+│   ├── train_pipeline.py      # Pipeline completo de treino
+│   └── model_training.py      # Lógica de treino/avaliação
+├── serving/
+│   ├── predict_pipeline.py    # Pipeline de predição
+│   └── model_serving.py       # Carregamento e predição
+└── utils/
+    ├── config_loader.py       # Carregamento de configurações
+    └── mlflow_utils.py        # Tracking e logging
+configs/
+├── devclub.yaml               # Configuração específica DevClub
+└── template.yaml              # Template para novos clientes
+data/
+├── devclub/                   # Dados específicos DevClub
+└── [cliente2]/                # Dados do próximo cliente
 
-## 🔴 METODOLOGIA DE DEBUGGING
+## 🔴 METODOLOGIA DE REFATORAÇÃO
 
-### Estratégia: Comparação via Prints - GRANULARIDADE MÁXIMA
+### Estratégia: Migração Incremental - ZERO QUEBRA DE FUNCIONALIDADE
 
-**IMPORTANTE:** Todos os testes e comparações devem ser feitos executando o pipeline verdadeiro (`python tests/test_pipeline.py`), não funções isoladas ou dados simulados. Somente assim garantimos que o estado dos dados está correto em cada etapa.
+**PRINCÍPIO FUNDAMENTAL:** A funcionalidade atual (DevClub) deve continuar 100% operacional durante toda a refatoração.
 
-**AGUARDAR APROVAÇÃO** antes de implementar
+**FLUXO DE TRABALHO:**
+1. **Validar entendimento** da estrutura atual
+2. **Extrair UM componente** por vez
+3. **Testar compatibilidade** com pipeline atual
+4. **Confirmar resultados idênticos** antes de prosseguir
+5. **Avançar para próximo componente**
 
-**APROVAR RESULTADO** com usuário antes de avançar
+### 🔧 PRINCÍPIOS FUNDAMENTAIS DE IMPLEMENTAÇÃO
 
-**Fluxo:** Identificar com precisão → Confirmar entendimento → Executar → Comparar → Se divergir: PARAR → Sugerir UMA correção mínima → Aprovar → Implementar → Re-executar → Aprovar resultado → Próxima sessão
+#### 1. **CONFIGURAÇÃO PRIMEIRO**
+**TODO código deve ser configurável desde o início.**
+
+- ❌ **NUNCA** hardcodar valores específicos do DevClub no código
+- ✅ **SEMPRE** receber parâmetros via `configs/cliente.yaml`
+- ✅ Funções recebem argumentos explícitos, não assumem defaults específicos
+- ✅ Código deve funcionar para **qualquer cliente** apenas trocando a config
+
+**Exemplo:**
+```python
+# ❌ ERRADO - Hardcoded
+def filter_sheets(df):
+    termos_manter = ["Pesquisa", "Vendas", "tmb"]  # Específico DevClub!
+
+# ✅ CORRETO - Configurável
+def filter_sheets(df, termos_manter: List[str]):
+    # termos_manter vem de configs/devclub.yaml
+```
+
+#### 2. **GRANULARIDADE EXTREMA**
+**TODA funcionalidade deve ser dividida em sub-etapas mínimas verificáveis.**
+
+- Não só `ingestion.py`, mas **TUDO**: `cleaning`, `matching`, `feature_engineering`, `encoding`
+- **Uma função pequena por vez**
+- Cada função deve ser:
+  - ✅ Testável isoladamente
+  - ✅ Validável contra o notebook (outputs idênticos)
+  - ✅ Aprovável antes de prosseguir para a próxima
+
+**Exemplo de granularidade:**
+```
+❌ ERRADO: Criar ingestion.py completo (400 linhas) de uma vez
+
+✅ CORRETO:
+  1.1 read_excel_files() → validar → aprovar
+  1.2 remove_duplicates_per_sheet() → validar → aprovar
+  1.3 filter_sheets() → validar → aprovar
+  1.4 consolidate_sheets() → validar → aprovar
+  1.5 filter_by_date() → validar → aprovar
+```
 
 ### Regras Críticas
-- **VALIDAÇÃO PRÉVIA OBRIGATÓRIA** - Antes de criar tarefas, análises ou executar qualquer código, validar com o usuário O QUE pretende fazer e COMO
-- **UMA SESSÃO POR VEZ** - Processar sessão por sessão, nunca múltiplas de uma vez
-- **PARAR EM CADA DIVERGÊNCIA** - Ao encontrar divergência, PARAR e aguardar aprovação antes de corrigir
-- **UMA CORREÇÃO POR VEZ** - Corrigir apenas UMA divergência específica e re-executar
-- **Lógica IDÊNTICA** ao ambiente de treinamento
-- **SEM soluções handcoded** - apenas debug das diferenças
-- **Notebook Colab** é a fonte da verdade (não editar .py local)
+- **FUNCIONALIDADE PRIMEIRO** - Pipeline DevClub deve continuar funcionando
+- **UM COMPONENTE POR VEZ** - Extrair/refatorar apenas um módulo por sessão
+- **SUB-ETAPAS GRANULARES** - Dividir cada módulo em funções mínimas verificáveis
+- **TESTES DE REGRESSÃO** - Comparar outputs antes/depois de cada mudança
+- **CONFIGURAÇÃO DESDE O INÍCIO** - Nada hardcoded, tudo vem de configs
+- **VALIDAÇÃO CONTÍNUA** - Aprovar cada etapa antes de prosseguir
 
-### Alterações Permitidas
-- Remover código do Colab (upload, visualizações)
-- Modularizar mantendo lógica idêntica
-- Adicionar logging e tratamento de erros
+### Componentes a Extrair (Ordem Correta)
 
-### Alterações PROIBIDAS
-- **CRIAÇÃO DE DADOS SINTÉTICOS PARA TESTE** - É proibida a criação de dados sintéticos ou fictícios para teste. Sempre usar os dados reais do projeto.
+**Nota:** Sub-etapas granulares são descobertas e documentadas à medida que avançamos sessão por sessão.
 
-### Alterações que Requerem Aprovação
-- Ordem de operações ou listas
-- Nomes de colunas ou mapeamentos
-- Tratamento de valores nulos
-- Fórmulas ou cálculos
+#### **ATUAL: 1. data_processing/ingestion.py** - Consolidação de datasets
+Sub-etapas granulares identificadas:
+- 1.1 `read_excel_files()` - Leitura de múltiplos arquivos Excel
+- 1.2 `remove_duplicates_per_sheet()` - Remoção de duplicatas por aba
+- 1.3 `filter_sheets()` - Filtragem de abas por critérios configuráveis
+- 1.4 `consolidate_sheets()` - Concatenação em DataFrame único
+- 1.5 `filter_by_date()` - Filtragem temporal opcional
+
+#### Próximos módulos (sub-etapas a descobrir):
+2. **data_processing/cleaning.py** - Limpeza e tratamento básico
+3. **data_processing/matching.py** - Matching e criação de targets
+4. **data_processing/feature_engineering.py** - Criação de features
+5. **training/model_training.py** - Treino e avaliação
+6. **serving/model_serving.py** - Predição
+7. **investigation/** - Módulos de investigação (geram configs)
+8. **Configuração cliente-específica** - Baseada nas investigações
+
+### Protocolo de Validação (CRÍTICO)
+
+**Fluxo obrigatório para cada sub-etapa:**
+
+1. **Criar função** configurável (sem valores hardcoded)
+2. **Adicionar parâmetros necessários** ao `configs/devclub.yaml`
+3. **Teste unitário** - Verificar que a função executa sem erros isoladamente
+4. **Integração ao pipeline** - Adicionar a função ao pipeline de treino (`train_pipeline.py`)
+5. **Teste integrado** - Executar pipeline completo e gerar output
+6. **PARAR E AGUARDAR** - Compartilhar output com usuário
+7. **Usuário valida** - Comparar output com notebook original (única fonte da verdade)
+8. **Aprovação explícita** - Só avançar após confirmação do usuário
+
+**Detalhamento da Integração ao Pipeline:**
+- Criar/atualizar script que reproduz o notebook célula por célula
+- Cada nova função aprovada é adicionada ao script de integração
+- Script deve usar `configs/devclub.yaml` para todos os parâmetros
+- Output do script deve ser comparável ao output do notebook
+
+**REGRA CRÍTICA:**
+- ❌ **NUNCA** avançar para a próxima função sem aprovação do usuário
+- ❌ **NUNCA** assumir que o output está correto
+- ✅ **SEMPRE** testar isolado (unitário) E integrado (pipeline completo)
+- ✅ **SEMPRE** esperar confirmação: "está correto, pode prosseguir"
+
+### Validações Obrigatórias (Feitas pelo Usuário)
+- **Shapes de dataframes** idênticos em cada etapa
+- **Valores** idênticos ou equivalentes
+- **Estrutura de dados** mantida
+- **Lógica de negócio** preservada
+
+## Diferenças entre Pipelines
+
+### Pipeline de Treino
+- **Input:** Múltiplos arquivos históricos
+- **Processamento:** Consolidação + Matching + Feature Engineering + Treino
+- **Output:** Modelo salvo + Métricas + Artefatos MLflow
+
+### Pipeline de Produção  
+- **Input:** Arquivo único de leads
+- **Processamento:** Feature Engineering + Predição
+- **Output:** Scores de leads
+
+### Componentes Compartilhados
+- Limpeza de dados
+- Feature engineering
+- Validações de entrada
+- Tratamento de categorias não vistas
+
+## 🔍 Módulos de Investigação → Configuração
+
+### Conceito Fundamental
+**As configurações de um cliente são DESCOBERTAS, não inventadas.**
+
+O fluxo para onboarding de um novo cliente é:
+```
+dados_cliente → investigation/ → configs/cliente.yaml → pipeline usa essa config
+```
+
+### Responsabilidade dos Módulos de Investigação
+Extrair do notebook DevClub as **análises exploratórias** que foram necessárias para descobrir:
+- Quais colunas usar/descartar
+- Quais tipos de limpeza aplicar (encoding, missing values, outliers)
+- Quais categorias únicas existem em cada coluna categórica
+- Quais features criar
+- Quais thresholds e parâmetros usar
+- Distribuições e estatísticas relevantes
+
+### Módulos a Criar
+1. **data_profiling.py** - Overview geral dos dados (shape, tipos, missing %)
+2. **column_analysis.py** - Análise detalhada coluna por coluna
+3. **category_discovery.py** - Mapeamento de todas as categorias únicas
+4. **config_generator.py** - Converte outputs das investigações em `configs/cliente.yaml`
+
+### Objetivo
+Quando um novo cliente chegar, rodar:
+```bash
+python src/investigation/run_investigation.py --client novo_cliente
+```
+E obter automaticamente (ou semi-automaticamente) o arquivo `configs/novo_cliente.yaml` pronto para uso nos pipelines.

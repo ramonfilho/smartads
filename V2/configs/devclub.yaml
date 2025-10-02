@@ -1,0 +1,26 @@
+# Configuração específica do cliente DevClub
+
+# Ingestão - Diretório com arquivos de treino
+ingestion:
+  training_data_dir: "/Users/ramonmoreira/Desktop/smart_ads/data/devclub/LF + ALUNOS/"
+
+  # Critérios de filtragem de abas (linhas 31-33 do notebook)
+  termos_manter:
+    - "Pesquisa"
+    - "Vendas"
+    - "tmb"
+    - "Guru"
+    - "Sheet"
+
+  termos_remover:
+    - "Pontuação"
+    - "Lead Score"
+    - "DEBUG_LOG"
+    - "Tabela Dinâmica 1"
+    - "Detalhe1"
+    - "Alunos"
+    - "Guru"
+    - "TMB"
+    - "LEADS"
+
+  min_linhas: 230

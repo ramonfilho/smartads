@@ -7,7 +7,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import pandas as pd
-from src.data.preprocessing import remove_campaign_features, get_campaign_features_to_remove
+from src.data_processing.preprocessing import remove_campaign_features, get_campaign_features_to_remove
 
 
 def test_remove_campaign_features():

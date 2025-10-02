@@ -7,7 +7,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import pandas as pd
-from src.data.medium_unification import unify_medium_columns, extract_medium_audience, unify_medium_by_actions
+from src.data_processing.medium_unification import unify_medium_columns, extract_medium_audience, unify_medium_by_actions
 
 
 def test_medium_unification():

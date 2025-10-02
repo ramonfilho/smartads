@@ -6,9 +6,9 @@ Reproduz EXATAMENTE a lógica do notebook com parâmetros configuráveis.
 
 import pandas as pd
 import logging
-from .data.preprocessing import remove_duplicates, clean_columns, remove_campaign_features, remove_technical_fields, rename_long_column_names
-from .data.utm_unification import unify_utm_columns
-from .data.medium_unification import unify_medium_columns
+from .data_processing.preprocessing import remove_duplicates, clean_columns, remove_campaign_features, remove_technical_fields, rename_long_column_names
+from .data_processing.utm_unification import unify_utm_columns
+from .data_processing.medium_unification import unify_medium_columns
 from .features.engineering import create_derived_features
 from .features.encoding import apply_categorical_encoding
 from .model.prediction import LeadScoringPredictor

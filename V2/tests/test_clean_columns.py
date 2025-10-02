@@ -7,7 +7,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import pandas as pd
-from src.data.preprocessing import clean_columns, get_columns_to_remove
+from src.data_processing.preprocessing import clean_columns, get_columns_to_remove
 
 
 def test_clean_columns():

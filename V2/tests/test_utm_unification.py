@@ -7,7 +7,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import pandas as pd
-from src.data.utm_unification import unify_utm_columns, get_utm_summary
+from src.data_processing.utm_unification import unify_utm_columns, get_utm_summary
 
 
 def test_utm_unification():
