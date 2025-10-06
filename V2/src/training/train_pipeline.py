@@ -22,7 +22,7 @@ def main():
     """Executa pipeline de treino completo."""
 
     print("\n" + "=" * 80)
-    print("PIPELINE DE TREINO - DevClub")
+    print("PIPELINE DE TREINO")
     print("=" * 80)
 
     # Carregar configuração

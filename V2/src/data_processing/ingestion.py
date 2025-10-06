@@ -229,3 +229,132 @@ def remove_duplicates_per_sheet(
     logger.info(f"  Total de duplicatas removidas: {total_duplicatas:,}")
 
     return arquivos_limpos, estatisticas
+
+
+def remove_unnecessary_columns(
+    files_data: Dict[str, Dict[str, pd.DataFrame]],
+    colunas_remover: List[str]
+) -> Tuple[Dict[str, Dict[str, pd.DataFrame]], List[Dict]]:
+    """
+    Remove colunas desnecessárias de todos os arquivos.
+
+    Reproduz a lógica da célula 3 do notebook (linhas 174-214 do v3-5).
+
+    Args:
+        files_data: Dicionário {filename: {sheet_name: DataFrame}}
+        colunas_remover: Lista de nomes de colunas para remover
+
+    Returns:
+        Tupla (arquivos_limpos, relatório):
+        - arquivos_limpos: Dict com DataFrames sem colunas desnecessárias
+        - relatório: Lista de dicts com estatísticas de remoção por aba
+
+    Example:
+        >>> clean_data, report = remove_unnecessary_columns(
+        ...     data,
+        ...     colunas_remover=["CEP", "Bairro", "Status"]
+        ... )
+    """
+    logger.info("🧹 Removendo colunas desnecessárias...")
+
+    colunas_remover_lower = [col.lower() for col in colunas_remover]
+
+    arquivos_limpos = {}
+    relatorio = []
+
+    for arquivo, abas_dict in files_data.items():
+        abas_limpas = {}
+
+        for aba_nome, df in abas_dict.items():
+            colunas_antes = len(df.columns)
+
+            # Identificar colunas para remover (linhas 189-196 do notebook)
+            colunas_para_remover = []
+            for col in df.columns:
+                # Remover se está na lista exata
+                if col.lower() in colunas_remover_lower:
+                    colunas_para_remover.append(col)
+                # Remover colunas Unnamed
+                elif col.startswith('Unnamed:'):
+                    colunas_para_remover.append(col)
+
+            # Aplicar remoção (linha 199)
+            df_limpo = df.drop(columns=colunas_para_remover) if colunas_para_remover else df.copy()
+            abas_limpas[aba_nome] = df_limpo
+
+            # Relatório (linhas 202-210)
+            colunas_depois = len(df_limpo.columns)
+            relatorio.append({
+                'arquivo': arquivo,
+                'aba': aba_nome,
+                'colunas_antes': colunas_antes,
+                'colunas_depois': colunas_depois,
+                'removidas': len(colunas_para_remover)
+            })
+
+            if colunas_para_remover:
+                logger.debug(f"  {arquivo} - {aba_nome}: {len(colunas_para_remover)} colunas removidas")
+
+        arquivos_limpos[arquivo] = abas_limpas
+
+    total_removidas = sum(item['removidas'] for item in relatorio)
+    logger.info(f"  Total de colunas removidas: {total_removidas}")
+
+    return arquivos_limpos, relatorio
+
+
+def consolidate_datasets(
+    files_data: Dict[str, Dict[str, pd.DataFrame]],
+    pesquisa_keywords: List[str],
+    vendas_keywords: List[str]
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Consolida arquivos separando em datasets de pesquisa e vendas.
+
+    Reproduz a lógica da célula 4 do notebook (linhas 258-281 do v3-5).
+
+    Args:
+        files_data: Dicionário {filename: {sheet_name: DataFrame}}
+        pesquisa_keywords: Termos que identificam abas de pesquisa
+        vendas_keywords: Termos que identificam abas de vendas
+
+    Returns:
+        Tupla (df_pesquisa_consolidado, df_vendas_consolidado):
+        - df_pesquisa: DataFrame consolidado de pesquisa
+        - df_vendas: DataFrame consolidado de vendas
+        
+        Ambos incluem colunas 'arquivo_origem' e 'aba_origem'
+
+    Example:
+        >>> df_pesq, df_vend = consolidate_datasets(
+        ...     data,
+        ...     pesquisa_keywords=["pesquisa"],
+        ...     vendas_keywords=["vendas", "sheet1"]
+        ... )
+    """
+    logger.info("🔗 Consolidando datasets (Pesquisa e Vendas)...")
+
+    dados_pesquisa = []
+    dados_vendas = []
+
+    # Classificar e adicionar metadata (linhas 265-275 do notebook)
+    for arquivo, abas_dict in files_data.items():
+        for aba_nome, df in abas_dict.items():
+            df_copia = df.copy()
+            df_copia['arquivo_origem'] = arquivo
+            df_copia['aba_origem'] = aba_nome
+
+            # Classificar por tipo
+            if any(termo in aba_nome.lower() for termo in pesquisa_keywords):
+                dados_pesquisa.append(df_copia)
+            elif any(termo in aba_nome.lower() for termo in vendas_keywords):
+                dados_vendas.append(df_copia)
+
+    # Consolidar em DataFrames únicos (linhas 278-279)
+    df_pesquisa_consolidado = pd.concat(dados_pesquisa, ignore_index=True) if dados_pesquisa else pd.DataFrame()
+    df_vendas_consolidado = pd.concat(dados_vendas, ignore_index=True) if dados_vendas else pd.DataFrame()
+
+    logger.info(f"  Dataset Pesquisa: {len(df_pesquisa_consolidado):,} registros, {len(df_pesquisa_consolidado.columns)} colunas")
+    logger.info(f"  Dataset Vendas: {len(df_vendas_consolidado):,} registros, {len(df_vendas_consolidado.columns)} colunas")
+
+    return df_pesquisa_consolidado, df_vendas_consolidado
