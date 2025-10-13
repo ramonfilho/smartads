@@ -5,7 +5,12 @@ function getPredictions() {
   try {
     Logger.log('🚀 Iniciando busca de predições...');
 
-    const sheet = SpreadsheetApp.getActiveSheet();
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = spreadsheet.getSheetByName('[LF] Pesquisa');
+
+    if (!sheet) {
+      throw new Error('Aba "[LF] Pesquisa" não encontrada!');
+    }
 
     const lastRow = sheet.getMaxRows();
     const lastCol = sheet.getMaxColumns();
@@ -27,6 +32,11 @@ function getPredictions() {
     Logger.log(`📋 Encontrados ${headers.length} campos: ${headers.join(', ')}`);
 
     const leadScoreColCheck = headers.indexOf('lead_score');
+    const dataColIndex = headers.indexOf('Data');
+
+    // Calcular timestamp de 24 horas atrás
+    const now = new Date();
+    const twentyFourHoursAgo = new Date(now.getTime() - (24 * 60 * 60 * 1000));
 
     const leads = [];
     for (let i = 1; i < nonEmptyValues.length; i++) {
@@ -35,6 +45,14 @@ function getPredictions() {
       // Pular se lead já tem score
       if (leadScoreColCheck !== -1 && row[leadScoreColCheck]) {
         continue;
+      }
+
+      // Pular se lead não é das últimas 24 horas
+      if (dataColIndex !== -1 && row[dataColIndex]) {
+        const leadDate = new Date(row[dataColIndex]);
+        if (leadDate < twentyFourHoursAgo) {
+          continue;
+        }
       }
 
       const leadData = {};
@@ -52,9 +70,19 @@ function getPredictions() {
       });
     }
 
-    Logger.log(`📊 Processando ${leads.length} leads`);
+    if (leads.length === 0) {
+      Logger.log('✅ Nenhum lead novo para processar nas últimas 24h');
+      SpreadsheetApp.getUi().alert(
+        'Sem leads novos',
+        'Nenhum lead novo das últimas 24 horas para processar.',
+        SpreadsheetApp.getUi().ButtonSet.OK
+      );
+      return;
+    }
 
-    const MAX_BATCH_SIZE = 500;
+    Logger.log(`📊 Processando ${leads.length} leads das últimas 24h sem predições`);
+
+    const MAX_BATCH_SIZE = 600;
     const numBatches = Math.ceil(leads.length / MAX_BATCH_SIZE);
     const idealBatchSize = Math.ceil(leads.length / numBatches);
 
@@ -171,7 +199,8 @@ function getPredictions() {
   }
 }
 
-function createTimeDrivenTrigger() {
+function createDailyTrigger() {
+  // Remove triggers existentes da função getPredictions
   const triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(trigger => {
     if (trigger.getHandlerFunction() === 'getPredictions') {
@@ -179,18 +208,26 @@ function createTimeDrivenTrigger() {
     }
   });
 
+  // Criar novo trigger diário às 8h da manhã
   ScriptApp.newTrigger('getPredictions')
     .timeBased()
-    .everyHours(6)
+    .atHour(8)
+    .everyDays(1)
     .create();
 
-  Logger.log('✅ Trigger criado: getPredictions rodará a cada 6 horas');
+  Logger.log('✅ Trigger criado: getPredictions rodará todo dia às 8h');
 
   SpreadsheetApp.getUi().alert(
     'Agendamento configurado!',
-    'A função getPredictions será executada automaticamente a cada 6 horas.',
+    'A função getPredictions será executada automaticamente todo dia às 8h da manhã.\n\n' +
+    'Apenas leads das últimas 24 horas sem predições serão processados.',
     SpreadsheetApp.getUi().ButtonSet.OK
   );
+}
+
+// Manter função antiga para compatibilidade (agora cria trigger diário)
+function createTimeDrivenTrigger() {
+  createDailyTrigger();
 }
 
 function removeTimeDrivenTrigger() {
@@ -212,7 +249,12 @@ function removeTimeDrivenTrigger() {
 
 function clearPredictions() {
   try {
-    const sheet = SpreadsheetApp.getActiveSheet();
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = spreadsheet.getSheetByName('[LF] Pesquisa');
+
+    if (!sheet) {
+      throw new Error('Aba "[LF] Pesquisa" não encontrada!');
+    }
     const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
 
     const leadScoreCol = headers.indexOf('lead_score');
@@ -269,7 +311,12 @@ function clearPredictions() {
 
 function generateUTMAnalysis() {
   try {
-    const sheet = SpreadsheetApp.getActiveSheet();
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = spreadsheet.getSheetByName('[LF] Pesquisa');
+
+    if (!sheet) {
+      throw new Error('Aba "[LF] Pesquisa" não encontrada!');
+    }
     const dataRange = sheet.getDataRange();
     const values = dataRange.getValues();
     const headers = values[0];
@@ -563,14 +610,241 @@ function generateUTMAnalysis() {
   }
 }
 
+function getPredictionsSinceLastRun() {
+  try {
+    Logger.log('🚀 Iniciando busca de predições desde a última execução...');
+
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = spreadsheet.getSheetByName('[LF] Pesquisa');
+
+    if (!sheet) {
+      throw new Error('Aba "[LF] Pesquisa" não encontrada!');
+    }
+
+    const lastRow = sheet.getMaxRows();
+    const lastCol = sheet.getMaxColumns();
+    const dataRange = sheet.getRange(1, 1, lastRow, lastCol);
+    const values = dataRange.getValues();
+
+    const nonEmptyValues = values.filter((row, index) => {
+      if (index === 0) return true;
+      return row.some(cell => cell !== null && cell !== undefined && cell !== '');
+    });
+
+    Logger.log(`📊 Linhas totais na planilha: ${lastRow}, após filtrar vazias: ${nonEmptyValues.length}`);
+
+    if (nonEmptyValues.length <= 1) {
+      throw new Error('Planilha vazia ou só tem cabeçalho');
+    }
+
+    const headers = nonEmptyValues[0];
+    Logger.log(`📋 Encontrados ${headers.length} campos: ${headers.join(', ')}`);
+
+    const leadScoreColCheck = headers.indexOf('lead_score');
+    const dataColIndex = headers.indexOf('Data');
+    const dataProcessamentoColIndex = headers.indexOf('data_processamento');
+
+    // Encontrar a última data de LEAD que foi processado (tem score)
+    let lastProcessedLeadDate = null;
+    if (leadScoreColCheck !== -1 && dataColIndex !== -1) {
+      for (let i = 1; i < nonEmptyValues.length; i++) {
+        const hasScore = nonEmptyValues[i][leadScoreColCheck];
+        const leadDate = nonEmptyValues[i][dataColIndex];
+
+        // Se tem score, pegar a data do lead
+        if (hasScore && leadDate) {
+          if (!lastProcessedLeadDate || leadDate > lastProcessedLeadDate) {
+            lastProcessedLeadDate = leadDate;
+          }
+        }
+      }
+    }
+
+    if (lastProcessedLeadDate) {
+      Logger.log(`📅 Último lead processado tinha data: ${lastProcessedLeadDate}`);
+    } else {
+      Logger.log(`📅 Nenhuma execução anterior encontrada - processando todos os leads sem score`);
+    }
+
+    const leads = [];
+    for (let i = 1; i < nonEmptyValues.length; i++) {
+      const row = nonEmptyValues[i];
+
+      // Pular se lead já tem score
+      if (leadScoreColCheck !== -1 && row[leadScoreColCheck]) {
+        continue;
+      }
+
+      // Se há última execução, pegar apenas leads com data >= último processado
+      // Isso garante que leads da mesma data que não foram processados sejam incluídos
+      if (lastProcessedLeadDate && dataColIndex !== -1 && row[dataColIndex]) {
+        const leadDate = new Date(row[dataColIndex]);
+        if (leadDate < lastProcessedLeadDate) {
+          continue;
+        }
+        // Leads com data >= lastProcessedLeadDate são processados (se não tiverem score)
+      }
+
+      const leadData = {};
+      headers.forEach((header, index) => {
+        leadData[header] = row[index];
+      });
+
+      const emailValue = row[headers.indexOf('E-mail')];
+      const email = emailValue ? String(emailValue) : null;
+
+      leads.push({
+        data: leadData,
+        email: email,
+        row_id: (i + 1).toString()
+      });
+    }
+
+    if (leads.length === 0) {
+      Logger.log('✅ Nenhum lead novo para processar desde a última execução');
+      SpreadsheetApp.getUi().alert(
+        'Sem leads novos',
+        'Nenhum lead novo desde a última predição para processar.',
+        SpreadsheetApp.getUi().ButtonSet.OK
+      );
+      return;
+    }
+
+    const timeDescription = lastProcessedLeadDate
+      ? `desde ${lastProcessedLeadDate.toLocaleString('pt-BR')}`
+      : 'sem predições';
+    Logger.log(`📊 Processando ${leads.length} leads ${timeDescription}`);
+
+    const MAX_BATCH_SIZE = 600;
+    const numBatches = Math.ceil(leads.length / MAX_BATCH_SIZE);
+    const idealBatchSize = Math.ceil(leads.length / numBatches);
+
+    Logger.log(`🔄 Dividindo ${leads.length} leads em ${numBatches} lotes equilibrados (~${idealBatchSize} leads cada)`);
+
+    const batches = [];
+    for (let i = 0; i < leads.length; i += idealBatchSize) {
+      batches.push(leads.slice(i, i + idealBatchSize));
+    }
+
+    const batchSizes = batches.map(b => b.length).join(', ');
+    Logger.log(`📦 Tamanhos dos lotes: [${batchSizes}]`);
+
+    let allPredictions = [];
+    let totalProcessingTime = 0;
+
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      const batch = batches[batchIndex];
+      Logger.log(`📦 Processando lote ${batchIndex + 1}/${batches.length} (${batch.length} leads)...`);
+
+      const options = {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify({
+          leads: batch
+        }),
+        muteHttpExceptions: true
+      };
+
+      const response = UrlFetchApp.fetch(API_URL, options);
+      const statusCode = response.getResponseCode();
+
+      if (statusCode !== 200) {
+        throw new Error(`API retornou erro ${statusCode} no lote ${batchIndex + 1}: ${response.getContentText()}`);
+      }
+
+      const result = JSON.parse(response.getContentText());
+      allPredictions = allPredictions.concat(result.predictions);
+      totalProcessingTime += result.processing_time_seconds;
+
+      Logger.log(`✅ Lote ${batchIndex + 1} concluído em ${result.processing_time_seconds}s`);
+
+      if (batchIndex < batches.length - 1) {
+        Utilities.sleep(500);
+      }
+    }
+
+    Logger.log(`✅ Total: ${allPredictions.length} predições em ${totalProcessingTime.toFixed(2)}s`);
+
+    let leadScoreCol = headers.indexOf('lead_score');
+    let decileCol = headers.indexOf('decile');
+    let timestampCol = headers.indexOf('data_processamento');
+
+    if (leadScoreCol === -1) {
+      leadScoreCol = headers.length;
+      sheet.getRange(1, leadScoreCol + 1).setValue('lead_score');
+      headers.push('lead_score');
+    }
+
+    if (decileCol === -1) {
+      decileCol = headers.length;
+      sheet.getRange(1, decileCol + 1).setValue('decile');
+      headers.push('decile');
+    }
+
+    if (timestampCol === -1) {
+      timestampCol = headers.length;
+      sheet.getRange(1, timestampCol + 1).setValue('data_processamento');
+      headers.push('data_processamento');
+    }
+
+    Logger.log('📝 Escrevendo predições na planilha...');
+
+    const currentTimestamp = new Date();
+
+    allPredictions.forEach(pred => {
+      const rowNum = parseInt(pred.row_id);
+      try {
+        const scoreCell = sheet.getRange(rowNum, leadScoreCol + 1);
+        scoreCell.setValue(pred.lead_score);
+        scoreCell.setNumberFormat('0.0000');
+
+        sheet.getRange(rowNum, decileCol + 1).setValue(pred.decile);
+        sheet.getRange(rowNum, timestampCol + 1).setValue(currentTimestamp);
+      } catch (e) {
+        Logger.log(`⚠️ Erro ao escrever linha ${rowNum}: ${e.message}`);
+      }
+    });
+
+    Logger.log('✅ Predições escritas com sucesso');
+
+    const minScore = Math.min(...allPredictions.map(p => p.lead_score));
+    const maxScore = Math.max(...allPredictions.map(p => p.lead_score));
+
+    SpreadsheetApp.getUi().alert(
+      'Sucesso!',
+      `${allPredictions.length} leads processados em ${totalProcessingTime.toFixed(2)}s\n` +
+      `Processados em ${batches.length} lote(s)\n` +
+      (lastProcessedLeadDate ? `Desde: ${lastProcessedLeadDate.toLocaleString('pt-BR')}\n` : 'Primeira execução\n') +
+      `\nScores: ${minScore.toFixed(3)} - ${maxScore.toFixed(3)}`,
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+
+  } catch (error) {
+    Logger.log(`❌ Erro: ${error.message}`);
+    Logger.log(error.stack);
+
+    SpreadsheetApp.getUi().alert(
+      'Erro',
+      `Falha ao buscar predições:\n${error.message}`,
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+
+    throw error;
+  }
+}
+
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
   ui.createMenu('Smart Ads')
-    .addItem('Buscar Predições', 'getPredictions')
+    .addItem('Buscar Predições (últimas 24h)', 'getPredictions')
+    .addItem('Buscar Predições (desde última execução)', 'getPredictionsSinceLastRun')
+    .addSeparator()
     .addItem('Gerar Análise UTM', 'generateUTMAnalysis')
+    .addItem('💰 Análise UTM com Custos', 'generateUTMAnalysisWithCosts')
+    .addSeparator()
     .addItem('Limpar Predições', 'clearPredictions')
     .addSeparator()
-    .addItem('Configurar Agendamento (a cada 6h)', 'createTimeDrivenTrigger')
+    .addItem('Configurar Agendamento (todo dia às 8h)', 'createDailyTrigger')
     .addItem('Remover Agendamento', 'removeTimeDrivenTrigger')
     .addToUi();
 }
@@ -605,4 +879,401 @@ function testConnection() {
       SpreadsheetApp.getUi().ButtonSet.OK
     );
   }
+}
+
+// ============================================================================
+// ANÁLISE UTM COM CUSTOS DO META ADS
+// ============================================================================
+
+const META_ACCOUNT_ID = 'act_1948313086122284';  // Conta SANDBOX smart_ads
+const ANALYSIS_API_URL = 'https://smart-ads-api-12955519745.us-central1.run.app/analyze_utms_with_costs';
+
+function generateUTMAnalysisWithCosts() {
+  try {
+    Logger.log('🚀 Iniciando análise UTM com custos...');
+
+    // IMPORTANTE: Sempre usar a aba de leads, não a aba ativa
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = spreadsheet.getSheetByName('[LF] Pesquisa');
+
+    if (!sheet) {
+      throw new Error('Aba "[LF] Pesquisa" não encontrada!');
+    }
+
+    Logger.log('📋 Usando aba: [LF] Pesquisa');
+
+    // Ler dados da planilha
+    const lastRow = sheet.getMaxRows();
+    const lastCol = sheet.getMaxColumns();
+    const dataRange = sheet.getRange(1, 1, lastRow, lastCol);
+    const values = dataRange.getValues();
+
+    const nonEmptyValues = values.filter((row, index) => {
+      if (index === 0) return true;
+      return row.some(cell => cell !== null && cell !== undefined && cell !== '');
+    });
+
+    if (nonEmptyValues.length <= 1) {
+      throw new Error('Planilha vazia ou só tem cabeçalho');
+    }
+
+    const headers = nonEmptyValues[0];
+    Logger.log(`📋 Campos: ${headers.length}`);
+
+    const leadScoreColIndex = headers.indexOf('lead_score');
+    const decileColIndex = headers.indexOf('decile');
+    const dataColIndex = headers.indexOf('Data');
+
+    // ETAPA 1: Gerar predições para leads dos últimos 7 dias sem score
+    Logger.log('🔍 ETAPA 1: Verificando leads sem predição (últimos 7 dias)...');
+
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
+
+    const leadsWithoutPrediction = [];
+
+    for (let i = 1; i < nonEmptyValues.length; i++) {
+      const row = nonEmptyValues[i];
+
+      // Verificar se é dos últimos 7 dias
+      const isRecent = dataColIndex !== -1 && row[dataColIndex] &&
+                       new Date(row[dataColIndex]) >= sevenDaysAgo;
+
+      // Verificar se não tem score
+      const hasNoScore = leadScoreColIndex === -1 || !row[leadScoreColIndex];
+
+      if (isRecent && hasNoScore) {
+        const leadData = {};
+        headers.forEach((header, index) => {
+          leadData[header] = row[index];
+        });
+
+        const emailValue = row[headers.indexOf('E-mail')];
+        const email = emailValue ? String(emailValue) : null;
+
+        leadsWithoutPrediction.push({
+          data: leadData,
+          email: email,
+          row_id: (i + 1).toString(),
+          sheetRowIndex: i + 1  // Para escrever de volta
+        });
+      }
+    }
+
+    Logger.log(`📊 Leads sem predição (últimos 7D): ${leadsWithoutPrediction.length}`);
+
+    // Gerar predições com batching inteligente
+    if (leadsWithoutPrediction.length > 0) {
+      Logger.log('🔄 Gerando predições...');
+
+      if (leadsWithoutPrediction.length <= 600) {
+        // Enviar todos de uma vez
+        Logger.log(`   Enviando ${leadsWithoutPrediction.length} leads em lote único`);
+
+        const payload = { leads: leadsWithoutPrediction };
+        const options = {
+          method: 'post',
+          contentType: 'application/json',
+          payload: JSON.stringify(payload),
+          muteHttpExceptions: true
+        };
+
+        const response = UrlFetchApp.fetch(API_URL, options);
+        const responseCode = response.getResponseCode();
+
+        if (responseCode !== 200) {
+          throw new Error(`Erro ao gerar predições: ${responseCode} - ${response.getContentText()}`);
+        }
+
+        const result = JSON.parse(response.getContentText());
+
+        // Escrever predições na planilha
+        result.predictions.forEach(pred => {
+          const rowIndex = parseInt(pred.row_id);
+          if (leadScoreColIndex !== -1) {
+            sheet.getRange(rowIndex, leadScoreColIndex + 1).setValue(pred.lead_score);
+          }
+          if (decileColIndex !== -1) {
+            sheet.getRange(rowIndex, decileColIndex + 1).setValue(pred.decile);
+          }
+        });
+
+        Logger.log(`✅ ${result.predictions.length} predições escritas`);
+
+      } else {
+        // Dividir em lotes iguais maiores possíveis próximos de 600
+        const numLotes = Math.ceil(leadsWithoutPrediction.length / 600);
+        const tamanhoLote = Math.ceil(leadsWithoutPrediction.length / numLotes);
+
+        Logger.log(`   Dividindo ${leadsWithoutPrediction.length} leads em ${numLotes} lotes de ${tamanhoLote}`);
+
+        for (let batchIndex = 0; batchIndex < numLotes; batchIndex++) {
+          const start = batchIndex * tamanhoLote;
+          const end = Math.min(start + tamanhoLote, leadsWithoutPrediction.length);
+          const batchLeads = leadsWithoutPrediction.slice(start, end);
+
+          Logger.log(`   Lote ${batchIndex + 1}/${numLotes}: ${batchLeads.length} leads`);
+
+          const payload = { leads: batchLeads };
+          const options = {
+            method: 'post',
+            contentType: 'application/json',
+            payload: JSON.stringify(payload),
+            muteHttpExceptions: true
+          };
+
+          const response = UrlFetchApp.fetch(API_URL, options);
+          const responseCode = response.getResponseCode();
+
+          if (responseCode !== 200) {
+            throw new Error(`Erro no lote ${batchIndex + 1}: ${responseCode} - ${response.getContentText()}`);
+          }
+
+          const result = JSON.parse(response.getContentText());
+
+          // Escrever predições na planilha
+          result.predictions.forEach(pred => {
+            const rowIndex = parseInt(pred.row_id);
+            if (leadScoreColIndex !== -1) {
+              sheet.getRange(rowIndex, leadScoreColIndex + 1).setValue(pred.lead_score);
+            }
+            if (decileColIndex !== -1) {
+              sheet.getRange(rowIndex, decileColIndex + 1).setValue(pred.decile);
+            }
+          });
+
+          Logger.log(`   ✅ Lote ${batchIndex + 1} concluído (${result.predictions.length} predições)`);
+
+          // Delay entre lotes
+          if (batchIndex < numLotes - 1) {
+            Utilities.sleep(1000);
+          }
+        }
+      }
+
+      Logger.log('✅ Predições concluídas!');
+    }
+
+    // ETAPA 2: Análise UTM com custos (usando TODOS os leads com predição)
+    Logger.log('📈 ETAPA 2: Gerando análise UTM com custos...');
+
+    // Recarregar dados (predições podem ter sido adicionadas)
+    const updatedValues = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+    const updatedNonEmpty = updatedValues.filter((row, index) => {
+      if (index === 0) return true;
+      return row.some(cell => cell !== null && cell !== undefined && cell !== '');
+    });
+
+    // Coletar TODOS os leads com predição
+    const leadsWithPrediction = [];
+
+    for (let i = 1; i < updatedNonEmpty.length; i++) {
+      const row = updatedNonEmpty[i];
+
+      // Verificar se tem score
+      const hasScore = leadScoreColIndex !== -1 && row[leadScoreColIndex];
+
+      if (hasScore) {
+        const leadData = {};
+        headers.forEach((header, index) => {
+          leadData[header] = row[index];
+        });
+
+        const emailValue = row[headers.indexOf('E-mail')];
+        const email = emailValue ? String(emailValue) : null;
+
+        leadsWithPrediction.push({
+          data: leadData,
+          email: email,
+          row_id: (i + 1).toString()
+        });
+      }
+    }
+
+    Logger.log(`📊 Total de leads com predição: ${leadsWithPrediction.length}`);
+
+    if (leadsWithPrediction.length === 0) {
+      throw new Error('Nenhum lead com predição encontrado');
+    }
+
+    // Chamar API de análise (sem limite - batching interno na API)
+    Logger.log('🔄 Chamando API de análise UTM...');
+
+    const payload = {
+      leads: leadsWithPrediction,
+      account_id: META_ACCOUNT_ID,
+      product_value: null,  // Usar padrão da config (R$ 2.027,38)
+      min_roas: null  // Usar padrão (2.0x)
+    };
+
+    const options = {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    };
+
+    const response = UrlFetchApp.fetch(ANALYSIS_API_URL, options);
+    const responseCode = response.getResponseCode();
+
+    if (responseCode !== 200) {
+      throw new Error(`API retornou erro: ${responseCode} - ${response.getContentText()}`);
+    }
+
+    const result = JSON.parse(response.getContentText());
+
+    Logger.log(`✅ Análise recebida: ${result.processing_time_seconds}s`);
+    Logger.log(`   Períodos: ${Object.keys(result.periods).join(', ')}`);
+    Logger.log(`   Config: Product Value = R$ ${result.config.product_value}, ROAS Min = ${result.config.min_roas}x`);
+
+    // Criar abas para cada período
+    const periods = ['1D', '3D', '7D', 'Total'];
+
+    for (const period of periods) {
+      if (result.periods[period]) {
+        writeAnalysisSheet(period, result.periods[period], result.config);
+      }
+    }
+
+    Logger.log('✅ Análise UTM com custos concluída!');
+
+    SpreadsheetApp.getUi().alert(
+      'Análise Concluída',
+      `Análise UTM com custos gerada com sucesso!\n\n` +
+      `Abas criadas: ${periods.join(', ')}\n` +
+      `Tempo de processamento: ${result.processing_time_seconds}s\n\n` +
+      `Configuração:\n` +
+      `• Product Value: R$ ${result.config.product_value.toFixed(2)}\n` +
+      `• ROAS Mínimo: ${result.config.min_roas}x`,
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+
+  } catch (error) {
+    Logger.log(`❌ Erro na análise UTM: ${error.message}`);
+    Logger.log(error.stack);
+
+    SpreadsheetApp.getUi().alert(
+      'Erro na Análise UTM',
+      `Não foi possível gerar análise:\n${error.message}`,
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+  }
+}
+
+function writeAnalysisSheet(period, periodData, config) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetName = `Análise UTM - ${period}`;
+
+  // Deletar aba se já existir
+  let sheet = ss.getSheetByName(sheetName);
+  if (sheet) {
+    ss.deleteSheet(sheet);
+  }
+
+  // Criar nova aba
+  sheet = ss.insertSheet(sheetName);
+
+  Logger.log(`📝 Criando aba: ${sheetName}`);
+
+  // Cabeçalhos
+  const headers = [
+    'Dimensão', 'Valor', 'Leads', 'Gasto (R$)', 'CPL (R$)',
+    '%D10', '%D8-10', 'Taxa Proj. (%)', 'ROAS Proj.',
+    'CPL Máx (R$)', 'Margem (%)', 'Tier', 'Ação'
+  ];
+
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+
+  // Formatação do cabeçalho
+  const headerRange = sheet.getRange(1, 1, 1, headers.length);
+  headerRange.setFontWeight('bold');
+  headerRange.setBackground('#4285F4');
+  headerRange.setFontColor('#FFFFFF');
+  headerRange.setHorizontalAlignment('center');
+
+  // Dimensões
+  const dimensions = ['campaign', 'medium', 'term', 'adset', 'ad'];
+  const dimensionLabels = {
+    'campaign': 'Campaign',
+    'medium': 'Medium',
+    'term': 'Term',
+    'adset': 'Adset',
+    'ad': 'Ad'
+  };
+
+  let currentRow = 2;
+
+  for (const dimension of dimensions) {
+    const metrics = periodData[dimension];
+
+    if (!metrics || metrics.length === 0) {
+      continue;
+    }
+
+    for (const metric of metrics) {
+      const row = [
+        dimensionLabels[dimension],
+        metric.value,
+        metric.leads,
+        metric.spend,
+        metric.cpl,
+        metric.pct_d10,
+        metric.pct_d8_10,
+        metric.taxa_proj * 100,  // Converter para %
+        metric.roas_proj,
+        metric.cpl_max,
+        metric.margem,
+        metric.tier,
+        metric.acao
+      ];
+
+      sheet.getRange(currentRow, 1, 1, row.length).setValues([row]);
+
+      // Formatação condicional da margem
+      const margemCell = sheet.getRange(currentRow, 11);  // Coluna Margem
+
+      if (metric.margem > 50) {
+        margemCell.setBackground('#34A853');  // Verde
+        margemCell.setFontColor('#FFFFFF');
+      } else if (metric.margem >= 0) {
+        margemCell.setBackground('#FBBC04');  // Amarelo
+        margemCell.setFontColor('#000000');
+      } else {
+        margemCell.setBackground('#EA4335');  // Vermelho
+        margemCell.setFontColor('#FFFFFF');
+      }
+
+      currentRow++;
+    }
+  }
+
+  // Formatar colunas numéricas
+  const lastRow = currentRow - 1;
+  if (lastRow >= 2) {
+    // Gasto, CPL, CPL Máx (formato moeda)
+    sheet.getRange(2, 4, lastRow - 1, 1).setNumberFormat('R$ #,##0.00');
+    sheet.getRange(2, 5, lastRow - 1, 1).setNumberFormat('R$ #,##0.00');
+    sheet.getRange(2, 10, lastRow - 1, 1).setNumberFormat('R$ #,##0.00');
+
+    // Percentuais
+    sheet.getRange(2, 6, lastRow - 1, 1).setNumberFormat('0.00"%"');
+    sheet.getRange(2, 7, lastRow - 1, 1).setNumberFormat('0.00"%"');
+    sheet.getRange(2, 8, lastRow - 1, 1).setNumberFormat('0.00"%"');
+    sheet.getRange(2, 11, lastRow - 1, 1).setNumberFormat('0.00"%"');
+
+    // ROAS
+    sheet.getRange(2, 9, lastRow - 1, 1).setNumberFormat('0.00"x"');
+  }
+
+  // Ajustar largura das colunas
+  for (let i = 1; i <= headers.length; i++) {
+    sheet.autoResizeColumn(i);
+  }
+
+  // Adicionar nota com configuração
+  sheet.getRange(lastRow + 2, 1).setValue(`Configuração: Product Value = R$ ${config.product_value.toFixed(2)} | ROAS Mínimo = ${config.min_roas}x`);
+  sheet.getRange(lastRow + 2, 1).setFontStyle('italic');
+  sheet.getRange(lastRow + 2, 1).setFontColor('#666666');
+
+  Logger.log(`✅ Aba ${sheetName} criada com ${lastRow - 1} registros`);
 }
