@@ -138,6 +138,42 @@ async def health_check():
         "version": "2.0.0"
     }
 
+@app.get("/model/info")
+async def get_model_info():
+    """
+    Retorna informações sobre o modelo: metadados, performance e feature importances
+    """
+    if pipeline is None:
+        raise HTTPException(status_code=503, detail="Pipeline não inicializado")
+
+    try:
+        # Garantir que o modelo está carregado
+        if pipeline.predictor.model is None:
+            pipeline.predictor.load_model()
+
+        # Obter metadados
+        metadata = pipeline.predictor.metadata
+
+        # Obter feature importances (top 20)
+        feature_importances = pipeline.predictor.get_feature_importances(top_n=20)
+
+        # Estruturar resposta
+        response = {
+            "model_info": metadata.get("model_info", {}),
+            "training_data": metadata.get("training_data", {}),
+            "performance_metrics": metadata.get("performance_metrics", {}),
+            "decil_analysis": metadata.get("decil_analysis", {}),
+            "feature_importances": feature_importances,
+            "timestamp": datetime.now().isoformat()
+        }
+
+        logger.info(f"✅ Informações do modelo retornadas com sucesso")
+        return response
+
+    except Exception as e:
+        logger.error(f"❌ Erro ao obter informações do modelo: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao obter informações do modelo: {str(e)}")
+
 @app.post("/predict/batch", response_model=BatchPredictionResponse)
 async def predict_batch_json(request: BatchPredictionRequest):
     """
@@ -302,7 +338,6 @@ class UTMDimensionMetrics(BaseModel):
     spend: float
     cpl: float
     pct_d10: float
-    pct_d8_10: float
     taxa_proj: float
     roas_proj: float
     cpl_max: float
@@ -315,7 +350,6 @@ class UTMPeriodAnalysis(BaseModel):
     campaign: List[UTMDimensionMetrics]
     medium: List[UTMDimensionMetrics]
     term: List[UTMDimensionMetrics]
-    adset: List[UTMDimensionMetrics]
     ad: List[UTMDimensionMetrics]
 
 class UTMAnalysisResponse(BaseModel):
@@ -511,7 +545,7 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
             period_analysis = {}
 
             # Dimensões a analisar
-            dimensions = ['campaign', 'medium', 'term', 'adset', 'ad']
+            dimensions = ['campaign', 'medium', 'term', 'ad']
 
             for dimension in dimensions:
                 # Mapear para coluna do DataFrame
@@ -519,7 +553,6 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
                     'campaign': 'Campaign',
                     'medium': 'Medium',
                     'term': 'Term',
-                    'adset': 'Campaign',  # Adset não tem coluna separada, usar Campaign
                     'ad': 'Campaign'  # Ad não tem coluna separada, usar Campaign
                 }
 
@@ -535,12 +568,6 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
                     'lead_score': 'count',  # Número de leads
                     'decil': lambda x: (x == 'D10').sum() / len(x) * 100 if len(x) > 0 else 0,  # %D10
                 }).rename(columns={'lead_score': 'leads', 'decil': 'pct_d10'})
-
-                # Calcular %D8-10
-                def calc_d8_10(group):
-                    return ((group['decil'].isin(['D8', 'D9', 'D10'])).sum() / len(group) * 100) if len(group) > 0 else 0
-
-                grouped['pct_d8_10'] = result_df.groupby(utm_col).apply(calc_d8_10).values
 
                 # Calcular distribuição de decis para cada valor
                 for value in grouped.index:
@@ -580,7 +607,6 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
                         spend=float(row['spend']),
                         cpl=float(row['cpl']),
                         pct_d10=float(row['pct_d10']),
-                        pct_d8_10=float(row['pct_d8_10']),
                         taxa_proj=float(row['taxa_proj']),
                         roas_proj=float(row['roas_proj']),
                         cpl_max=float(row['cpl_max']),

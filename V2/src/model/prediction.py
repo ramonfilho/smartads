@@ -204,3 +204,36 @@ class LeadScoringPredictor:
         probability = self.model.predict_proba(X)[0, 1]
 
         return probability
+
+    def get_feature_importances(self, top_n: int = 20):
+        """
+        Retorna as feature importances do modelo RandomForest.
+
+        Args:
+            top_n: Número de features mais importantes a retornar (padrão: 20)
+
+        Returns:
+            Lista de dicts com 'feature' e 'importance', ordenados por importância decrescente
+        """
+        if self.model is None:
+            self.load_model()
+
+        # Verificar se o modelo tem feature_importances_
+        if not hasattr(self.model, 'feature_importances_'):
+            logger.warning("Modelo não possui feature_importances_")
+            return []
+
+        # Obter importâncias
+        importances = self.model.feature_importances_
+
+        # Criar lista de dicts com feature name e importance
+        feature_importance_list = [
+            {'feature': name, 'importance': float(imp)}
+            for name, imp in zip(self.feature_names, importances)
+        ]
+
+        # Ordenar por importância decrescente
+        feature_importance_list.sort(key=lambda x: x['importance'], reverse=True)
+
+        # Retornar top N
+        return feature_importance_list[:top_n]

@@ -1135,6 +1135,25 @@ function generateUTMAnalysisWithCosts() {
       }
     }
 
+    // Buscar informações do modelo e criar aba
+    Logger.log('📊 Buscando informações do modelo...');
+    try {
+      const modelInfoResponse = UrlFetchApp.fetch(`${API_URL}/model/info`, {
+        method: 'get',
+        muteHttpExceptions: true
+      });
+
+      if (modelInfoResponse.getResponseCode() === 200) {
+        const modelInfo = JSON.parse(modelInfoResponse.getContentText());
+        writeModelInfoSheet(modelInfo);
+        Logger.log('✅ Aba "Info do Modelo" criada/atualizada');
+      } else {
+        Logger.log('⚠️ Não foi possível obter informações do modelo');
+      }
+    } catch (error) {
+      Logger.log(`⚠️ Erro ao buscar info do modelo: ${error.message}`);
+    }
+
     Logger.log('✅ Análise UTM com custos concluída!');
 
     SpreadsheetApp.getUi().alert(
@@ -1178,7 +1197,7 @@ function writeAnalysisSheet(period, periodData, config) {
   // Cabeçalhos
   const headers = [
     'Dimensão', 'Valor', 'Leads', 'Gasto (R$)', 'CPL (R$)',
-    '%D10', '%D8-10', 'Taxa Proj. (%)', 'ROAS Proj.',
+    '%D10', 'Taxa Proj. (%)', 'ROAS Proj.',
     'CPL Máx (R$)', 'Margem (%)', 'Tier', 'Ação'
   ];
 
@@ -1192,12 +1211,11 @@ function writeAnalysisSheet(period, periodData, config) {
   headerRange.setHorizontalAlignment('center');
 
   // Dimensões
-  const dimensions = ['campaign', 'medium', 'term', 'adset', 'ad'];
+  const dimensions = ['campaign', 'medium', 'term', 'ad'];
   const dimensionLabels = {
     'campaign': 'Campaign',
     'medium': 'Medium',
     'term': 'Term',
-    'adset': 'Adset',
     'ad': 'Ad'
   };
 
@@ -1218,7 +1236,6 @@ function writeAnalysisSheet(period, periodData, config) {
         metric.spend,
         metric.cpl,
         metric.pct_d10,
-        metric.pct_d8_10,
         metric.taxa_proj * 100,  // Converter para %
         metric.roas_proj,
         metric.cpl_max,
@@ -1276,4 +1293,176 @@ function writeAnalysisSheet(period, periodData, config) {
   sheet.getRange(lastRow + 2, 1).setFontColor('#666666');
 
   Logger.log(`✅ Aba ${sheetName} criada com ${lastRow - 1} registros`);
+}
+
+function writeModelInfoSheet(modelInfo) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetName = 'Info do Modelo';
+
+  // Deletar aba se já existir
+  let sheet = ss.getSheetByName(sheetName);
+  if (sheet) {
+    ss.deleteSheet(sheet);
+  }
+
+  // Criar nova aba
+  sheet = ss.insertSheet(sheetName);
+
+  Logger.log('📊 Criando aba: Info do Modelo');
+
+  let currentRow = 1;
+
+  // === SEÇÃO 1: INFORMAÇÕES DO MODELO ===
+  sheet.getRange(currentRow, 1).setValue('📋 INFORMAÇÕES DO MODELO');
+  sheet.getRange(currentRow, 1).setFontWeight('bold');
+  sheet.getRange(currentRow, 1).setFontSize(14);
+  sheet.getRange(currentRow, 1).setBackground('#4285F4');
+  sheet.getRange(currentRow, 1).setFontColor('#FFFFFF');
+  currentRow += 2;
+
+  const modelInfo_data = modelInfo.model_info || {};
+  const infoRows = [
+    ['Nome do Modelo:', modelInfo_data.model_name || 'N/A'],
+    ['Tipo:', modelInfo_data.model_type || 'N/A'],
+    ['Biblioteca:', `${modelInfo_data.library || 'N/A'} ${modelInfo_data.library_version || ''}`],
+    ['Data de Treinamento:', modelInfo_data.trained_at ? new Date(modelInfo_data.trained_at).toLocaleString('pt-BR') : 'N/A'],
+    ['Split:', modelInfo_data.split_type || 'N/A']
+  ];
+
+  for (const [label, value] of infoRows) {
+    sheet.getRange(currentRow, 1).setValue(label);
+    sheet.getRange(currentRow, 1).setFontWeight('bold');
+    sheet.getRange(currentRow, 2).setValue(value);
+    currentRow++;
+  }
+
+  currentRow += 2;
+
+  // === SEÇÃO 2: DADOS DE TREINAMENTO ===
+  sheet.getRange(currentRow, 1).setValue('📊 DADOS DE TREINAMENTO');
+  sheet.getRange(currentRow, 1).setFontWeight('bold');
+  sheet.getRange(currentRow, 1).setFontSize(14);
+  sheet.getRange(currentRow, 1).setBackground('#34A853');
+  sheet.getRange(currentRow, 1).setFontColor('#FFFFFF');
+  currentRow += 2;
+
+  const trainingData = modelInfo.training_data || {};
+  const temporalSplit = trainingData.temporal_split || {};
+  const targetDist = trainingData.target_distribution || {};
+
+  const trainingRows = [
+    ['Total de Registros:', trainingData.total_records || 'N/A'],
+    ['Registros de Treino:', trainingData.training_records || 'N/A'],
+    ['Registros de Teste:', trainingData.test_records || 'N/A'],
+    ['Número de Features:', trainingData.features_count || 'N/A'],
+    ['Período:', `${temporalSplit.period_start || 'N/A'} a ${temporalSplit.period_end || 'N/A'}`],
+    ['Data de Corte:', temporalSplit.cut_date || 'N/A'],
+    ['Taxa de Conversão (Treino):', targetDist.training_positive_rate ? (targetDist.training_positive_rate * 100).toFixed(2) + '%' : 'N/A'],
+    ['Taxa de Conversão (Teste):', targetDist.test_positive_rate ? (targetDist.test_positive_rate * 100).toFixed(2) + '%' : 'N/A']
+  ];
+
+  for (const [label, value] of trainingRows) {
+    sheet.getRange(currentRow, 1).setValue(label);
+    sheet.getRange(currentRow, 1).setFontWeight('bold');
+    sheet.getRange(currentRow, 2).setValue(value);
+    currentRow++;
+  }
+
+  currentRow += 2;
+
+  // === SEÇÃO 3: MÉTRICAS DE PERFORMANCE ===
+  sheet.getRange(currentRow, 1).setValue('🎯 MÉTRICAS DE PERFORMANCE');
+  sheet.getRange(currentRow, 1).setFontWeight('bold');
+  sheet.getRange(currentRow, 1).setFontSize(14);
+  sheet.getRange(currentRow, 1).setBackground('#FBBC04');
+  sheet.getRange(currentRow, 1).setFontColor('#000000');
+  currentRow += 2;
+
+  const performance = modelInfo.performance_metrics || {};
+  const perfRows = [
+    ['AUC:', performance.auc ? performance.auc.toFixed(4) : 'N/A'],
+    ['Lift Máximo:', performance.lift_maximum ? performance.lift_maximum.toFixed(2) + 'x' : 'N/A'],
+    ['Concentração Top 3 Decis:', performance.top3_decil_concentration ? performance.top3_decil_concentration.toFixed(2) + '%' : 'N/A'],
+    ['Concentração Top 5 Decis:', performance.top5_decil_concentration ? performance.top5_decil_concentration.toFixed(2) + '%' : 'N/A'],
+    ['Monotonia:', performance.monotonia_percentage ? performance.monotonia_percentage.toFixed(1) + '%' : 'N/A']
+  ];
+
+  for (const [label, value] of perfRows) {
+    sheet.getRange(currentRow, 1).setValue(label);
+    sheet.getRange(currentRow, 1).setFontWeight('bold');
+    sheet.getRange(currentRow, 2).setValue(value);
+    currentRow++;
+  }
+
+  currentRow += 2;
+
+  // === SEÇÃO 4: ANÁLISE POR DECIL ===
+  sheet.getRange(currentRow, 1).setValue('📈 ANÁLISE POR DECIL');
+  sheet.getRange(currentRow, 1).setFontWeight('bold');
+  sheet.getRange(currentRow, 1).setFontSize(14);
+  sheet.getRange(currentRow, 1).setBackground('#EA4335');
+  sheet.getRange(currentRow, 1).setFontColor('#FFFFFF');
+  currentRow += 2;
+
+  const decilHeaders = ['Decil', 'Leads', 'Conversões', 'Taxa Conv.', '% Total Conv.', 'Lift'];
+  sheet.getRange(currentRow, 1, 1, decilHeaders.length).setValues([decilHeaders]);
+  sheet.getRange(currentRow, 1, 1, decilHeaders.length).setFontWeight('bold');
+  sheet.getRange(currentRow, 1, 1, decilHeaders.length).setBackground('#666666');
+  sheet.getRange(currentRow, 1, 1, decilHeaders.length).setFontColor('#FFFFFF');
+  currentRow++;
+
+  const decilAnalysis = modelInfo.decil_analysis || {};
+  for (let i = 1; i <= 10; i++) {
+    const decilKey = `decil_${i}`;
+    const decilData = decilAnalysis[decilKey] || {};
+
+    const row = [
+      `D${i}`,
+      decilData.total_leads || 0,
+      decilData.conversions || 0,
+      decilData.conversion_rate ? (decilData.conversion_rate * 100).toFixed(2) + '%' : '0.00%',
+      decilData.pct_total_conversions ? decilData.pct_total_conversions.toFixed(2) + '%' : '0.00%',
+      decilData.lift ? decilData.lift.toFixed(2) + 'x' : '0.00x'
+    ];
+
+    sheet.getRange(currentRow, 1, 1, row.length).setValues([row]);
+    currentRow++;
+  }
+
+  currentRow += 2;
+
+  // === SEÇÃO 5: TOP 20 FEATURE IMPORTANCES ===
+  sheet.getRange(currentRow, 1).setValue('🔍 TOP 20 FEATURES MAIS IMPORTANTES');
+  sheet.getRange(currentRow, 1).setFontWeight('bold');
+  sheet.getRange(currentRow, 1).setFontSize(14);
+  sheet.getRange(currentRow, 1).setBackground('#9C27B0');
+  sheet.getRange(currentRow, 1).setFontColor('#FFFFFF');
+  currentRow += 2;
+
+  const featureHeaders = ['Rank', 'Feature', 'Importância'];
+  sheet.getRange(currentRow, 1, 1, featureHeaders.length).setValues([featureHeaders]);
+  sheet.getRange(currentRow, 1, 1, featureHeaders.length).setFontWeight('bold');
+  sheet.getRange(currentRow, 1, 1, featureHeaders.length).setBackground('#666666');
+  sheet.getRange(currentRow, 1, 1, featureHeaders.length).setFontColor('#FFFFFF');
+  currentRow++;
+
+  const featureImportances = modelInfo.feature_importances || [];
+  for (let i = 0; i < featureImportances.length; i++) {
+    const feature = featureImportances[i];
+    const row = [
+      i + 1,
+      feature.feature || 'N/A',
+      feature.importance ? (feature.importance * 100).toFixed(2) + '%' : '0.00%'
+    ];
+
+    sheet.getRange(currentRow, 1, 1, row.length).setValues([row]);
+    currentRow++;
+  }
+
+  // Ajustar largura das colunas
+  for (let i = 1; i <= 6; i++) {
+    sheet.autoResizeColumn(i);
+  }
+
+  Logger.log('✅ Aba "Info do Modelo" criada com sucesso');
 }

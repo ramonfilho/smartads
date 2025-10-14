@@ -152,7 +152,7 @@ def determine_action(
         if margin >= 0:
             return "Manter"
         else:
-            return "Pausar"
+            return "Remover"
 
     else:
         # Dimensão desconhecida, usar lógica padrão de orçamento
