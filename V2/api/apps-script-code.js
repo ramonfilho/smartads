@@ -1,1119 +1,382 @@
-const API_URL = 'https://smart-ads-api-12955519745.us-central1.run.app/predict/batch';
+/**
+ * ========================================
+ * SMART ADS - LEAD SCORING ML AUTOMATION
+ * ========================================
+ *
+ * Sistema automatizado de predições ML e análise UTM
+ * Execução diária às 08:00 com análises 1D, 3D, 7D
+ */
+
+// =============================================================================
+// CONFIGURAÇÕES
+// =============================================================================
+
+const API_URL = 'https://smart-ads-api-12955519745.us-central1.run.app';
 const SERVICE_ACCOUNT_EMAIL = 'smart-ads-451319@appspot.gserviceaccount.com';
-
-function getPredictions() {
-  try {
-    Logger.log('🚀 Iniciando busca de predições...');
-
-    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = spreadsheet.getSheetByName('[LF] Pesquisa');
-
-    if (!sheet) {
-      throw new Error('Aba "[LF] Pesquisa" não encontrada!');
-    }
-
-    const lastRow = sheet.getMaxRows();
-    const lastCol = sheet.getMaxColumns();
-    const dataRange = sheet.getRange(1, 1, lastRow, lastCol);
-    const values = dataRange.getValues();
-
-    const nonEmptyValues = values.filter((row, index) => {
-      if (index === 0) return true;
-      return row.some(cell => cell !== null && cell !== undefined && cell !== '');
-    });
-
-    Logger.log(`📊 Linhas totais na planilha: ${lastRow}, após filtrar vazias: ${nonEmptyValues.length}`);
-
-    if (nonEmptyValues.length <= 1) {
-      throw new Error('Planilha vazia ou só tem cabeçalho');
-    }
-
-    const headers = nonEmptyValues[0];
-    Logger.log(`📋 Encontrados ${headers.length} campos: ${headers.join(', ')}`);
-
-    const leadScoreColCheck = headers.indexOf('lead_score');
-    const dataColIndex = headers.indexOf('Data');
-
-    // Calcular timestamp de 24 horas atrás
-    const now = new Date();
-    const twentyFourHoursAgo = new Date(now.getTime() - (24 * 60 * 60 * 1000));
-
-    const leads = [];
-    for (let i = 1; i < nonEmptyValues.length; i++) {
-      const row = nonEmptyValues[i];
-
-      // Pular se lead já tem score
-      if (leadScoreColCheck !== -1 && row[leadScoreColCheck]) {
-        continue;
-      }
-
-      // Pular se lead não é das últimas 24 horas
-      if (dataColIndex !== -1 && row[dataColIndex]) {
-        const leadDate = new Date(row[dataColIndex]);
-        if (leadDate < twentyFourHoursAgo) {
-          continue;
-        }
-      }
-
-      const leadData = {};
-      headers.forEach((header, index) => {
-        leadData[header] = row[index];
-      });
-
-      const emailValue = row[headers.indexOf('E-mail')];
-      const email = emailValue ? String(emailValue) : null;
-
-      leads.push({
-        data: leadData,
-        email: email,
-        row_id: (i + 1).toString()
-      });
-    }
-
-    if (leads.length === 0) {
-      Logger.log('✅ Nenhum lead novo para processar nas últimas 24h');
-      SpreadsheetApp.getUi().alert(
-        'Sem leads novos',
-        'Nenhum lead novo das últimas 24 horas para processar.',
-        SpreadsheetApp.getUi().ButtonSet.OK
-      );
-      return;
-    }
-
-    Logger.log(`📊 Processando ${leads.length} leads das últimas 24h sem predições`);
-
-    const MAX_BATCH_SIZE = 600;
-    const numBatches = Math.ceil(leads.length / MAX_BATCH_SIZE);
-    const idealBatchSize = Math.ceil(leads.length / numBatches);
-
-    Logger.log(`🔄 Dividindo ${leads.length} leads em ${numBatches} lotes equilibrados (~${idealBatchSize} leads cada)`);
-
-    const batches = [];
-    for (let i = 0; i < leads.length; i += idealBatchSize) {
-      batches.push(leads.slice(i, i + idealBatchSize));
-    }
-
-    const batchSizes = batches.map(b => b.length).join(', ');
-    Logger.log(`📦 Tamanhos dos lotes: [${batchSizes}]`);
-
-    let allPredictions = [];
-    let totalProcessingTime = 0;
-
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-      const batch = batches[batchIndex];
-      Logger.log(`📦 Processando lote ${batchIndex + 1}/${batches.length} (${batch.length} leads)...`);
-
-      const options = {
-        method: 'post',
-        contentType: 'application/json',
-        payload: JSON.stringify({
-          leads: batch
-        }),
-        muteHttpExceptions: true
-      };
-
-      const response = UrlFetchApp.fetch(API_URL, options);
-      const statusCode = response.getResponseCode();
-
-      if (statusCode !== 200) {
-        throw new Error(`API retornou erro ${statusCode} no lote ${batchIndex + 1}: ${response.getContentText()}`);
-      }
-
-      const result = JSON.parse(response.getContentText());
-      allPredictions = allPredictions.concat(result.predictions);
-      totalProcessingTime += result.processing_time_seconds;
-
-      Logger.log(`✅ Lote ${batchIndex + 1} concluído em ${result.processing_time_seconds}s`);
-
-      if (batchIndex < batches.length - 1) {
-        Utilities.sleep(500);
-      }
-    }
-
-    Logger.log(`✅ Total: ${allPredictions.length} predições em ${totalProcessingTime.toFixed(2)}s`);
-
-    let leadScoreCol = headers.indexOf('lead_score');
-    let decileCol = headers.indexOf('decile');
-    let timestampCol = headers.indexOf('data_processamento');
-
-    if (leadScoreCol === -1) {
-      leadScoreCol = headers.length;
-      sheet.getRange(1, leadScoreCol + 1).setValue('lead_score');
-      headers.push('lead_score');
-    }
-
-    if (decileCol === -1) {
-      decileCol = headers.length;
-      sheet.getRange(1, decileCol + 1).setValue('decile');
-      headers.push('decile');
-    }
-
-    if (timestampCol === -1) {
-      timestampCol = headers.length;
-      sheet.getRange(1, timestampCol + 1).setValue('data_processamento');
-      headers.push('data_processamento');
-    }
-
-    Logger.log('📝 Escrevendo predições na planilha...');
-
-    const currentTimestamp = new Date();
-
-    allPredictions.forEach(pred => {
-      const rowNum = parseInt(pred.row_id);
-      try {
-        const scoreCell = sheet.getRange(rowNum, leadScoreCol + 1);
-        scoreCell.setValue(pred.lead_score);
-        scoreCell.setNumberFormat('0.0000');
-
-        sheet.getRange(rowNum, decileCol + 1).setValue(pred.decile);
-        sheet.getRange(rowNum, timestampCol + 1).setValue(currentTimestamp);
-      } catch (e) {
-        Logger.log(`⚠️ Erro ao escrever linha ${rowNum}: ${e.message}`);
-      }
-    });
-
-    Logger.log('✅ Predições escritas com sucesso');
-
-    const minScore = Math.min(...allPredictions.map(p => p.lead_score));
-    const maxScore = Math.max(...allPredictions.map(p => p.lead_score));
-
-    SpreadsheetApp.getUi().alert(
-      'Sucesso!',
-      `${allPredictions.length} leads processados em ${totalProcessingTime.toFixed(2)}s\n` +
-      `Processados em ${batches.length} lote(s)\n\n` +
-      `Scores: ${minScore.toFixed(3)} - ${maxScore.toFixed(3)}`,
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
-
-  } catch (error) {
-    Logger.log(`❌ Erro: ${error.message}`);
-    Logger.log(error.stack);
-
-    SpreadsheetApp.getUi().alert(
-      'Erro',
-      `Falha ao buscar predições:\n${error.message}`,
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
-
-    throw error;
-  }
-}
-
-function createDailyTrigger() {
-  // Remove triggers existentes da função getPredictions
-  const triggers = ScriptApp.getProjectTriggers();
-  triggers.forEach(trigger => {
-    if (trigger.getHandlerFunction() === 'getPredictions') {
-      ScriptApp.deleteTrigger(trigger);
-    }
-  });
-
-  // Criar novo trigger diário às 8h da manhã
-  ScriptApp.newTrigger('getPredictions')
-    .timeBased()
-    .atHour(8)
-    .everyDays(1)
-    .create();
-
-  Logger.log('✅ Trigger criado: getPredictions rodará todo dia às 8h');
-
-  SpreadsheetApp.getUi().alert(
-    'Agendamento configurado!',
-    'A função getPredictions será executada automaticamente todo dia às 8h da manhã.\n\n' +
-    'Apenas leads das últimas 24 horas sem predições serão processados.',
-    SpreadsheetApp.getUi().ButtonSet.OK
-  );
-}
-
-// Manter função antiga para compatibilidade (agora cria trigger diário)
-function createTimeDrivenTrigger() {
-  createDailyTrigger();
-}
-
-function removeTimeDrivenTrigger() {
-  const triggers = ScriptApp.getProjectTriggers();
-  triggers.forEach(trigger => {
-    if (trigger.getHandlerFunction() === 'getPredictions') {
-      ScriptApp.deleteTrigger(trigger);
-    }
-  });
-
-  Logger.log('✅ Triggers removidos');
-
-  SpreadsheetApp.getUi().alert(
-    'Agendamento removido!',
-    'A execução automática foi desativada.',
-    SpreadsheetApp.getUi().ButtonSet.OK
-  );
-}
-
-function clearPredictions() {
-  try {
-    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = spreadsheet.getSheetByName('[LF] Pesquisa');
-
-    if (!sheet) {
-      throw new Error('Aba "[LF] Pesquisa" não encontrada!');
-    }
-    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-
-    const leadScoreCol = headers.indexOf('lead_score');
-    const decileCol = headers.indexOf('decile');
-
-    if (leadScoreCol === -1 && decileCol === -1) {
-      SpreadsheetApp.getUi().alert(
-        'Nenhuma predição encontrada',
-        'As colunas lead_score e decile não existem na planilha.',
-        SpreadsheetApp.getUi().ButtonSet.OK
-      );
-      return;
-    }
-
-    const ui = SpreadsheetApp.getUi();
-    const response = ui.alert(
-      'Confirmar limpeza',
-      'Deseja realmente limpar TODAS as predições (lead_score e decile)?',
-      ui.ButtonSet.YES_NO
-    );
-
-    if (response !== ui.Button.YES) {
-      Logger.log('Limpeza cancelada pelo usuário');
-      return;
-    }
-
-    const lastRow = sheet.getLastRow();
-
-    if (leadScoreCol !== -1) {
-      sheet.getRange(2, leadScoreCol + 1, lastRow - 1, 1).clearContent();
-      Logger.log(`✅ Coluna lead_score limpa (${lastRow - 1} linhas)`);
-    }
-
-    if (decileCol !== -1) {
-      sheet.getRange(2, decileCol + 1, lastRow - 1, 1).clearContent();
-      Logger.log(`✅ Coluna decile limpa (${lastRow - 1} linhas)`);
-    }
-
-    SpreadsheetApp.getUi().alert(
-      'Predições limpas!',
-      `${lastRow - 1} linhas foram limpas com sucesso.`,
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
-
-  } catch (error) {
-    Logger.log(`❌ Erro ao limpar predições: ${error.message}`);
-    SpreadsheetApp.getUi().alert(
-      'Erro',
-      `Falha ao limpar predições:\n${error.message}`,
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
-  }
-}
-
-function generateUTMAnalysis() {
-  try {
-    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = spreadsheet.getSheetByName('[LF] Pesquisa');
-
-    if (!sheet) {
-      throw new Error('Aba "[LF] Pesquisa" não encontrada!');
-    }
-    const dataRange = sheet.getDataRange();
-    const values = dataRange.getValues();
-    const headers = values[0];
-
-    const leadScoreCol = headers.indexOf('lead_score');
-    const decileCol = headers.indexOf('decile');
-    const timestampCol = headers.indexOf('data_processamento');
-
-    if (leadScoreCol === -1 || decileCol === -1) {
-      SpreadsheetApp.getUi().alert(
-        'Erro',
-        'Execute "Buscar Predições" primeiro para gerar lead_score e decile.',
-        SpreadsheetApp.getUi().ButtonSet.OK
-      );
-      return;
-    }
-
-    if (timestampCol === -1) {
-      SpreadsheetApp.getUi().alert(
-        'Erro',
-        'Coluna data_processamento não encontrada. Execute "Buscar Predições" novamente.',
-        SpreadsheetApp.getUi().ButtonSet.OK
-      );
-      return;
-    }
-
-    const utmColumns = {
-      'Campaign': headers.indexOf('Campaign'),
-      'Medium': headers.indexOf('Medium'),
-      'Content': headers.indexOf('Content'),
-      'Term': headers.indexOf('Term')
-    };
-
-    const weights = {
-      'D10': 10.0, 'D9': 3.1, 'D8': 1.4, 'D7': 1.4, 'D6': 0.7,
-      'D5': -0.1, 'D4': -0.9, 'D3': -1.8, 'D2': -7.5, 'D1': -7.5
-    };
-
-    function calculateQualityScore(leads) {
-      let score = 0;
-      const total = leads.length;
-
-      for (const [decil, weight] of Object.entries(weights)) {
-        const count = leads.filter(l => l.decile === decil).length;
-        const pct = (count / total) * 100;
-        score += pct * weight;
-      }
-
-      return score;
-    }
-
-    // Encontrar o timestamp mais recente (última execução)
-    let latestTimestamp = null;
-    for (let i = 1; i < values.length; i++) {
-      const timestamp = values[i][timestampCol];
-      if (timestamp && (!latestTimestamp || timestamp > latestTimestamp)) {
-        latestTimestamp = timestamp;
-      }
-    }
-
-    if (!latestTimestamp) {
-      SpreadsheetApp.getUi().alert(
-        'Erro',
-        'Nenhum timestamp encontrado. Execute "Buscar Predições" primeiro.',
-        SpreadsheetApp.getUi().ButtonSet.OK
-      );
-      return;
-    }
-
-    // Filtrar apenas leads processados na última execução
-    const allLeads = [];
-    for (let i = 1; i < values.length; i++) {
-      const row = values[i];
-      const rowTimestamp = row[timestampCol];
-
-      // Comparar timestamps (mesma data/hora)
-      if (row[leadScoreCol] && row[decileCol] && rowTimestamp &&
-          rowTimestamp.getTime() === latestTimestamp.getTime()) {
-        allLeads.push({
-          campaign: row[utmColumns['Campaign']],
-          medium: row[utmColumns['Medium']],
-          content: row[utmColumns['Content']],
-          term: row[utmColumns['Term']],
-          lead_score: row[leadScoreCol],
-          decile: row[decileCol]
-        });
-      }
-    }
-
-    if (allLeads.length === 0) {
-      SpreadsheetApp.getUi().alert(
-        'Erro',
-        'Nenhum lead encontrado com o timestamp da última execução.',
-        SpreadsheetApp.getUi().ButtonSet.OK
-      );
-      return;
-    }
-
-    Logger.log(`📊 Analisando ${allLeads.length} leads da última execução (${latestTimestamp})`);
-
-    const utmAnalysis = {};
-
-    for (const [dimension, colIndex] of Object.entries(utmColumns)) {
-      if (colIndex === -1) continue;
-
-      const groups = {};
-
-      allLeads.forEach(lead => {
-        const key = lead[dimension.toLowerCase()];
-        if (!key || key === '') return;
-
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(lead);
-      });
-
-      const results = [];
-
-      for (const [value, leads] of Object.entries(groups)) {
-        const total = leads.length;
-        const pctD10 = (leads.filter(l => l.decile === 'D10').length / total) * 100;
-        const pctD8_10 = (leads.filter(l => ['D8','D9','D10'].includes(l.decile)).length / total) * 100;
-        const qualityScore = calculateQualityScore(leads);
-
-        let tier, acao;
-        if (qualityScore > 200) {
-          tier = 'S'; acao = '🔥 Aumentar +50%';
-        } else if (qualityScore > 150) {
-          tier = 'A'; acao = '✅ Aumentar +30%';
-        } else if (qualityScore > 100) {
-          tier = 'B'; acao = '✅ Aumentar +15%';
-        } else if (qualityScore > 50) {
-          tier = 'C'; acao = '⚠️  Manter';
-        } else if (qualityScore > 0) {
-          tier = 'D'; acao = '⚠️  Reduzir -20%';
-        } else {
-          tier = 'F'; acao = '❌ Reduzir -50%';
-        }
-
-        results.push({
-          value: value,
-          total: total,
-          pctD10: pctD10,
-          pctD8_10: pctD8_10,
-          qualityScore: qualityScore,
-          tier: tier,
-          acao: acao
-        });
-      }
-
-      results.sort((a, b) => b.qualityScore - a.qualityScore);
-      utmAnalysis[dimension] = results;
-    }
-
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    let analysisSheet = ss.getSheetByName('Análise UTM');
-
-    if (analysisSheet) {
-      analysisSheet.clear();
-    } else {
-      analysisSheet = ss.insertSheet('Análise UTM');
-    }
-
-    let currentRow = 1;
-
-    // Título principal com cor de fundo
-    const titleRange = analysisSheet.getRange(currentRow, 1, 1, 7);
-    titleRange.merge()
-      .setValue(`ANÁLISE DE PERFORMANCE POR UTM`)
-      .setFontWeight('bold')
-      .setFontSize(16)
-      .setBackground('#4a86e8')
-      .setFontColor('#ffffff')
-      .setHorizontalAlignment('center')
-      .setVerticalAlignment('middle');
-    analysisSheet.setRowHeight(currentRow, 40);
-    currentRow++;
-
-    // Subtítulo com info
-    const subtitleRange = analysisSheet.getRange(currentRow, 1, 1, 7);
-    subtitleRange.merge()
-      .setValue(`${allLeads.length} leads processados em ${latestTimestamp.toLocaleString('pt-BR')}`)
-      .setFontSize(10)
-      .setFontColor('#666666')
-      .setHorizontalAlignment('center');
-    currentRow += 2;
-
-    for (const [dimension, results] of Object.entries(utmAnalysis)) {
-      // Cabeçalho da dimensão
-      const dimHeader = analysisSheet.getRange(currentRow, 1, 1, 7);
-      dimHeader.merge()
-        .setValue(`${dimension.toUpperCase()} (${results.length} categorias)`)
-        .setFontWeight('bold')
-        .setFontSize(12)
-        .setBackground('#f3f3f3')
-        .setHorizontalAlignment('left');
-      analysisSheet.setRowHeight(currentRow, 30);
-      currentRow++;
-
-      // Cabeçalhos das colunas
-      const headerRow = ['Valor', 'Total Leads', '%D10', '%D8-D10', 'Quality Score', 'Tier', 'Ação'];
-      const headerRange = analysisSheet.getRange(currentRow, 1, 1, 7);
-      headerRange.setValues([headerRow])
-        .setFontWeight('bold')
-        .setBackground('#434343')
-        .setFontColor('#ffffff')
-        .setHorizontalAlignment('center')
-        .setVerticalAlignment('middle');
-      analysisSheet.setRowHeight(currentRow, 25);
-      currentRow++;
-
-      // Preparar dados em batch
-      const batchData = [];
-      const tierSRows = [];
-      const tierARows = [];
-      const tierBRows = [];
-      const tierFRows = [];
-
-      results.forEach((r, index) => {
-        batchData.push([
-          r.value, r.total, r.pctD10.toFixed(1) + '%', r.pctD8_10.toFixed(1) + '%',
-          r.qualityScore.toFixed(1), r.tier, r.acao
-        ]);
-
-        const rowNum = currentRow + index;
-        if (r.tier === 'S') {
-          tierSRows.push(rowNum);
-        } else if (r.tier === 'A') {
-          tierARows.push(rowNum);
-        } else if (r.tier === 'B') {
-          tierBRows.push(rowNum);
-        } else if (r.tier === 'F') {
-          tierFRows.push(rowNum);
-        }
-      });
-
-      // Escrever tudo de uma vez
-      if (batchData.length > 0) {
-        const dataRange = analysisSheet.getRange(currentRow, 1, batchData.length, 7);
-        dataRange.setValues(batchData)
-          .setVerticalAlignment('middle');
-
-        // Alinhar colunas numéricas à direita
-        analysisSheet.getRange(currentRow, 2, batchData.length, 1).setHorizontalAlignment('right');
-        analysisSheet.getRange(currentRow, 3, batchData.length, 3).setHorizontalAlignment('center');
-        analysisSheet.getRange(currentRow, 6, batchData.length, 1).setHorizontalAlignment('center');
-
-        // Aplicar cores por tier
-        tierSRows.forEach(row => {
-          analysisSheet.getRange(row, 1, 1, 7).setBackground('#b7e1cd').setFontWeight('bold');
-        });
-        tierARows.forEach(row => {
-          analysisSheet.getRange(row, 1, 1, 7).setBackground('#d9ead3');
-        });
-        tierBRows.forEach(row => {
-          analysisSheet.getRange(row, 1, 1, 7).setBackground('#fff2cc');
-        });
-        tierFRows.forEach(row => {
-          analysisSheet.getRange(row, 1, 1, 7).setBackground('#f4cccc');
-        });
-
-        // Adicionar bordas
-        dataRange.setBorder(true, true, true, true, true, true, '#cccccc', SpreadsheetApp.BorderStyle.SOLID);
-
-        currentRow += batchData.length;
-      }
-
-      currentRow += 2;
-    }
-
-    // Auto-resize todas as colunas
-    for (let col = 1; col <= 7; col++) {
-      analysisSheet.autoResizeColumn(col);
-    }
-
-    // Congelar primeira linha (título)
-    analysisSheet.setFrozenRows(1);
-
-    SpreadsheetApp.getUi().alert(
-      'Análise Concluída!',
-      `Aba "Análise UTM" criada com sucesso.\n\nAnalisados ${allLeads.length} leads da última execução.\n\nDimensões: Campaign, Medium, Content, Term`,
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
-
-  } catch (error) {
-    Logger.log(`Erro ao gerar análise UTM: ${error.message}`);
-    SpreadsheetApp.getUi().alert(
-      'Erro',
-      `Falha ao gerar análise UTM:\n${error.message}`,
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
-  }
-}
-
-function getPredictionsSinceLastRun() {
-  try {
-    Logger.log('🚀 Iniciando busca de predições desde a última execução...');
-
-    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = spreadsheet.getSheetByName('[LF] Pesquisa');
-
-    if (!sheet) {
-      throw new Error('Aba "[LF] Pesquisa" não encontrada!');
-    }
-
-    const lastRow = sheet.getMaxRows();
-    const lastCol = sheet.getMaxColumns();
-    const dataRange = sheet.getRange(1, 1, lastRow, lastCol);
-    const values = dataRange.getValues();
-
-    const nonEmptyValues = values.filter((row, index) => {
-      if (index === 0) return true;
-      return row.some(cell => cell !== null && cell !== undefined && cell !== '');
-    });
-
-    Logger.log(`📊 Linhas totais na planilha: ${lastRow}, após filtrar vazias: ${nonEmptyValues.length}`);
-
-    if (nonEmptyValues.length <= 1) {
-      throw new Error('Planilha vazia ou só tem cabeçalho');
-    }
-
-    const headers = nonEmptyValues[0];
-    Logger.log(`📋 Encontrados ${headers.length} campos: ${headers.join(', ')}`);
-
-    const leadScoreColCheck = headers.indexOf('lead_score');
-    const dataColIndex = headers.indexOf('Data');
-    const dataProcessamentoColIndex = headers.indexOf('data_processamento');
-
-    // Encontrar a última data de LEAD que foi processado (tem score)
-    let lastProcessedLeadDate = null;
-    if (leadScoreColCheck !== -1 && dataColIndex !== -1) {
-      for (let i = 1; i < nonEmptyValues.length; i++) {
-        const hasScore = nonEmptyValues[i][leadScoreColCheck];
-        const leadDate = nonEmptyValues[i][dataColIndex];
-
-        // Se tem score, pegar a data do lead
-        if (hasScore && leadDate) {
-          if (!lastProcessedLeadDate || leadDate > lastProcessedLeadDate) {
-            lastProcessedLeadDate = leadDate;
-          }
-        }
-      }
-    }
-
-    if (lastProcessedLeadDate) {
-      Logger.log(`📅 Último lead processado tinha data: ${lastProcessedLeadDate}`);
-    } else {
-      Logger.log(`📅 Nenhuma execução anterior encontrada - processando todos os leads sem score`);
-    }
-
-    const leads = [];
-    for (let i = 1; i < nonEmptyValues.length; i++) {
-      const row = nonEmptyValues[i];
-
-      // Pular se lead já tem score
-      if (leadScoreColCheck !== -1 && row[leadScoreColCheck]) {
-        continue;
-      }
-
-      // Se há última execução, pegar apenas leads com data >= último processado
-      // Isso garante que leads da mesma data que não foram processados sejam incluídos
-      if (lastProcessedLeadDate && dataColIndex !== -1 && row[dataColIndex]) {
-        const leadDate = new Date(row[dataColIndex]);
-        if (leadDate < lastProcessedLeadDate) {
-          continue;
-        }
-        // Leads com data >= lastProcessedLeadDate são processados (se não tiverem score)
-      }
-
-      const leadData = {};
-      headers.forEach((header, index) => {
-        leadData[header] = row[index];
-      });
-
-      const emailValue = row[headers.indexOf('E-mail')];
-      const email = emailValue ? String(emailValue) : null;
-
-      leads.push({
-        data: leadData,
-        email: email,
-        row_id: (i + 1).toString()
-      });
-    }
-
-    if (leads.length === 0) {
-      Logger.log('✅ Nenhum lead novo para processar desde a última execução');
-      SpreadsheetApp.getUi().alert(
-        'Sem leads novos',
-        'Nenhum lead novo desde a última predição para processar.',
-        SpreadsheetApp.getUi().ButtonSet.OK
-      );
-      return;
-    }
-
-    const timeDescription = lastProcessedLeadDate
-      ? `desde ${lastProcessedLeadDate.toLocaleString('pt-BR')}`
-      : 'sem predições';
-    Logger.log(`📊 Processando ${leads.length} leads ${timeDescription}`);
-
-    const MAX_BATCH_SIZE = 600;
-    const numBatches = Math.ceil(leads.length / MAX_BATCH_SIZE);
-    const idealBatchSize = Math.ceil(leads.length / numBatches);
-
-    Logger.log(`🔄 Dividindo ${leads.length} leads em ${numBatches} lotes equilibrados (~${idealBatchSize} leads cada)`);
-
-    const batches = [];
-    for (let i = 0; i < leads.length; i += idealBatchSize) {
-      batches.push(leads.slice(i, i + idealBatchSize));
-    }
-
-    const batchSizes = batches.map(b => b.length).join(', ');
-    Logger.log(`📦 Tamanhos dos lotes: [${batchSizes}]`);
-
-    let allPredictions = [];
-    let totalProcessingTime = 0;
-
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-      const batch = batches[batchIndex];
-      Logger.log(`📦 Processando lote ${batchIndex + 1}/${batches.length} (${batch.length} leads)...`);
-
-      const options = {
-        method: 'post',
-        contentType: 'application/json',
-        payload: JSON.stringify({
-          leads: batch
-        }),
-        muteHttpExceptions: true
-      };
-
-      const response = UrlFetchApp.fetch(API_URL, options);
-      const statusCode = response.getResponseCode();
-
-      if (statusCode !== 200) {
-        throw new Error(`API retornou erro ${statusCode} no lote ${batchIndex + 1}: ${response.getContentText()}`);
-      }
-
-      const result = JSON.parse(response.getContentText());
-      allPredictions = allPredictions.concat(result.predictions);
-      totalProcessingTime += result.processing_time_seconds;
-
-      Logger.log(`✅ Lote ${batchIndex + 1} concluído em ${result.processing_time_seconds}s`);
-
-      if (batchIndex < batches.length - 1) {
-        Utilities.sleep(500);
-      }
-    }
-
-    Logger.log(`✅ Total: ${allPredictions.length} predições em ${totalProcessingTime.toFixed(2)}s`);
-
-    let leadScoreCol = headers.indexOf('lead_score');
-    let decileCol = headers.indexOf('decile');
-    let timestampCol = headers.indexOf('data_processamento');
-
-    if (leadScoreCol === -1) {
-      leadScoreCol = headers.length;
-      sheet.getRange(1, leadScoreCol + 1).setValue('lead_score');
-      headers.push('lead_score');
-    }
-
-    if (decileCol === -1) {
-      decileCol = headers.length;
-      sheet.getRange(1, decileCol + 1).setValue('decile');
-      headers.push('decile');
-    }
-
-    if (timestampCol === -1) {
-      timestampCol = headers.length;
-      sheet.getRange(1, timestampCol + 1).setValue('data_processamento');
-      headers.push('data_processamento');
-    }
-
-    Logger.log('📝 Escrevendo predições na planilha...');
-
-    const currentTimestamp = new Date();
-
-    allPredictions.forEach(pred => {
-      const rowNum = parseInt(pred.row_id);
-      try {
-        const scoreCell = sheet.getRange(rowNum, leadScoreCol + 1);
-        scoreCell.setValue(pred.lead_score);
-        scoreCell.setNumberFormat('0.0000');
-
-        sheet.getRange(rowNum, decileCol + 1).setValue(pred.decile);
-        sheet.getRange(rowNum, timestampCol + 1).setValue(currentTimestamp);
-      } catch (e) {
-        Logger.log(`⚠️ Erro ao escrever linha ${rowNum}: ${e.message}`);
-      }
-    });
-
-    Logger.log('✅ Predições escritas com sucesso');
-
-    const minScore = Math.min(...allPredictions.map(p => p.lead_score));
-    const maxScore = Math.max(...allPredictions.map(p => p.lead_score));
-
-    SpreadsheetApp.getUi().alert(
-      'Sucesso!',
-      `${allPredictions.length} leads processados em ${totalProcessingTime.toFixed(2)}s\n` +
-      `Processados em ${batches.length} lote(s)\n` +
-      (lastProcessedLeadDate ? `Desde: ${lastProcessedLeadDate.toLocaleString('pt-BR')}\n` : 'Primeira execução\n') +
-      `\nScores: ${minScore.toFixed(3)} - ${maxScore.toFixed(3)}`,
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
-
-  } catch (error) {
-    Logger.log(`❌ Erro: ${error.message}`);
-    Logger.log(error.stack);
-
-    SpreadsheetApp.getUi().alert(
-      'Erro',
-      `Falha ao buscar predições:\n${error.message}`,
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
-
-    throw error;
-  }
-}
+const META_ACCOUNT_ID = 'act_188005769808959';  // Los Angeles Producciones LTDA (PRODUÇÃO)
+
+// =============================================================================
+// MENU
+// =============================================================================
 
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
   ui.createMenu('Smart Ads')
-    .addItem('Buscar Predições (últimas 24h)', 'getPredictions')
-    .addItem('Buscar Predições (desde última execução)', 'getPredictionsSinceLastRun')
+    .addItem('Ativar ML', 'activateML')
     .addSeparator()
-    .addItem('Gerar Análise UTM', 'generateUTMAnalysis')
-    .addItem('💰 Análise UTM com Custos', 'generateUTMAnalysisWithCosts')
-    .addSeparator()
-    .addItem('Limpar Predições', 'clearPredictions')
-    .addSeparator()
-    .addItem('Configurar Agendamento (todo dia às 8h)', 'createDailyTrigger')
-    .addItem('Remover Agendamento', 'removeTimeDrivenTrigger')
+    .addItem('Testar Conexão', 'testConnection')
     .addToUi();
 }
 
-function testConnection() {
+// =============================================================================
+// FUNÇÃO PRINCIPAL: ATIVAR ML
+// =============================================================================
+
+/**
+ * Ativa sistema ML:
+ * 1. Verifica e completa predições dos últimos 7 dias
+ * 2. Cria trigger diário para 08:00
+ * 3. Executa primeira atualização imediatamente
+ */
+function activateML() {
   try {
-    const healthUrl = 'https://smart-ads-api-12955519745.us-central1.run.app/health';
+    Logger.log('🚀 Ativando Smart Ads ML...');
 
-    const options = {
-      method: 'get',
-      muteHttpExceptions: true
-    };
+    const ui = SpreadsheetApp.getUi();
 
-    const response = UrlFetchApp.fetch(healthUrl, options);
-    const result = JSON.parse(response.getContentText());
+    // Etapa 1: Completar predições dos últimos 7 dias
+    Logger.log('📊 Verificando predições dos últimos 7 dias...');
+    const missingBlocks = checkMissingPredictions7D();
 
-    Logger.log('✅ Conexão OK!');
-    Logger.log(JSON.stringify(result, null, 2));
+    if (missingBlocks.length > 0) {
+      Logger.log(`⚠️ Encontrados ${missingBlocks.length} blocos de 24h sem predições`);
 
-    SpreadsheetApp.getUi().alert(
-      'Conexão OK!',
-      `Status: ${result.status}\nPipeline: ${result.pipeline_status}\nVersão: ${result.version}`,
-      SpreadsheetApp.getUi().ButtonSet.OK
+      for (let i = 0; i < missingBlocks.length; i++) {
+        const block = missingBlocks[i];
+        Logger.log(`🔄 Gerando predições ${i+1}/${missingBlocks.length}: ${block.start.toLocaleDateString()}`);
+        generatePredictionsFor24hBlock(block.start, block.end);
+      }
+
+      Logger.log('✅ Todas as predições dos últimos 7 dias foram geradas');
+    } else {
+      Logger.log('✅ Todos os últimos 7 dias já possuem predições');
+    }
+
+    // Etapa 2: Criar trigger diário às 08:00
+    Logger.log('⏰ Configurando execução diária às 08:00...');
+    removeDailyTrigger();  // Remove trigger antigo se existir
+    createDailyTrigger();
+
+    // Etapa 3: Executar primeira atualização
+    Logger.log('🔄 Executando primeira atualização...');
+    updateUTMAnalysis();
+    updateModelInfoIfChanged();
+
+    Logger.log('✅ Smart Ads ML ativado com sucesso!');
+
+    ui.alert(
+      'ML Ativado',
+      'Smart Ads ML foi ativado com sucesso!\n\n' +
+      '✅ Predições dos últimos 7 dias: OK\n' +
+      '✅ Execução diária às 08:00: Configurada\n' +
+      '✅ Análises UTM: Atualizadas\n\n' +
+      'O sistema irá rodar automaticamente todos os dias às 08:00.',
+      ui.ButtonSet.OK
     );
 
   } catch (error) {
-    Logger.log(`❌ Erro de conexão: ${error.message}`);
+    Logger.log(`❌ Erro ao ativar ML: ${error.message}`);
+    Logger.log(error.stack);
 
     SpreadsheetApp.getUi().alert(
-      'Erro de Conexão',
-      `Não foi possível conectar à API:\n${error.message}`,
+      'Erro ao Ativar ML',
+      `Não foi possível ativar o sistema:\n${error.message}`,
       SpreadsheetApp.getUi().ButtonSet.OK
     );
   }
 }
 
-// ============================================================================
-// ANÁLISE UTM COM CUSTOS DO META ADS
-// ============================================================================
+// =============================================================================
+// EXECUÇÃO DIÁRIA AUTOMÁTICA (Trigger 08:00)
+// =============================================================================
 
-const META_ACCOUNT_ID = 'act_1948313086122284';  // Conta SANDBOX smart_ads
-const ANALYSIS_API_URL = 'https://smart-ads-api-12955519745.us-central1.run.app/analyze_utms_with_costs';
-
-function generateUTMAnalysisWithCosts() {
+/**
+ * Executado diariamente às 08:00 via trigger
+ * 1. Gera predições do dia anterior (ontem 08:00 → hoje 08:00)
+ * 2. Atualiza análises UTM (1D, 3D, 7D)
+ * 3. Atualiza "Info do Modelo" se metadados mudaram
+ */
+function executeDailyMLUpdate() {
   try {
-    Logger.log('🚀 Iniciando análise UTM com custos...');
+    Logger.log('🌅 Executando atualização diária ML - ' + new Date().toISOString());
 
-    // IMPORTANTE: Sempre usar a aba de leads, não a aba ativa
-    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = spreadsheet.getSheetByName('[LF] Pesquisa');
+    // Etapa 1: Gerar predições do dia anterior
+    const now = new Date();
+    const yesterday8am = new Date(now);
+    yesterday8am.setDate(yesterday8am.getDate() - 1);
+    yesterday8am.setHours(8, 0, 0, 0);
 
-    if (!sheet) {
-      throw new Error('Aba "[LF] Pesquisa" não encontrada!');
+    const today8am = new Date(now);
+    today8am.setHours(8, 0, 0, 0);
+
+    Logger.log(`📅 Gerando predições: ${yesterday8am.toLocaleString()} → ${today8am.toLocaleString()}`);
+    generatePredictionsFor24hBlock(yesterday8am, today8am);
+
+    // Etapa 2: Atualizar análises UTM
+    Logger.log('📊 Atualizando análises UTM...');
+    updateUTMAnalysis();
+
+    // Etapa 3: Atualizar Info do Modelo se necessário
+    updateModelInfoIfChanged();
+
+    Logger.log('✅ Atualização diária concluída com sucesso');
+
+  } catch (error) {
+    Logger.log(`❌ Erro na atualização diária: ${error.message}`);
+    Logger.log(error.stack);
+
+    // Enviar email de erro (opcional)
+    const email = Session.getEffectiveUser().getEmail();
+    MailApp.sendEmail({
+      to: email,
+      subject: '❌ Erro Smart Ads ML - Atualização Diária',
+      body: `Erro na execução diária de ${new Date().toLocaleString()}:\n\n${error.message}\n\n${error.stack}`
+    });
+  }
+}
+
+// =============================================================================
+// FUNÇÕES AUXILIARES: PREDIÇÕES
+// =============================================================================
+
+/**
+ * Verifica se há blocos de 24h sem predições nos últimos 7 dias
+ * Retorna array de blocos faltantes: [{start: Date, end: Date}, ...]
+ */
+function checkMissingPredictions7D() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('[LF] Pesquisa');
+  if (!sheet) throw new Error('Aba "[LF] Pesquisa" não encontrada');
+
+  const values = sheet.getDataRange().getValues();
+  if (values.length <= 1) return [];
+
+  const headers = values[0];
+  const dataColIndex = headers.indexOf('Data');
+  const scoreColIndex = headers.indexOf('lead_score');
+
+  if (dataColIndex === -1) {
+    Logger.log('⚠️ Coluna "Data" não encontrada, não é possível verificar predições faltantes');
+    return [];
+  }
+
+  // Criar blocos de 24h dos últimos 7 dias (excluindo hoje)
+  const blocks = [];
+  const now = new Date();
+  const today8am = new Date(now);
+  today8am.setHours(8, 0, 0, 0);
+
+  for (let i = 1; i <= 7; i++) {
+    const blockStart = new Date(today8am);
+    blockStart.setDate(blockStart.getDate() - i);
+
+    const blockEnd = new Date(blockStart);
+    blockEnd.setDate(blockEnd.getDate() + 1);
+
+    blocks.push({ start: blockStart, end: blockEnd });
+  }
+
+  // Verificar quais blocos têm leads sem predição
+  const missingBlocks = [];
+
+  for (const block of blocks) {
+    let hasLeadsWithoutScore = false;
+
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i];
+      const leadDate = new Date(row[dataColIndex]);
+      const hasScore = scoreColIndex !== -1 && row[scoreColIndex];
+
+      // Se lead está no bloco e não tem score
+      if (leadDate >= block.start && leadDate < block.end && !hasScore) {
+        hasLeadsWithoutScore = true;
+        break;
+      }
     }
 
-    Logger.log('📋 Usando aba: [LF] Pesquisa');
+    if (hasLeadsWithoutScore) {
+      missingBlocks.push(block);
+    }
+  }
+
+  return missingBlocks;
+}
+
+/**
+ * Gera predições para leads em um bloco de 24 horas
+ */
+function generatePredictionsFor24hBlock(startDate, endDate) {
+  Logger.log(`🔄 Gerando predições: ${startDate.toLocaleString()} → ${endDate.toLocaleString()}`);
+
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('[LF] Pesquisa');
+  if (!sheet) throw new Error('Aba "[LF] Pesquisa" não encontrada');
+
+  const values = sheet.getDataRange().getValues();
+  if (values.length <= 1) {
+    Logger.log('⚠️ Nenhum dado na planilha');
+    return;
+  }
+
+  const headers = values[0];
+  const dataColIndex = headers.indexOf('Data');
+  const scoreColIndex = headers.indexOf('lead_score');
+
+  // Coletar leads do período sem predição
+  const leads = [];
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    const leadDate = new Date(row[dataColIndex]);
+    const hasScore = scoreColIndex !== -1 && row[scoreColIndex];
+
+    // Lead está no período e não tem score
+    if (leadDate >= startDate && leadDate < endDate && !hasScore) {
+      const leadData = {};
+      headers.forEach((header, index) => {
+        leadData[header] = row[index];
+      });
+
+      const emailValue = row[headers.indexOf('E-mail')];
+      const email = emailValue ? String(emailValue) : null;
+
+      leads.push({
+        data: leadData,
+        email: email,
+        row_id: (i + 1).toString()
+      });
+    }
+  }
+
+  if (leads.length === 0) {
+    Logger.log(`✅ Nenhum lead sem predição no período`);
+    return;
+  }
+
+  Logger.log(`📊 Processando ${leads.length} leads do período`);
+
+  // Processar em lotes de 600
+  const MAX_BATCH_SIZE = 600;
+  const batches = [];
+  for (let i = 0; i < leads.length; i += MAX_BATCH_SIZE) {
+    batches.push(leads.slice(i, i + MAX_BATCH_SIZE));
+  }
+
+  Logger.log(`📦 Dividindo em ${batches.length} lotes`);
+
+  let allPredictions = [];
+
+  for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+    const batch = batches[batchIndex];
+    Logger.log(`📤 Enviando lote ${batchIndex + 1}/${batches.length} (${batch.length} leads)`);
+
+    const payload = JSON.stringify({ leads: batch });
+    const options = {
+      method: 'post',
+      contentType: 'application/json',
+      payload: payload,
+      muteHttpExceptions: true
+    };
+
+    const response = UrlFetchApp.fetch(`${API_URL}/predict/batch`, options);
+    const responseCode = response.getResponseCode();
+
+    if (responseCode !== 200) {
+      throw new Error(`API retornou erro ${responseCode}: ${response.getContentText()}`);
+    }
+
+    const result = JSON.parse(response.getContentText());
+    allPredictions = allPredictions.concat(result.predictions);
+
+    Logger.log(`✅ Lote ${batchIndex + 1} processado: ${result.predictions.length} predições`);
+
+    // Delay entre lotes
+    if (batchIndex < batches.length - 1) {
+      Utilities.sleep(1000);
+    }
+  }
+
+  // Escrever predições na planilha
+  Logger.log(`💾 Escrevendo ${allPredictions.length} predições na planilha...`);
+
+  if (scoreColIndex === -1) {
+    // Adicionar coluna se não existe
+    sheet.getRange(1, headers.length + 1).setValue('lead_score');
+  }
+
+  const scoreCol = scoreColIndex !== -1 ? scoreColIndex + 1 : headers.length + 1;
+
+  for (const pred of allPredictions) {
+    const rowNum = parseInt(pred.row_id);
+    sheet.getRange(rowNum, scoreCol).setValue(pred.lead_score);
+  }
+
+  SpreadsheetApp.flush();
+  Logger.log(`✅ Predições escritas com sucesso`);
+}
+
+// =============================================================================
+// FUNÇÕES AUXILIARES: ANÁLISE UTM
+// =============================================================================
+
+/**
+ * Atualiza análises UTM (1D, 3D, 7D) com custos do Meta Ads
+ */
+function updateUTMAnalysis() {
+  try {
+    Logger.log('📊 Atualizando análises UTM...');
+
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('[LF] Pesquisa');
+    if (!sheet) throw new Error('Aba "[LF] Pesquisa" não encontrada');
 
     // Ler dados da planilha
-    const lastRow = sheet.getMaxRows();
-    const lastCol = sheet.getMaxColumns();
-    const dataRange = sheet.getRange(1, 1, lastRow, lastCol);
-    const values = dataRange.getValues();
+    const values = sheet.getDataRange().getValues();
+    if (values.length <= 1) {
+      Logger.log('⚠️ Nenhum dado na planilha');
+      return;
+    }
 
-    const nonEmptyValues = values.filter((row, index) => {
-      if (index === 0) return true;
-      return row.some(cell => cell !== null && cell !== undefined && cell !== '');
+    const headers = values[0];
+
+    // Preparar leads para análise
+    const leads = [];
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i];
+      const leadData = {};
+
+      headers.forEach((header, index) => {
+        leadData[header] = row[index];
+      });
+
+      // Formato esperado pela API: {data: {...}}
+      leads.push({
+        data: leadData
+      });
+    }
+
+    Logger.log(`📋 Enviando ${leads.length} leads para análise...`);
+
+    // Chamar API de análise UTM
+    const payload = JSON.stringify({
+      leads: leads,
+      account_id: META_ACCOUNT_ID
     });
-
-    if (nonEmptyValues.length <= 1) {
-      throw new Error('Planilha vazia ou só tem cabeçalho');
-    }
-
-    const headers = nonEmptyValues[0];
-    Logger.log(`📋 Campos: ${headers.length}`);
-
-    const leadScoreColIndex = headers.indexOf('lead_score');
-    const decileColIndex = headers.indexOf('decile');
-    const dataColIndex = headers.indexOf('Data');
-
-    // ETAPA 1: Gerar predições para leads dos últimos 7 dias sem score
-    Logger.log('🔍 ETAPA 1: Verificando leads sem predição (últimos 7 dias)...');
-
-    const now = new Date();
-    const sevenDaysAgo = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
-
-    const leadsWithoutPrediction = [];
-
-    for (let i = 1; i < nonEmptyValues.length; i++) {
-      const row = nonEmptyValues[i];
-
-      // Verificar se é dos últimos 7 dias
-      const isRecent = dataColIndex !== -1 && row[dataColIndex] &&
-                       new Date(row[dataColIndex]) >= sevenDaysAgo;
-
-      // Verificar se não tem score
-      const hasNoScore = leadScoreColIndex === -1 || !row[leadScoreColIndex];
-
-      if (isRecent && hasNoScore) {
-        const leadData = {};
-        headers.forEach((header, index) => {
-          leadData[header] = row[index];
-        });
-
-        const emailValue = row[headers.indexOf('E-mail')];
-        const email = emailValue ? String(emailValue) : null;
-
-        leadsWithoutPrediction.push({
-          data: leadData,
-          email: email,
-          row_id: (i + 1).toString(),
-          sheetRowIndex: i + 1  // Para escrever de volta
-        });
-      }
-    }
-
-    Logger.log(`📊 Leads sem predição (últimos 7D): ${leadsWithoutPrediction.length}`);
-
-    // Gerar predições com batching inteligente
-    if (leadsWithoutPrediction.length > 0) {
-      Logger.log('🔄 Gerando predições...');
-
-      if (leadsWithoutPrediction.length <= 600) {
-        // Enviar todos de uma vez
-        Logger.log(`   Enviando ${leadsWithoutPrediction.length} leads em lote único`);
-
-        const payload = { leads: leadsWithoutPrediction };
-        const options = {
-          method: 'post',
-          contentType: 'application/json',
-          payload: JSON.stringify(payload),
-          muteHttpExceptions: true
-        };
-
-        const response = UrlFetchApp.fetch(API_URL, options);
-        const responseCode = response.getResponseCode();
-
-        if (responseCode !== 200) {
-          throw new Error(`Erro ao gerar predições: ${responseCode} - ${response.getContentText()}`);
-        }
-
-        const result = JSON.parse(response.getContentText());
-
-        // Escrever predições na planilha
-        result.predictions.forEach(pred => {
-          const rowIndex = parseInt(pred.row_id);
-          if (leadScoreColIndex !== -1) {
-            sheet.getRange(rowIndex, leadScoreColIndex + 1).setValue(pred.lead_score);
-          }
-          if (decileColIndex !== -1) {
-            sheet.getRange(rowIndex, decileColIndex + 1).setValue(pred.decile);
-          }
-        });
-
-        Logger.log(`✅ ${result.predictions.length} predições escritas`);
-
-      } else {
-        // Dividir em lotes iguais maiores possíveis próximos de 600
-        const numLotes = Math.ceil(leadsWithoutPrediction.length / 600);
-        const tamanhoLote = Math.ceil(leadsWithoutPrediction.length / numLotes);
-
-        Logger.log(`   Dividindo ${leadsWithoutPrediction.length} leads em ${numLotes} lotes de ${tamanhoLote}`);
-
-        for (let batchIndex = 0; batchIndex < numLotes; batchIndex++) {
-          const start = batchIndex * tamanhoLote;
-          const end = Math.min(start + tamanhoLote, leadsWithoutPrediction.length);
-          const batchLeads = leadsWithoutPrediction.slice(start, end);
-
-          Logger.log(`   Lote ${batchIndex + 1}/${numLotes}: ${batchLeads.length} leads`);
-
-          const payload = { leads: batchLeads };
-          const options = {
-            method: 'post',
-            contentType: 'application/json',
-            payload: JSON.stringify(payload),
-            muteHttpExceptions: true
-          };
-
-          const response = UrlFetchApp.fetch(API_URL, options);
-          const responseCode = response.getResponseCode();
-
-          if (responseCode !== 200) {
-            throw new Error(`Erro no lote ${batchIndex + 1}: ${responseCode} - ${response.getContentText()}`);
-          }
-
-          const result = JSON.parse(response.getContentText());
-
-          // Escrever predições na planilha
-          result.predictions.forEach(pred => {
-            const rowIndex = parseInt(pred.row_id);
-            if (leadScoreColIndex !== -1) {
-              sheet.getRange(rowIndex, leadScoreColIndex + 1).setValue(pred.lead_score);
-            }
-            if (decileColIndex !== -1) {
-              sheet.getRange(rowIndex, decileColIndex + 1).setValue(pred.decile);
-            }
-          });
-
-          Logger.log(`   ✅ Lote ${batchIndex + 1} concluído (${result.predictions.length} predições)`);
-
-          // Delay entre lotes
-          if (batchIndex < numLotes - 1) {
-            Utilities.sleep(1000);
-          }
-        }
-      }
-
-      Logger.log('✅ Predições concluídas!');
-    }
-
-    // ETAPA 2: Análise UTM com custos (usando TODOS os leads com predição)
-    Logger.log('📈 ETAPA 2: Gerando análise UTM com custos...');
-
-    // Recarregar dados (predições podem ter sido adicionadas)
-    const updatedValues = sheet.getRange(1, 1, lastRow, lastCol).getValues();
-    const updatedNonEmpty = updatedValues.filter((row, index) => {
-      if (index === 0) return true;
-      return row.some(cell => cell !== null && cell !== undefined && cell !== '');
-    });
-
-    // Coletar TODOS os leads com predição
-    const leadsWithPrediction = [];
-
-    for (let i = 1; i < updatedNonEmpty.length; i++) {
-      const row = updatedNonEmpty[i];
-
-      // Verificar se tem score
-      const hasScore = leadScoreColIndex !== -1 && row[leadScoreColIndex];
-
-      if (hasScore) {
-        const leadData = {};
-        headers.forEach((header, index) => {
-          leadData[header] = row[index];
-        });
-
-        const emailValue = row[headers.indexOf('E-mail')];
-        const email = emailValue ? String(emailValue) : null;
-
-        leadsWithPrediction.push({
-          data: leadData,
-          email: email,
-          row_id: (i + 1).toString()
-        });
-      }
-    }
-
-    Logger.log(`📊 Total de leads com predição: ${leadsWithPrediction.length}`);
-
-    if (leadsWithPrediction.length === 0) {
-      throw new Error('Nenhum lead com predição encontrado');
-    }
-
-    // Chamar API de análise (sem limite - batching interno na API)
-    Logger.log('🔄 Chamando API de análise UTM...');
-
-    const payload = {
-      leads: leadsWithPrediction,
-      account_id: META_ACCOUNT_ID,
-      product_value: null,  // Usar padrão da config (R$ 2.027,38)
-      min_roas: null  // Usar padrão (2.0x)
-    };
 
     const options = {
       method: 'post',
       contentType: 'application/json',
-      payload: JSON.stringify(payload),
+      payload: payload,
       muteHttpExceptions: true
     };
 
-    const response = UrlFetchApp.fetch(ANALYSIS_API_URL, options);
+    const response = UrlFetchApp.fetch(`${API_URL}/analyze_utms_with_costs`, options);
     const responseCode = response.getResponseCode();
 
     if (responseCode !== 200) {
@@ -1124,10 +387,9 @@ function generateUTMAnalysisWithCosts() {
 
     Logger.log(`✅ Análise recebida: ${result.processing_time_seconds}s`);
     Logger.log(`   Períodos: ${Object.keys(result.periods).join(', ')}`);
-    Logger.log(`   Config: Product Value = R$ ${result.config.product_value}, ROAS Min = ${result.config.min_roas}x`);
 
-    // Criar abas para cada período
-    const periods = ['1D', '3D', '7D', 'Total'];
+    // Criar abas para períodos 1D, 3D, 7D (sem Total)
+    const periods = ['1D', '3D', '7D'];
 
     for (const period of periods) {
       if (result.periods[period]) {
@@ -1135,50 +397,119 @@ function generateUTMAnalysisWithCosts() {
       }
     }
 
-    // Buscar informações do modelo e criar aba
-    Logger.log('📊 Buscando informações do modelo...');
-    try {
-      const modelInfoResponse = UrlFetchApp.fetch(`${API_URL}/model/info`, {
-        method: 'get',
-        muteHttpExceptions: true
-      });
-
-      if (modelInfoResponse.getResponseCode() === 200) {
-        const modelInfo = JSON.parse(modelInfoResponse.getContentText());
-        writeModelInfoSheet(modelInfo);
-        Logger.log('✅ Aba "Info do Modelo" criada/atualizada');
-      } else {
-        Logger.log('⚠️ Não foi possível obter informações do modelo');
-      }
-    } catch (error) {
-      Logger.log(`⚠️ Erro ao buscar info do modelo: ${error.message}`);
-    }
-
-    Logger.log('✅ Análise UTM com custos concluída!');
-
-    SpreadsheetApp.getUi().alert(
-      'Análise Concluída',
-      `Análise UTM com custos gerada com sucesso!\n\n` +
-      `Abas criadas: ${periods.join(', ')}\n` +
-      `Tempo de processamento: ${result.processing_time_seconds}s\n\n` +
-      `Configuração:\n` +
-      `• Product Value: R$ ${result.config.product_value.toFixed(2)}\n` +
-      `• ROAS Mínimo: ${result.config.min_roas}x`,
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
+    Logger.log('✅ Análises UTM atualizadas com sucesso');
 
   } catch (error) {
-    Logger.log(`❌ Erro na análise UTM: ${error.message}`);
-    Logger.log(error.stack);
-
-    SpreadsheetApp.getUi().alert(
-      'Erro na Análise UTM',
-      `Não foi possível gerar análise:\n${error.message}`,
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
+    Logger.log(`❌ Erro ao atualizar análises UTM: ${error.message}`);
+    throw error;
   }
 }
 
+/**
+ * Atualiza aba "Info do Modelo" apenas se metadados mudaram
+ */
+function updateModelInfoIfChanged() {
+  try {
+    Logger.log('📊 Verificando atualização da Info do Modelo...');
+
+    // Buscar metadados atuais da API
+    const response = UrlFetchApp.fetch(`${API_URL}/model/info`, {
+      method: 'get',
+      muteHttpExceptions: true
+    });
+
+    if (response.getResponseCode() !== 200) {
+      Logger.log('⚠️ Não foi possível obter informações do modelo');
+      return;
+    }
+
+    const modelInfo = JSON.parse(response.getContentText());
+    const currentModelName = modelInfo.model_info.model_name;
+    const currentTrainedAt = modelInfo.model_info.trained_at;
+
+    // Verificar se aba existe e tem metadados salvos
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let infoSheet = ss.getSheetByName('Info do Modelo');
+
+    if (!infoSheet) {
+      // Aba não existe, criar
+      Logger.log('📋 Aba "Info do Modelo" não existe, criando...');
+      writeModelInfoSheet(modelInfo);
+
+      // Salvar metadados na aba (hidden row)
+      infoSheet = ss.getSheetByName('Info do Modelo');
+      infoSheet.getRange('Z1').setValue(currentModelName);
+      infoSheet.getRange('Z2').setValue(currentTrainedAt);
+      infoSheet.hideRows(1, 1);
+
+      Logger.log('✅ Aba "Info do Modelo" criada');
+      return;
+    }
+
+    // Verificar se metadados mudaram
+    const savedModelName = infoSheet.getRange('Z1').getValue();
+    const savedTrainedAt = infoSheet.getRange('Z2').getValue();
+
+    if (savedModelName === currentModelName && savedTrainedAt === currentTrainedAt) {
+      Logger.log('✅ Metadados do modelo não mudaram, aba não precisa atualização');
+      return;
+    }
+
+    // Metadados mudaram, recriar aba
+    Logger.log(`🔄 Metadados mudaram: ${savedModelName} → ${currentModelName}`);
+    writeModelInfoSheet(modelInfo);
+
+    // Atualizar metadados salvos
+    infoSheet = ss.getSheetByName('Info do Modelo');
+    infoSheet.getRange('Z1').setValue(currentModelName);
+    infoSheet.getRange('Z2').setValue(currentTrainedAt);
+
+    Logger.log('✅ Aba "Info do Modelo" atualizada');
+
+  } catch (error) {
+    Logger.log(`⚠️ Erro ao verificar Info do Modelo: ${error.message}`);
+    // Não lançar erro, apenas logar
+  }
+}
+
+// =============================================================================
+// FUNÇÕES AUXILIARES: TRIGGERS
+// =============================================================================
+
+/**
+ * Cria trigger diário para executar às 08:00
+ */
+function createDailyTrigger() {
+  ScriptApp.newTrigger('executeDailyMLUpdate')
+    .timeBased()
+    .atHour(8)
+    .everyDays(1)
+    .create();
+
+  Logger.log('✅ Trigger diário criado para 08:00');
+}
+
+/**
+ * Remove trigger diário existente
+ */
+function removeDailyTrigger() {
+  const triggers = ScriptApp.getProjectTriggers();
+
+  for (const trigger of triggers) {
+    if (trigger.getHandlerFunction() === 'executeDailyMLUpdate') {
+      ScriptApp.deleteTrigger(trigger);
+      Logger.log('🗑️ Trigger diário removido');
+    }
+  }
+}
+
+// =============================================================================
+// FUNÇÕES AUXILIARES: VISUALIZAÇÃO
+// =============================================================================
+
+/**
+ * Escreve aba de análise UTM para um período
+ */
 function writeAnalysisSheet(period, periodData, config) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheetName = `Análise UTM - ${period}`;
@@ -1194,38 +525,108 @@ function writeAnalysisSheet(period, periodData, config) {
 
   Logger.log(`📝 Criando aba: ${sheetName}`);
 
-  // Cabeçalhos
+  // =============================================================================
+  // SEÇÃO DE METADADOS DO PERÍODO
+  // =============================================================================
+  let headerRow = 1;
+
+  // Linha 1: Período analisado
+  if (periodData.period_start && periodData.period_end) {
+    const periodStart = new Date(periodData.period_start);
+    const periodEnd = new Date(periodData.period_end);
+
+    // Formatar datas no formato brasileiro
+    const formatDate = (date) => {
+      const day = String(date.getDate()).padStart(2, '0');
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const year = date.getFullYear();
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      return `${day}/${month}/${year} ${hours}:${minutes}`;
+    };
+
+    const periodCell = sheet.getRange(headerRow, 1, 1, 12);
+    periodCell.merge();
+    periodCell.setValue(`📅 Período: ${formatDate(periodStart)} até ${formatDate(periodEnd)}`);
+    periodCell.setFontWeight('bold');
+    periodCell.setFontSize(11);
+    periodCell.setBackground('#E8F0FE');
+    periodCell.setHorizontalAlignment('center');
+    headerRow++;
+  }
+
+  // Linha 2: Contadores de leads
+  if (periodData.total_leads !== undefined) {
+    const metaLeads = periodData.meta_leads || 0;
+    const googleLeads = periodData.google_leads || 0;
+    const totalLeads = periodData.total_leads || 0;
+
+    const countersCell = sheet.getRange(headerRow, 1, 1, 12);
+    countersCell.merge();
+    countersCell.setValue(`📊 Leads analisados: ${totalLeads} (Meta: ${metaLeads}, Google: ${googleLeads})`);
+    countersCell.setFontWeight('bold');
+    countersCell.setFontSize(10);
+    countersCell.setBackground('#F1F3F4');
+    countersCell.setHorizontalAlignment('center');
+    headerRow++;
+  }
+
+  // Linha 3: Espaço em branco
+  headerRow++;
+
+  // =============================================================================
+  // CABEÇALHOS DA TABELA
+  // =============================================================================
   const headers = [
     'Dimensão', 'Valor', 'Leads', 'Gasto (R$)', 'CPL (R$)',
     '%D10', 'Taxa Proj. (%)', 'ROAS Proj.',
     'CPL Máx (R$)', 'Margem (%)', 'Tier', 'Ação'
   ];
 
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(headerRow, 1, 1, headers.length).setValues([headers]);
 
   // Formatação do cabeçalho
-  const headerRange = sheet.getRange(1, 1, 1, headers.length);
+  const headerRange = sheet.getRange(headerRow, 1, 1, headers.length);
   headerRange.setFontWeight('bold');
   headerRange.setBackground('#4285F4');
   headerRange.setFontColor('#FFFFFF');
   headerRange.setHorizontalAlignment('center');
 
-  // Dimensões
-  const dimensions = ['campaign', 'medium', 'term', 'ad'];
+  // Dimensões (sem adset, sem total)
+  const dimensions = ['campaign', 'medium', 'term', 'ad', 'google_ads'];
   const dimensionLabels = {
     'campaign': 'Campaign',
     'medium': 'Medium',
     'term': 'Term',
-    'ad': 'Ad'
+    'ad': 'Ad',
+    'google_ads': 'Google Ads'
   };
 
-  let currentRow = 2;
+  let currentRow = headerRow + 1;
 
   for (const dimension of dimensions) {
     const metrics = periodData[dimension];
 
     if (!metrics || metrics.length === 0) {
       continue;
+    }
+
+    // Adicionar título destacado para Google Ads
+    if (dimension === 'google_ads' && metrics.length > 0) {
+      currentRow++;  // Linha vazia extra antes
+
+      // Título destacado
+      const titleCell = sheet.getRange(currentRow, 1, 1, 12);
+      titleCell.merge();
+      titleCell.setValue('🔍 GOOGLE ADS (sem custos Meta - plataforma diferente)');
+      titleCell.setFontWeight('bold');
+      titleCell.setFontSize(11);
+      titleCell.setBackground('#FFF3E0');
+      titleCell.setFontColor('#E65100');
+      titleCell.setHorizontalAlignment('center');
+      titleCell.setBorder(true, true, true, true, false, false, '#E65100', SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+
+      currentRow++;
     }
 
     for (const metric of metrics) {
@@ -1247,7 +648,7 @@ function writeAnalysisSheet(period, periodData, config) {
       sheet.getRange(currentRow, 1, 1, row.length).setValues([row]);
 
       // Formatação condicional da margem
-      const margemCell = sheet.getRange(currentRow, 11);  // Coluna Margem
+      const margemCell = sheet.getRange(currentRow, 10);  // Coluna Margem
 
       if (metric.margem > 50) {
         margemCell.setBackground('#34A853');  // Verde
@@ -1262,24 +663,29 @@ function writeAnalysisSheet(period, periodData, config) {
 
       currentRow++;
     }
+
+    // Adicionar linha vazia de separação entre dimensões
+    currentRow++;
   }
 
   // Formatar colunas numéricas
   const lastRow = currentRow - 1;
-  if (lastRow >= 2) {
+  const firstDataRow = headerRow + 1;
+  if (lastRow >= firstDataRow) {
+    const numDataRows = lastRow - firstDataRow + 1;
+
     // Gasto, CPL, CPL Máx (formato moeda)
-    sheet.getRange(2, 4, lastRow - 1, 1).setNumberFormat('R$ #,##0.00');
-    sheet.getRange(2, 5, lastRow - 1, 1).setNumberFormat('R$ #,##0.00');
-    sheet.getRange(2, 10, lastRow - 1, 1).setNumberFormat('R$ #,##0.00');
+    sheet.getRange(firstDataRow, 4, numDataRows, 1).setNumberFormat('R$ #,##0.00');
+    sheet.getRange(firstDataRow, 5, numDataRows, 1).setNumberFormat('R$ #,##0.00');
+    sheet.getRange(firstDataRow, 9, numDataRows, 1).setNumberFormat('R$ #,##0.00');
 
     // Percentuais
-    sheet.getRange(2, 6, lastRow - 1, 1).setNumberFormat('0.00"%"');
-    sheet.getRange(2, 7, lastRow - 1, 1).setNumberFormat('0.00"%"');
-    sheet.getRange(2, 8, lastRow - 1, 1).setNumberFormat('0.00"%"');
-    sheet.getRange(2, 11, lastRow - 1, 1).setNumberFormat('0.00"%"');
+    sheet.getRange(firstDataRow, 6, numDataRows, 1).setNumberFormat('0.00"%"');
+    sheet.getRange(firstDataRow, 7, numDataRows, 1).setNumberFormat('0.00"%"');
+    sheet.getRange(firstDataRow, 10, numDataRows, 1).setNumberFormat('0.00"%"');
 
     // ROAS
-    sheet.getRange(2, 9, lastRow - 1, 1).setNumberFormat('0.00"x"');
+    sheet.getRange(firstDataRow, 8, numDataRows, 1).setNumberFormat('0.00"x"');
   }
 
   // Ajustar largura das colunas
@@ -1295,6 +701,9 @@ function writeAnalysisSheet(period, periodData, config) {
   Logger.log(`✅ Aba ${sheetName} criada com ${lastRow - 1} registros`);
 }
 
+/**
+ * Escreve aba "Info do Modelo" com metadados e feature importances
+ */
 function writeModelInfoSheet(modelInfo) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheetName = 'Info do Modelo';
@@ -1465,4 +874,45 @@ function writeModelInfoSheet(modelInfo) {
   }
 
   Logger.log('✅ Aba "Info do Modelo" criada com sucesso');
+}
+
+// =============================================================================
+// FUNÇÕES DE DEBUG
+// =============================================================================
+
+/**
+ * Testa conexão com a API
+ */
+function testConnection() {
+  try {
+    Logger.log('🔍 Testando conexão com API...');
+
+    const response = UrlFetchApp.fetch(`${API_URL}/health`);
+    const result = JSON.parse(response.getContentText());
+
+    Logger.log('✅ Conexão bem-sucedida!');
+    Logger.log(`Status: ${result.status}`);
+    Logger.log(`Pipeline: ${result.pipeline_status}`);
+    Logger.log(`Modelo: ${result.model_loaded}`);
+    Logger.log(`Versão: ${result.version}`);
+
+    SpreadsheetApp.getUi().alert(
+      'Conexão OK',
+      `API está funcionando!\n\n` +
+      `Status: ${result.status}\n` +
+      `Pipeline: ${result.pipeline_status}\n` +
+      `Modelo Carregado: ${result.model_loaded}\n` +
+      `Versão: ${result.version}`,
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+
+  } catch (error) {
+    Logger.log(`❌ Erro ao testar conexão: ${error.message}`);
+
+    SpreadsheetApp.getUi().alert(
+      'Erro de Conexão',
+      `Não foi possível conectar à API:\n${error.message}`,
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+  }
 }

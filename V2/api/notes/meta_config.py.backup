@@ -1,0 +1,31 @@
+"""
+Configuração da API do Meta (Facebook Ads)
+Para produção: Cliente adiciona você como admin no Business Manager
+"""
+
+# Credenciais Meta Ads - PRODUÇÃO
+META_CONFIG = {
+    "access_token": "EAAS9hlWC7lkBPmTFNOvHZBVZAW6ESTsmVCStlrcslFvNLxr2xBkKrI0kTmI6dou1aB5UOJLFwQo9gwAg1NZBCSWZCZAkxflALfnFeZC8nYRJJO5TZAfy1vswWFs0nCsZBpOanId4ULYCJMzPqt7UuhfuNBablHZAIchs1T7vEGWXgk6Sq2t8YirZBIPldNDVtyp7DxYQZDZD",
+    "api_version": "v18.0",
+    # Account ID: act_188005769808959 (Los Angeles Producciones LTDA)
+    # Account ID será passado por Apps Script
+}
+
+# Configuração de negócio
+BUSINESS_CONFIG = {
+    "product_value": 2027.38,  # Baseado em análise de 1.970 vendas DevClub desde 01/03/2025
+    "min_roas": 2.0,
+    "conversion_rates": {
+        "D1": 0.0026,
+        "D2": 0.0026,
+        "D3": 0.0085,
+        "D4": 0.0094,
+        "D5": 0.0102,
+        "D6": 0.0111,
+        "D7": 0.0119,
+        "D8": 0.0119,
+        "D9": 0.0137,
+        "D10": 0.0213
+    }
+}
+
