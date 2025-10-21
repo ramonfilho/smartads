@@ -84,6 +84,100 @@ class MetaAdsIntegration:
                 logger.error(f"Response: {e.response.text}")
             return []
 
+    def get_campaign_budget_info(self, campaign_id: str) -> Dict:
+        """
+        Busca informações de orçamento de uma campanha específica
+
+        Args:
+            campaign_id: ID da campanha
+
+        Returns:
+            Dict com informações de budget:
+            {
+                'has_campaign_budget': bool,  # True se CBO, False se ABO
+                'daily_budget': float ou None,
+                'lifetime_budget': float ou None,
+                'bid_strategy': str
+            }
+        """
+        url = f"{self.base_url}/{campaign_id}"
+
+        params = {
+            'access_token': self.access_token,
+            'fields': 'daily_budget,lifetime_budget,bid_strategy'
+        }
+
+        try:
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            # Verificar se tem budget na campaign (CBO)
+            has_campaign_budget = bool(data.get('daily_budget') or data.get('lifetime_budget'))
+
+            return {
+                'has_campaign_budget': has_campaign_budget,
+                'daily_budget': data.get('daily_budget'),
+                'lifetime_budget': data.get('lifetime_budget'),
+                'bid_strategy': data.get('bid_strategy')
+            }
+
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"⚠️  Erro ao buscar budget info da campaign {campaign_id}: {e}")
+            # Default: assumir que tem budget (comportamento atual)
+            return {
+                'has_campaign_budget': True,
+                'daily_budget': None,
+                'lifetime_budget': None,
+                'bid_strategy': None
+            }
+
+    def get_adset_budget_info(self, adset_id: str) -> Dict:
+        """
+        Busca informações de orçamento de um adset específico
+
+        Args:
+            adset_id: ID do adset
+
+        Returns:
+            Dict com informações de budget:
+            {
+                'has_adset_budget': bool,  # True se ABO (adset tem budget próprio), False se CBO (usa budget da campanha)
+                'daily_budget': float ou None,
+                'lifetime_budget': float ou None
+            }
+        """
+        url = f"{self.base_url}/{adset_id}"
+
+        params = {
+            'access_token': self.access_token,
+            'fields': 'daily_budget,lifetime_budget'
+        }
+
+        try:
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            # Verificar se tem budget no adset (ABO)
+            # Se não tem budget, significa que usa o budget da campanha (CBO)
+            has_adset_budget = bool(data.get('daily_budget') or data.get('lifetime_budget'))
+
+            return {
+                'has_adset_budget': has_adset_budget,
+                'daily_budget': data.get('daily_budget'),
+                'lifetime_budget': data.get('lifetime_budget')
+            }
+
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"⚠️  Erro ao buscar budget info do adset {adset_id}: {e}")
+            # Default: assumir que tem budget próprio (comportamento conservador)
+            return {
+                'has_adset_budget': True,
+                'daily_budget': None,
+                'lifetime_budget': None
+            }
+
     def get_costs_hierarchy(
         self,
         account_id: str,
@@ -107,6 +201,7 @@ class MetaAdsIntegration:
                         'id': campaign_id,
                         'name': campaign_name,
                         'spend': campaign_spend,
+                        'has_campaign_budget': bool,  # True se CBO, False se ABO
                         'adsets': {
                             adset_id: {
                                 'id': adset_id,
@@ -178,6 +273,8 @@ class MetaAdsIntegration:
                 hierarchy['campaigns'][campaign_id]['adsets'][adset_id] = {
                     'id': adset_id,
                     'name': adset_name,
+                    'campaign_id': campaign_id,
+                    'campaign_name': campaign_name,
                     'spend': 0,
                     'ads': {}
                 }
@@ -195,10 +292,43 @@ class MetaAdsIntegration:
 
         logger.info(f"✅ Hierarquia construída: {len(hierarchy['campaigns'])} campanhas")
 
+        # 3. Buscar informações de budget para cada campaign
+        logger.info("   🔍 Buscando informações de orçamento das campanhas...")
+        for campaign_id in hierarchy['campaigns'].keys():
+            budget_info = self.get_campaign_budget_info(campaign_id)
+            hierarchy['campaigns'][campaign_id]['has_campaign_budget'] = budget_info['has_campaign_budget']
+            hierarchy['campaigns'][campaign_id]['daily_budget'] = budget_info['daily_budget']
+            hierarchy['campaigns'][campaign_id]['lifetime_budget'] = budget_info['lifetime_budget']
+
+            budget_type = "CBO (Campaign Budget)" if budget_info['has_campaign_budget'] else "ABO (AdSet Budget)"
+            logger.info(f"      {campaign_id}: {budget_type}")
+
+        # 4. Buscar informações de budget para cada adset
+        logger.info("   🔍 Buscando informações de orçamento dos adsets...")
+        adset_count = 0
+        abo_count = 0
+        cbo_count = 0
+
+        for campaign_id, campaign_data in hierarchy['campaigns'].items():
+            for adset_id in campaign_data['adsets'].keys():
+                adset_count += 1
+                budget_info = self.get_adset_budget_info(adset_id)
+                hierarchy['campaigns'][campaign_id]['adsets'][adset_id]['has_adset_budget'] = budget_info['has_adset_budget']
+                hierarchy['campaigns'][campaign_id]['adsets'][adset_id]['daily_budget'] = budget_info['daily_budget']
+                hierarchy['campaigns'][campaign_id]['adsets'][adset_id]['lifetime_budget'] = budget_info['lifetime_budget']
+
+                if budget_info['has_adset_budget']:
+                    abo_count += 1
+                else:
+                    cbo_count += 1
+
+        logger.info(f"      Total: {adset_count} adsets | ABO: {abo_count} | CBO: {cbo_count}")
+
         # DEBUG: Log hierarquia final
-        logger.info("   📋 DEBUG - Hierarquia final (Campaign ID → Spend):")
+        logger.info("   📋 DEBUG - Hierarquia final (Campaign ID → Spend → Budget Type):")
         for camp_id, camp_data in sorted(hierarchy['campaigns'].items()):
-            logger.info(f"      {camp_id}: R$ {camp_data['spend']:.2f} ({len(camp_data['adsets'])} adsets)")
+            budget_type = "CBO" if camp_data.get('has_campaign_budget', True) else "ABO"
+            logger.info(f"      {camp_id}: R$ {camp_data['spend']:.2f} ({len(camp_data['adsets'])} adsets) - {budget_type}")
 
         return hierarchy
 
@@ -535,15 +665,19 @@ def enrich_utm_with_hierarchy(
 
     Returns:
         DataFrame enriquecido com coluna 'spend'
+        Para campaigns, também adiciona 'has_campaign_budget' (True=CBO, False=ABO)
+        Para adsets (medium), também adiciona 'has_adset_budget' (True=ABO, False=CBO)
     """
     from difflib import SequenceMatcher
 
     df = utm_analysis_df.copy()
     spend_values = []
+    has_budget_values = []  # Para campaigns e adsets (medium)
     match_stats = {'campaign': 0, 'adset': 0, 'ad': 0, 'no_match': 0}
 
     for value in df['value']:
         spend = 0.0
+        has_budget = True  # Default
 
         # Garantir que value seja string (pode vir como int do DataFrame)
         value = str(value)
@@ -554,6 +688,9 @@ def enrich_utm_with_hierarchy(
 
             if campaign_id and campaign_id in hierarchy['campaigns']:
                 campaign = hierarchy['campaigns'][campaign_id]
+
+                # Obter informação de orçamento
+                has_budget = campaign.get('has_campaign_budget', True)  # Default True (CBO)
 
                 # Extrair nome do adset do UTM
                 adset_name_candidate = extract_adset_name_from_campaign_utm(value)
@@ -591,37 +728,34 @@ def enrich_utm_with_hierarchy(
                     # Sem nome de adset, usar custo total da campaign
                     spend = campaign['spend']
                     match_stats['campaign'] += 1
+
+                # Adicionar has_budget para campaigns
+                has_budget_values.append(has_budget)
             else:
                 match_stats['no_match'] += 1
+                has_budget_values.append(True)  # Default se não encontrar
                 logger.debug(f"      ❌ Campaign não encontrada: '{value[:50]}...' (ID: {campaign_id or 'N/A'})")
 
         elif dimension == 'medium':
-            # Medium = Adset name
-            # Buscar em todos os adsets de todas as campaigns
-            best_match = None
-            best_similarity = 0
+            # Medium = Adset ID (agora agrupamos por ID, não mais por nome)
+            # Buscar adset diretamente por ID
+            adset_found = None
 
             for campaign in hierarchy['campaigns'].values():
-                for adset in campaign['adsets'].values():
-                    if value.lower() == adset['name'].lower():
-                        best_match = adset
-                        best_similarity = 1.0
-                        break
-
-                    similarity = SequenceMatcher(None, value.lower(), adset['name'].lower()).ratio()
-                    if similarity > best_similarity and similarity >= 0.85:
-                        best_match = adset
-                        best_similarity = similarity
-
-                if best_similarity == 1.0:
+                if value in campaign['adsets']:
+                    adset_found = campaign['adsets'][value]
                     break
 
-            if best_match:
-                spend = best_match['spend']
+            if adset_found:
+                spend = adset_found['spend']
+                has_budget = adset_found.get('has_adset_budget', True)  # True = ABO (tem budget próprio)
+                has_budget_values.append(has_budget)
                 match_stats['adset'] += 1
-                logger.debug(f"      ✓ Medium→Adset: '{value[:40]}...' (R$ {spend:.2f})")
+                logger.debug(f"      ✓ Medium→Adset ID: {value} (R$ {spend:.2f})")
             else:
+                has_budget_values.append(True)  # Default se não encontrar
                 match_stats['no_match'] += 1
+                logger.debug(f"      ❌ Adset ID não encontrado: {value}")
 
         elif dimension in ['content', 'ad', 'term']:
             # Content/Ad/Term = Ad name ou Ad ID
@@ -667,6 +801,20 @@ def enrich_utm_with_hierarchy(
         spend_values.append(spend)
 
     df['spend'] = spend_values
+
+    # Para campaigns, adicionar coluna has_campaign_budget
+    if dimension == 'campaign' and has_budget_values:
+        df['has_campaign_budget'] = has_budget_values
+        cbo_count = sum(1 for x in has_budget_values if x)
+        abo_count = len(has_budget_values) - cbo_count
+        logger.info(f"   📊 Budget: {cbo_count} CBO (Campaign), {abo_count} ABO (AdSet)")
+
+    # Para adsets (medium), adicionar coluna has_adset_budget
+    if dimension == 'medium' and has_budget_values:
+        df['has_adset_budget'] = has_budget_values
+        abo_count = sum(1 for x in has_budget_values if x)  # True = ABO (tem budget)
+        cbo_count = len(has_budget_values) - abo_count      # False = CBO (usa budget da campanha)
+        logger.info(f"   📊 Adset Budget: {abo_count} ABO (AdSet), {cbo_count} CBO (Campaign)")
 
     total_mapped = sum(spend_values)
     items_with_spend = sum(1 for s in spend_values if s > 0)

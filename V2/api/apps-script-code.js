@@ -578,9 +578,9 @@ function writeAnalysisSheet(period, periodData, config) {
   // CABEÇALHOS DA TABELA
   // =============================================================================
   const headers = [
-    'Dimensão', 'Valor', 'Leads', 'Gasto (R$)', 'CPL (R$)',
-    '%D10', 'Taxa Proj. (%)', 'ROAS Proj.',
-    'CPL Máx (R$)', 'Margem (%)', 'Tier', 'Ação'
+    'Campaign', 'Adset', 'Ad', 'Leads', 'Gasto (R$)', 'CPL (R$)',
+    'Taxa Proj. (%)', 'ROAS Proj.',
+    'CPL Máx (R$)', 'Margem (%)', 'Orç. Atual (R$)', 'Orç. Alvo (R$)', 'Ação'
   ];
 
   sheet.getRange(headerRow, 1, 1, headers.length).setValues([headers]);
@@ -592,17 +592,10 @@ function writeAnalysisSheet(period, periodData, config) {
   headerRange.setFontColor('#FFFFFF');
   headerRange.setHorizontalAlignment('center');
 
-  // Dimensões (sem adset, sem total)
-  const dimensions = ['campaign', 'medium', 'term', 'ad', 'google_ads'];
-  const dimensionLabels = {
-    'campaign': 'Campaign',
-    'medium': 'Medium',
-    'term': 'Term',
-    'ad': 'Ad',
-    'google_ads': 'Google Ads'
-  };
-
   let currentRow = headerRow + 1;
+
+  // Dimensões (ordem: campaign, medium, ad, google_ads)
+  const dimensions = ['campaign', 'medium', 'ad', 'google_ads'];
 
   for (const dimension of dimensions) {
     const metrics = periodData[dimension];
@@ -613,10 +606,9 @@ function writeAnalysisSheet(period, periodData, config) {
 
     // Adicionar título destacado para Google Ads
     if (dimension === 'google_ads' && metrics.length > 0) {
-      currentRow++;  // Linha vazia extra antes
+      currentRow++;
 
-      // Título destacado
-      const titleCell = sheet.getRange(currentRow, 1, 1, 12);
+      const titleCell = sheet.getRange(currentRow, 1, 1, 13);
       titleCell.merge();
       titleCell.setValue('🔍 GOOGLE ADS (sem custos Meta - plataforma diferente)');
       titleCell.setFontWeight('bold');
@@ -630,35 +622,108 @@ function writeAnalysisSheet(period, periodData, config) {
     }
 
     for (const metric of metrics) {
-      const row = [
-        dimensionLabels[dimension],
-        metric.value,
-        metric.leads,
-        metric.spend,
-        metric.cpl,
-        metric.pct_d10,
-        metric.taxa_proj * 100,  // Converter para %
-        metric.roas_proj,
-        metric.cpl_max,
-        metric.margem,
-        metric.tier,
-        metric.acao
-      ];
+      // Montar row baseado na dimensão
+      let row;
+      let backgroundColor;  // Cor de fundo por seção
+
+      if (dimension === 'campaign') {
+        row = [
+          metric.value,           // Campaign
+          '',                     // Adset (vazio)
+          '',                     // Ad (vazio)
+          metric.leads, metric.spend, metric.cpl,
+          metric.taxa_proj * 100, metric.roas_proj,
+          metric.cpl_max, metric.margem,
+          metric.budget_current, metric.budget_target,
+          metric.acao
+        ];
+        backgroundColor = '#E8F5E9';  // Verde claro para campaigns
+      } else if (dimension === 'medium') {
+        row = [
+          metric.campaign || '',  // Campaign
+          metric.value,           // Adset
+          '',                     // Ad (vazio)
+          metric.leads, metric.spend, metric.cpl,
+          metric.taxa_proj * 100, metric.roas_proj,
+          metric.cpl_max, metric.margem,
+          metric.budget_current, metric.budget_target,
+          metric.acao
+        ];
+        backgroundColor = '#FFF3E0';  // Laranja claro para adsets
+      } else if (dimension === 'ad') {
+        row = [
+          metric.campaign || '',  // Campaign
+          metric.adset || '',     // Adset
+          metric.value,           // Ad
+          metric.leads, metric.spend, metric.cpl,
+          metric.taxa_proj * 100, metric.roas_proj,
+          metric.cpl_max, metric.margem,
+          metric.budget_current, metric.budget_target,
+          metric.acao
+        ];
+        backgroundColor = '#E3F2FD';  // Azul claro para ads
+      } else { // google_ads
+        row = [
+          '',                     // Campaign (vazio)
+          '',                     // Adset (vazio)
+          metric.value,           // Keyword
+          metric.leads, metric.spend, metric.cpl,
+          metric.taxa_proj * 100, metric.roas_proj,
+          metric.cpl_max, metric.margem,
+          metric.budget_current, metric.budget_target,
+          metric.acao
+        ];
+        backgroundColor = '#F3E5F5';  // Roxo claro para Google Ads
+      }
 
       sheet.getRange(currentRow, 1, 1, row.length).setValues([row]);
 
-      // Formatação condicional da margem
-      const margemCell = sheet.getRange(currentRow, 10);  // Coluna Margem
+      // Aplicar cor de fundo para toda a linha
+      sheet.getRange(currentRow, 1, 1, row.length).setBackground(backgroundColor);
 
-      if (metric.margem > 50) {
-        margemCell.setBackground('#34A853');  // Verde
-        margemCell.setFontColor('#FFFFFF');
-      } else if (metric.margem >= 0) {
-        margemCell.setBackground('#FBBC04');  // Amarelo
-        margemCell.setFontColor('#000000');
-      } else {
-        margemCell.setBackground('#EA4335');  // Vermelho
-        margemCell.setFontColor('#FFFFFF');
+      // Formatação condicional da ação
+      const acaoCell = sheet.getRange(currentRow, 13);  // Coluna Ação (agora é coluna 13)
+
+      // Casos especiais em cinza (sem ação numérica)
+      if (metric.acao === 'ABO' ||
+          metric.acao === 'CBO' ||
+          metric.acao === 'Manter' ||
+          metric.acao.includes('Aguardar dados')) {
+        acaoCell.setBackground('#E0E0E0');  // Cinza claro
+        acaoCell.setFontColor('#666666');   // Texto cinza escuro
+        acaoCell.setFontWeight('bold');
+      }
+      // Aumentar (verde se > 30%, amarelo se ≤ 30%)
+      else if (metric.acao.includes('Aumentar')) {
+        // Extrair percentual (ex: "Aumentar 45%" → 45)
+        const match = metric.acao.match(/Aumentar (\d+)%/);
+        if (match) {
+          const pct = parseInt(match[1]);
+          if (pct > 30) {
+            acaoCell.setBackground('#34A853');  // Verde
+            acaoCell.setFontColor('#FFFFFF');
+          } else {
+            acaoCell.setBackground('#FBBC04');  // Amarelo
+            acaoCell.setFontColor('#000000');
+          }
+        } else {
+          // Fallback: amarelo
+          acaoCell.setBackground('#FBBC04');
+          acaoCell.setFontColor('#000000');
+        }
+        acaoCell.setFontWeight('bold');
+      }
+      // Reduzir ou Remover (vermelho)
+      else if (metric.acao.includes('Reduzir') || metric.acao === 'Remover') {
+        acaoCell.setBackground('#EA4335');  // Vermelho
+        acaoCell.setFontColor('#FFFFFF');
+        acaoCell.setFontWeight('bold');
+      }
+      // Fallback: cinza
+      else {
+        acaoCell.setBackground('#E0E0E0');
+        acaoCell.setFontColor('#666666');
+        acaoCell.setFontWeight('bold');
       }
 
       currentRow++;
@@ -675,14 +740,13 @@ function writeAnalysisSheet(period, periodData, config) {
     const numDataRows = lastRow - firstDataRow + 1;
 
     // Gasto, CPL, CPL Máx (formato moeda)
-    sheet.getRange(firstDataRow, 4, numDataRows, 1).setNumberFormat('R$ #,##0.00');
-    sheet.getRange(firstDataRow, 5, numDataRows, 1).setNumberFormat('R$ #,##0.00');
-    sheet.getRange(firstDataRow, 9, numDataRows, 1).setNumberFormat('R$ #,##0.00');
+    sheet.getRange(firstDataRow, 5, numDataRows, 1).setNumberFormat('R$ #,##0.00');  // Gasto
+    sheet.getRange(firstDataRow, 6, numDataRows, 1).setNumberFormat('R$ #,##0.00');  // CPL
+    sheet.getRange(firstDataRow, 9, numDataRows, 1).setNumberFormat('R$ #,##0.00');  // CPL Máx
 
     // Percentuais
-    sheet.getRange(firstDataRow, 6, numDataRows, 1).setNumberFormat('0.00"%"');
-    sheet.getRange(firstDataRow, 7, numDataRows, 1).setNumberFormat('0.00"%"');
-    sheet.getRange(firstDataRow, 10, numDataRows, 1).setNumberFormat('0.00"%"');
+    sheet.getRange(firstDataRow, 7, numDataRows, 1).setNumberFormat('0.00"%"');  // Taxa Proj
+    sheet.getRange(firstDataRow, 10, numDataRows, 1).setNumberFormat('0.00"%"');  // Margem
 
     // ROAS
     sheet.getRange(firstDataRow, 8, numDataRows, 1).setNumberFormat('0.00"x"');

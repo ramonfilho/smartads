@@ -120,20 +120,148 @@ def calculate_margin(cpl_actual: float, cpl_max: float) -> float:
     return margin
 
 
+def calculate_confidence_level(leads: int, period_days: int = 1) -> str:
+    """
+    Calcula nível de confiança estatística baseado no volume de leads e período
+
+    Baseado em requisitos da Learning Phase do Meta Ads (2024):
+    - Meta: 10 conversões em 3 dias (~3.3/dia)
+    - Google Ads: 30 conversões em 30 dias (1/dia)
+
+    Thresholds escalados por período:
+    - Base: 3 leads/dia (insuficiente), 10/dia (baixa), 20/dia (média)
+
+    Args:
+        leads: Número de leads no período
+        period_days: Número de dias do período (1, 3, 7, 30, etc.)
+
+    Returns:
+        Nível de confiança: 'insuficiente', 'baixa', 'media', 'alta'
+    """
+    # Thresholds ajustados por período (leads/dia × período)
+    threshold_insuficiente = 3 * period_days     # 3/dia
+    threshold_baixa = 10 * period_days           # 10/dia
+    threshold_media = 20 * period_days           # 20/dia
+
+    if leads < threshold_insuficiente:
+        return 'insuficiente'
+    elif leads < threshold_baixa:
+        return 'baixa'
+    elif leads < threshold_media:
+        return 'media'
+    else:
+        return 'alta'
+
+
+def calculate_budget_variation(
+    margin: float,
+    confidence: str,
+    cpl_actual: float,
+    cpl_max: float
+) -> float:
+    """
+    Calcula percentual de variação de budget recomendado
+
+    Lógica simples e consistente:
+    - Margem > 0: variation = margem × fator_confiança
+    - Margem < 0: variation = redução necessária × ajuste por confiança
+
+    Args:
+        margin: Margem de manobra em %
+        confidence: Nível de confiança ('baixa', 'media', 'alta')
+        cpl_actual: CPL atual em R$
+        cpl_max: CPL máximo aceitável em R$
+
+    Returns:
+        Percentual de variação (-100 a +100)
+        Positivo = aumentar, Negativo = reduzir
+    """
+    # Fatores de confiança (quanto usar da margem disponível)
+    confidence_factors = {
+        'baixa': 0.3,   # 30% da margem
+        'media': 0.5,   # 50% da margem
+        'alta': 0.8     # 80% da margem
+    }
+
+    factor = confidence_factors.get(confidence, 0.5)
+
+    if margin > 0:
+        # AUMENTAR: usar margem disponível ajustado por confiança
+        # Sempre consistente: margem × fator
+        variation = (margin / 100.0) * factor
+        return round(variation * 100, 0)  # Retornar em %
+
+    else:
+        # REDUZIR (margin <= 0): calcular redução necessária para atingir CPL Max
+        if cpl_actual == 0:
+            return -100.0
+        variation = (cpl_max / cpl_actual) - 1.0
+        # Aplicar fator de confiança para redução (ser mais agressivo com alta confiança)
+        variation_adjusted = variation * (1.0 + (factor - 0.5))  # Mais agressivo com alta confiança
+        return round(variation_adjusted * 100, 0)  # Será negativo
+
+
 def determine_action(
     margin: float,
-    dimension: str
+    dimension: str,
+    has_budget_control: bool = True,
+    leads: int = 0,
+    cpl_actual: float = 0.0,
+    cpl_max: float = 0.0,
+    period_days: int = 1,
+    spend: float = 0.0
 ) -> str:
     """
-    Determina ação recomendada baseada na margem e tipo de dimensão
+    Determina ação recomendada baseada na margem, tipo de dimensão e volume de leads
 
     Args:
         margin: Margem de manobra em %
         dimension: Tipo de dimensão (campaign, adset, ad, medium, term, content)
+        has_budget_control: Se False, indica que não pode controlar orçamento neste nível
+                           - Para campaign: retorna "ABO" (budget no adset)
+                           - Para medium (adset): retorna "CBO" (budget na campanha)
+        leads: Número de leads (para validação estatística)
+        cpl_actual: CPL atual (para cálculo de variação)
+        cpl_max: CPL máximo aceitável (para cálculo de variação)
+        period_days: Número de dias do período analisado
+        spend: Gasto total em R$ (para detectar alto gasto sem leads)
 
     Returns:
-        Ação recomendada como string
+        Ação recomendada como string (ex: "Aumentar 25%", "Reduzir 30%", "Manter")
     """
+    # REGRA ESPECIAL: Gasto alto sem NENHUM lead = Remover/Pausar imediatamente
+    # Threshold fixo: R$ 50
+    SPEND_THRESHOLD = 50.0
+
+    if leads == 0 and spend > SPEND_THRESHOLD:
+        # Dimensões sem controle de orçamento (apenas on/off)
+        onoff_dimensions = ['ad', 'content']
+        if dimension in onoff_dimensions:
+            return "Remover"
+        else:
+            # Dimensões com budget: pausar completamente
+            return "Reduzir 100%"
+
+    # Verificar confiança estatística
+    confidence = calculate_confidence_level(leads, period_days)
+
+    # Se dados insuficientes, mostrar quantos faltam
+    if confidence == 'insuficiente':
+        threshold_min = 3 * period_days
+        faltam = threshold_min - leads
+        return f"Aguardar dados (falta {'1 lead' if faltam == 1 else f'{faltam} leads'})"
+
+    # Se não tem controle de orçamento nessa dimensão
+    if not has_budget_control:
+        # Campaign sem budget → orçamento está no AdSet (ABO)
+        if dimension == 'campaign':
+            return "ABO"
+        # AdSet sem budget → orçamento está na Campaign (CBO)
+        elif dimension == 'medium':
+            return "CBO"
+        else:
+            return "N/A"
+
     # Dimensões com controle de orçamento
     budget_dimensions = ['campaign', 'adset', 'medium', 'term']
 
@@ -141,12 +269,15 @@ def determine_action(
     onoff_dimensions = ['ad', 'content']
 
     if dimension in budget_dimensions:
-        if margin > 50:
-            return "Escalar"
-        elif margin >= 0:
-            return "Manter"
+        # Calcular variação percentual
+        variation_pct = calculate_budget_variation(margin, confidence, cpl_actual, cpl_max)
+
+        if variation_pct > 0:
+            return f"Aumentar {variation_pct:.1f}%"
+        elif variation_pct < 0:
+            return f"Reduzir {abs(variation_pct):.1f}%"
         else:
-            return "Reduzir"
+            return "Manter"
 
     elif dimension in onoff_dimensions:
         if margin >= 0:
@@ -156,12 +287,14 @@ def determine_action(
 
     else:
         # Dimensão desconhecida, usar lógica padrão de orçamento
-        if margin > 50:
-            return "Escalar"
-        elif margin >= 0:
-            return "Manter"
+        variation_pct = calculate_budget_variation(margin, confidence, cpl_actual, cpl_max)
+
+        if variation_pct > 0:
+            return f"Aumentar {variation_pct:.1f}%"
+        elif variation_pct < 0:
+            return f"Reduzir {abs(variation_pct):.1f}%"
         else:
-            return "Reduzir"
+            return "Manter"
 
 
 def calculate_decile_distribution(df: pd.DataFrame, decile_col: str = 'decil') -> Dict[str, float]:
@@ -189,7 +322,9 @@ def enrich_utm_with_economic_metrics(
     product_value: float,
     min_roas: float,
     conversion_rates: Dict[str, float],
-    dimension: str
+    dimension: str,
+    budget_control_col: str = None,
+    period_days: int = 1
 ) -> pd.DataFrame:
     """
     Enriquece DataFrame de análise UTM com métricas econômicas
@@ -200,6 +335,9 @@ def enrich_utm_with_economic_metrics(
         min_roas: ROAS mínimo desejado
         conversion_rates: Dict com taxas de conversão por decil
         dimension: Tipo de dimensão (campaign, adset, ad, etc.)
+        budget_control_col: Nome da coluna que indica se tem controle de orçamento (opcional)
+                           Para campaigns: 'has_campaign_budget'
+        period_days: Número de dias do período analisado (para ajustar thresholds)
 
     Returns:
         DataFrame enriquecido com colunas adicionais:
@@ -208,7 +346,7 @@ def enrich_utm_with_economic_metrics(
         - roas_proj: ROAS projetado
         - cpl_max: CPL máximo aceitável
         - margem: Margem de manobra em %
-        - acao: Ação recomendada
+        - acao: Ação recomendada (ou "N/A" se não tem controle de orçamento)
     """
     df = utm_df.copy()
 
@@ -219,6 +357,8 @@ def enrich_utm_with_economic_metrics(
     df['cpl_max'] = 0.0
     df['margem'] = 0.0
     df['acao'] = ""
+    df['budget_current'] = 0.0
+    df['budget_target'] = 0.0
 
     for idx, row in df.iterrows():
         spend = row.get('spend', 0.0)
@@ -256,9 +396,35 @@ def enrich_utm_with_economic_metrics(
         margin = calculate_margin(cpl, cpl_max)
         df.at[idx, 'margem'] = margin
 
-        # Ação
-        action = determine_action(margin, dimension)
+        # Verificar se tem controle de orçamento
+        has_budget_control = True
+        if budget_control_col and budget_control_col in row:
+            has_budget_control = bool(row[budget_control_col])
+
+        # Ação (inclui validação estatística, cálculo de variação e detecção de gasto alto sem leads)
+        action = determine_action(margin, dimension, has_budget_control, leads, cpl, cpl_max, period_days, spend)
         df.at[idx, 'acao'] = action
+
+        # Orçamento atual (gasto do período)
+        budget_current = spend
+        df.at[idx, 'budget_current'] = budget_current
+
+        # Orçamento alvo (baseado na ação)
+        budget_target = spend  # Default: manter
+
+        # Extrair variação percentual da ação
+        import re
+        if 'Aumentar' in action or 'Reduzir' in action:
+            match = re.search(r'(\d+\.?\d*)%', action)
+            if match:
+                variation_pct = float(match.group(1))
+                if 'Reduzir' in action:
+                    variation_pct = -variation_pct
+                budget_target = spend * (1 + variation_pct / 100.0)
+        elif action == 'Remover' or 'Reduzir 100' in action:
+            budget_target = 0.0
+
+        df.at[idx, 'budget_target'] = budget_target
 
     logger.info(f"✅ Métricas econômicas calculadas para dimensão '{dimension}': {len(df)} registros")
 

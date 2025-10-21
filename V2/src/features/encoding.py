@@ -142,8 +142,20 @@ def apply_categorical_encoding(df_original: pd.DataFrame, versao: str = "v1") ->
         'Medium_outros': 'Medium_Outros'  # Corrigir capitalização
     }
 
-    # Aplicar mapeamentos
-    df_encoded.columns = [mapeamentos_especificos.get(col, col) for col in df_encoded.columns]
+    # Aplicar mapeamentos (evitando colisões)
+    # Se a coluna de destino já existe, pular o mapeamento
+    colunas_atuais = set(df_encoded.columns)
+    novos_nomes = []
+    for col in df_encoded.columns:
+        novo_nome = mapeamentos_especificos.get(col, col)
+        # Se o novo nome já existe E não é a mesma coluna, manter o nome original
+        if novo_nome in colunas_atuais and novo_nome != col:
+            logger.warning(f"  ⚠️ Pulando mapeamento {col} → {novo_nome} (coluna destino já existe)")
+            novos_nomes.append(col)
+        else:
+            novos_nomes.append(novo_nome)
+
+    df_encoded.columns = novos_nomes
 
     # Contar quantas colunas foram alteradas
     colunas_alteradas = sum(1 for antes, depois in zip(colunas_antes, list(df_encoded.columns))

@@ -28,7 +28,7 @@ from src.production_pipeline import LeadScoringPipeline
 # Importar integrações
 from api.meta_integration import MetaAdsIntegration, enrich_utm_analysis_with_costs, enrich_utm_with_hierarchy
 from api.meta_config import META_CONFIG, BUSINESS_CONFIG
-from api.economic_metrics import enrich_utm_with_economic_metrics, calculate_tier
+from api.economic_metrics import enrich_utm_with_economic_metrics
 
 # Padrões de UTMs inválidos (bare names e genéricos)
 BARE_CAMPAIGN_NAMES = ['DEVLF', 'devlf']                      # Prefixos incompletos
@@ -331,23 +331,24 @@ class UTMAnalysisRequest(BaseModel):
 
 class UTMDimensionMetrics(BaseModel):
     """Métricas de uma dimensão UTM"""
+    campaign: Optional[str] = None  # Para adsets e ads: nome da campanha de origem
+    adset: Optional[str] = None     # Para ads: nome do adset de origem
     value: str
     leads: int
     spend: float
     cpl: float
-    pct_d10: float
     taxa_proj: float
     roas_proj: float
     cpl_max: float
     margem: float
-    tier: str
     acao: str
+    budget_current: float  # Orçamento atual (gasto do período)
+    budget_target: float   # Orçamento alvo (baseado na ação)
 
 class UTMPeriodAnalysis(BaseModel):
     """Análise UTM para um período"""
     campaign: List[UTMDimensionMetrics]
     medium: List[UTMDimensionMetrics]
-    term: List[UTMDimensionMetrics]
     ad: List[UTMDimensionMetrics]
     google_ads: List[UTMDimensionMetrics]
     # Metadados do período
@@ -583,6 +584,16 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
         for period_key, hierarchy in hierarchy_by_period.items():
             logger.info(f"   Processando período: {period_key}")
 
+            # Extrair número de dias do período ('1D' → 1, '3D' → 3, etc.)
+            if period_key == 'Total':
+                # Para Total, calcular diferença real entre datas
+                period_days = 30  # Default conservador
+            else:
+                try:
+                    period_days = int(period_key.replace('D', ''))
+                except:
+                    period_days = 1  # Fallback
+
             # Usar janela pré-calculada
             cutoff_start = period_windows[period_key]
 
@@ -659,7 +670,8 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
             period_analysis = {}
 
             # Dimensões a analisar (incluindo google_ads como dimensão separada)
-            dimensions = ['campaign', 'medium', 'term', 'ad', 'google_ads']
+            # Removido 'term' - não tem custo no Meta API, análise inútil
+            dimensions = ['campaign', 'medium', 'ad', 'google_ads']
 
             for dimension in dimensions:
                 # Tratamento especial para Google Ads
@@ -675,39 +687,45 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
 
                         logger.info(f"   📊 {len(google_df)} leads Google Ads no período {period_key}")
 
-                        # Agrupar por Campaign (ou Content se Campaign for genérico)
-                        # Filtrar valores genéricos
+                        # Agrupar por Term (formato: "keyword--campaign_id--ad_id")
+                        # Extrair apenas keyword (primeira parte)
+                        def extract_keyword_from_term(term_value):
+                            """Extrai keyword da primeira parte do Term"""
+                            if pd.isna(term_value) or str(term_value).strip() == '':
+                                return None
+                            # Formato: "keyword--campaign_id--ad_id"
+                            parts = str(term_value).split('--')
+                            if len(parts) >= 1 and parts[0].strip() != '':
+                                return parts[0].strip()  # Keyword
+                            return None
+
+                        google_df['keyword'] = google_df['Term'].apply(extract_keyword_from_term)
+
+                        # Filtrar valores genéricos e vazios
                         google_df_filtered = google_df[
-                            ~google_df['Campaign'].isin(['devlf', 'DEVLF']) &
-                            google_df['Campaign'].notna() &
-                            (google_df['Campaign'] != '')
-                        ]
+                            google_df['keyword'].notna() &
+                            ~google_df['keyword'].isin(['fb', 'ig', 'instagram', 'facebook'])
+                        ].copy()
 
                         if len(google_df_filtered) == 0:
-                            # Se todos são genéricos, agrupar por Content
-                            utm_col = 'Content'
-                            google_df_filtered = google_df[google_df[utm_col].notna()]
-                        else:
-                            utm_col = 'Campaign'
-
-                        if len(google_df_filtered) == 0:
+                            logger.info(f"   ⚠️ Nenhum keyword válido encontrado para Google Ads")
                             period_analysis[dimension] = []
                             continue
 
-                        grouped = google_df_filtered.groupby(utm_col).agg({
+                        grouped = google_df_filtered.groupby('keyword').agg({
                             'lead_score': 'count',
                             'decil': lambda x: (x == 'D10').sum() / len(x) * 100 if len(x) > 0 else 0,
                         }).rename(columns={'lead_score': 'leads', 'decil': 'pct_d10'})
 
                         # Calcular distribuição de decis
                         for value in grouped.index:
-                            value_df = google_df_filtered[google_df_filtered[utm_col] == value]
+                            value_df = google_df_filtered[google_df_filtered['keyword'] == value]
                             for i in range(1, 11):
                                 decile_key = f'D{i}'
                                 pct = (value_df['decil'] == decile_key).sum() / len(value_df) * 100 if len(value_df) > 0 else 0
                                 grouped.at[value, f'%{decile_key}'] = pct
 
-                        grouped = grouped.reset_index().rename(columns={utm_col: 'value'})
+                        grouped = grouped.reset_index().rename(columns={'keyword': 'value'})
 
                         # Google Ads não tem custos no Meta API
                         grouped['spend'] = 0.0
@@ -718,36 +736,37 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
                             product_value=product_value,
                             min_roas=min_roas,
                             conversion_rates=conversion_rates,
-                            dimension=dimension
+                            dimension=dimension,
+                            period_days=period_days
                         )
 
-                        enriched['tier'] = enriched['roas_proj'].apply(lambda x: calculate_tier(x, min_roas))
                         enriched = enriched.fillna({
                             'leads': 0,
                             'spend': 0.0,
                             'cpl': 0.0,
-                            'pct_d10': 0.0,
                             'taxa_proj': 0.0,
                             'roas_proj': 0.0,
                             'cpl_max': 0.0,
                             'margem': 0.0,
-                            'tier': 'N/A',
-                            'acao': 'N/A - Google Ads'
+                            'acao': 'N/A - Google Ads',
+                            'budget_current': 0.0,
+                            'budget_target': 0.0
                         })
 
                         period_analysis[dimension] = [
                             UTMDimensionMetrics(
+                                campaign=None,
                                 value=str(row['value']) if pd.notna(row['value']) else '(vazio)',
                                 leads=int(row['leads']),
                                 spend=float(row['spend']),
                                 cpl=float(row['cpl']),
-                                pct_d10=float(row['pct_d10']),
                                 taxa_proj=float(row['taxa_proj']),
                                 roas_proj=float(row['roas_proj']),
                                 cpl_max=float(row['cpl_max']),
                                 margem=float(row['margem']),
-                                tier=str(row['tier']),
-                                acao=str(row['acao'])
+                                acao=str(row['acao']),
+                                budget_current=float(row.get('budget_current', 0.0)),
+                                budget_target=float(row.get('budget_target', 0.0))
                             )
                             for _, row in enriched.iterrows()
                         ]
@@ -843,6 +862,202 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
 
                     # Resetar index e renomear para 'value' (será o Campaign ID)
                     grouped = grouped.reset_index().rename(columns={'campaign_id': 'value'})
+
+                elif dimension == 'medium':
+                    # Para adsets, agrupar por (campaign, adset) para separar mesmo nome em campanhas diferentes
+                    # Extrair campaign_id da coluna Campaign
+                    period_df_filtered = period_df_filtered.copy()
+
+                    # Verificar se temos coluna Campaign (utm_campaign)
+                    if 'Campaign' not in period_df_filtered.columns:
+                        logger.warning(f"⚠️  Coluna 'Campaign' não encontrada para matchear adsets. Usando apenas nome do adset.")
+                        # Fallback: agrupar só por nome do adset (comportamento antigo)
+                        grouped = period_df_filtered.groupby(utm_col).agg({
+                            'lead_score': 'count',
+                            'decil': lambda x: (x == 'D10').sum() / len(x) * 100 if len(x) > 0 else 0,
+                        }).rename(columns={'lead_score': 'leads', 'decil': 'pct_d10'})
+
+                        for value in grouped.index:
+                            value_df = period_df_filtered[period_df_filtered[utm_col] == value]
+                            for i in range(1, 11):
+                                decile_key = f'D{i}'
+                                pct = (value_df['decil'] == decile_key).sum() / len(value_df) * 100 if len(value_df) > 0 else 0
+                                grouped.at[value, f'%{decile_key}'] = pct
+
+                        grouped = grouped.reset_index().rename(columns={utm_col: 'value'})
+                        grouped['campaign_name'] = None  # Sem campaign info
+                    else:
+                        period_df_filtered['campaign_id'] = period_df_filtered['Campaign'].apply(extract_id_from_utm)
+
+                        # Criar mapeamento (campaign_id, adset_name) → adset_id da hierarquia
+                        campaign_adset_to_info = {}
+                        for campaign_id, campaign_data in hierarchy['campaigns'].items():
+                            for adset_id, adset_data in campaign_data['adsets'].items():
+                                key = (campaign_id, adset_data['name'])
+                                campaign_adset_to_info[key] = {
+                                    'adset_id': adset_id,
+                                    'campaign_name': campaign_data['name']
+                                }
+
+                        # Matchear cada lead para adset_id específico
+                        def match_adset(row):
+                            campaign_id = row['campaign_id']
+                            adset_name = row[utm_col]
+                            if pd.isna(campaign_id) or pd.isna(adset_name):
+                                return None, None
+                            key = (str(campaign_id), str(adset_name))
+                            info = campaign_adset_to_info.get(key)
+                            if info:
+                                return info['adset_id'], info['campaign_name']
+                            return None, None
+
+                        period_df_filtered[['adset_id', 'campaign_name']] = period_df_filtered.apply(
+                            match_adset, axis=1, result_type='expand'
+                        )
+
+                        # Remover linhas sem match
+                        before_match = len(period_df_filtered)
+                        period_df_filtered = period_df_filtered[period_df_filtered['adset_id'].notna()]
+                        after_match = len(period_df_filtered)
+                        if before_match > after_match:
+                            logger.info(f"   ⚠️  {before_match - after_match} leads sem match campaign+adset (removidos)")
+
+                        # Agrupar por adset_id (já é único por campanha)
+                        grouped = period_df_filtered.groupby('adset_id').agg({
+                            'lead_score': 'count',
+                            'campaign_name': 'first',  # Pegar o nome da campanha
+                            'decil': lambda x: (x == 'D10').sum() / len(x) * 100 if len(x) > 0 else 0,
+                        }).rename(columns={'lead_score': 'leads', 'decil': 'pct_d10'})
+
+                        # Calcular distribuição de decis
+                        for adset_id in grouped.index:
+                            value_df = period_df_filtered[period_df_filtered['adset_id'] == adset_id]
+                            for i in range(1, 11):
+                                decile_key = f'D{i}'
+                                pct = (value_df['decil'] == decile_key).sum() / len(value_df) * 100 if len(value_df) > 0 else 0
+                                grouped.at[adset_id, f'%{decile_key}'] = pct
+
+                        # Resetar index e renomear
+                        grouped = grouped.reset_index().rename(columns={'adset_id': 'value'})
+
+                elif dimension == 'ad':
+                    # Para ads, agrupar por nome e extrair campaign/adset das colunas Campaign/Medium
+                    period_df_filtered = period_df_filtered.copy()
+
+                    # Extrair campaign e adset names das colunas UTM
+                    if 'Campaign' in period_df_filtered.columns and 'Medium' in period_df_filtered.columns:
+                        # Campaign: extrair ID (formato "nome|ID")
+                        period_df_filtered['campaign_id'] = period_df_filtered['Campaign'].apply(extract_id_from_utm)
+
+                        # Medium: já contém NOME do adset (não ID), usar diretamente
+                        period_df_filtered['adset_name_from_utm'] = period_df_filtered['Medium']
+
+                        # Mapear campaign_id para nome
+                        campaign_id_to_name = {
+                            campaign_id: campaign_data['name']
+                            for campaign_id, campaign_data in hierarchy['campaigns'].items()
+                        }
+
+                        def get_campaign_name(row):
+                            """Obtém nome da campanha por ID, com fallback para nome do UTM"""
+                            campaign_id = row['campaign_id']
+                            if pd.notna(campaign_id):
+                                # Tentar buscar na hierarquia primeiro
+                                name = campaign_id_to_name.get(str(campaign_id))
+                                if name:
+                                    return name
+                            # Fallback: extrair nome do UTM Campaign (remover data e ID)
+                            campaign_utm = row.get('Campaign')
+                            if pd.notna(campaign_utm):
+                                import re
+                                # Remover campaign ID do final (|números)
+                                clean = re.sub(r'\|\d{18}$', '', str(campaign_utm))
+                                # Remover data do final (| YYYY-MM-DD)
+                                clean = re.sub(r'\|\s*\d{4}-\d{2}-\d{2}$', '', clean)
+                                return clean.strip()
+                            return None
+
+                        period_df_filtered['campaign_name'] = period_df_filtered.apply(get_campaign_name, axis=1)
+
+                        # adset_name inicial vem da coluna Medium
+                        period_df_filtered['adset_name'] = period_df_filtered['adset_name_from_utm']
+
+                        # CORREÇÃO: Detectar e corrigir UTMs genéricas usando hierarquia Meta
+                        GENERIC_UTMS = {'paid', 'dgen', 'facebook', 'instagram', 'meta', 'fb', 'ig', 'cpc'}
+
+                        def correct_generic_adset(row):
+                            """Corrige adset_name genérico buscando na hierarquia Meta por nome do ad"""
+                            try:
+                                adset_name = row['adset_name'] if 'adset_name' in row else None
+                                ad_name = row[utm_col] if utm_col in row else None
+
+                                # Se adset_name não é genérico ou está vazio, retornar como está
+                                if pd.isna(adset_name) or str(adset_name).lower() not in GENERIC_UTMS:
+                                    return adset_name
+
+                                # Se ad_name está vazio, não podemos corrigir
+                                if pd.isna(ad_name) or str(ad_name).strip() == '':
+                                    logger.debug(f"      ⚠️ Ad sem nome: adset_name='{adset_name}' (será filtrado)")
+                                    return None  # Será filtrado
+
+                                # Buscar ad_name na hierarquia para encontrar adset correto
+                                ad_name_lower = str(ad_name).lower()
+                                for campaign_id, campaign_data in hierarchy['campaigns'].items():
+                                    if not isinstance(campaign_data, dict) or 'adsets' not in campaign_data:
+                                        continue
+                                    for adset_id, adset_data in campaign_data['adsets'].items():
+                                        if not isinstance(adset_data, dict) or 'ads' not in adset_data:
+                                            continue
+                                        for ad_id, ad_data in adset_data['ads'].items():
+                                            if not isinstance(ad_data, dict) or 'name' not in ad_data:
+                                                continue
+                                            # Match por nome (case insensitive)
+                                            if ad_data['name'].lower() == ad_name_lower:
+                                                logger.info(f"      ✓ Corrigido '{adset_name}' → '{adset_data.get('name', 'Unknown')}' (ad: {str(ad_name)[:40]}...)")
+                                                return adset_data.get('name')
+
+                                # Não encontrou na hierarquia, filtrar
+                                logger.info(f"      🗑️ UTM genérica sem match: adset='{adset_name}', ad='{str(ad_name)[:40]}...'")
+                                return None
+                            except Exception as e:
+                                logger.error(f"      ❌ Erro em correct_generic_adset: {str(e)}")
+                                return row.get('adset_name') if hasattr(row, 'get') else None
+
+                        # Aplicar correção
+                        logger.info(f"   🔍 Verificando UTMs genéricas em {len(period_df_filtered)} ads...")
+                        period_df_filtered['adset_name'] = period_df_filtered.apply(correct_generic_adset, axis=1)
+
+                        # Filtrar ads com adset_name None (genéricos sem match)
+                        before_filter = len(period_df_filtered)
+                        period_df_filtered = period_df_filtered[period_df_filtered['adset_name'].notna()].copy()
+                        after_filter = len(period_df_filtered)
+                        if before_filter > after_filter:
+                            removed = before_filter - after_filter
+                            logger.info(f"   🗑️ Removidos {removed} ads com UTMs genéricas (sem match na hierarquia)")
+                    else:
+                        logger.warning(f"   ⚠️ Colunas Campaign ou Medium não encontradas para ads")
+                        period_df_filtered['campaign_name'] = None
+                        period_df_filtered['adset_name'] = None
+
+                    # Agrupar por nome do ad (coluna Content)
+                    grouped = period_df_filtered.groupby(utm_col).agg({
+                        'lead_score': 'count',
+                        'campaign_name': 'first',  # Pegar primeira ocorrência
+                        'adset_name': 'first',
+                        'decil': lambda x: (x == 'D10').sum() / len(x) * 100 if len(x) > 0 else 0,
+                    }).rename(columns={'lead_score': 'leads', 'decil': 'pct_d10'})
+
+                    # Calcular distribuição de decis
+                    for value in grouped.index:
+                        value_df = period_df_filtered[period_df_filtered[utm_col] == value]
+                        for i in range(1, 11):
+                            decile_key = f'D{i}'
+                            pct = (value_df['decil'] == decile_key).sum() / len(value_df) * 100 if len(value_df) > 0 else 0
+                            grouped.at[value, f'%{decile_key}'] = pct
+
+                    # Resetar index e renomear
+                    grouped = grouped.reset_index().rename(columns={utm_col: 'value'})
+
                 else:
                     # Para outras dimensões, agrupar normalmente pelo UTM
                     grouped = period_df_filtered.groupby(utm_col).agg({
@@ -887,47 +1102,97 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
                     )
                     logger.info(f"   ✏️ IDs substituídos por nomes de campanha para exibição")
 
+                elif dimension == 'medium':
+                    # Filtrar adsets com spend=0
+                    before_filter = len(grouped)
+                    grouped = grouped[grouped['spend'] > 0].copy()
+                    after_filter = len(grouped)
+                    if before_filter > after_filter:
+                        removed = before_filter - after_filter
+                        logger.info(f"   🗑️ Removidos {removed} adsets com spend=0 (IDs inválidos)")
+
+                    # Substituir Adset ID pelo nome legível
+                    id_to_info = {}
+                    for campaign_id, campaign_data in hierarchy['campaigns'].items():
+                        for adset_id, adset_data in campaign_data['adsets'].items():
+                            id_to_info[adset_id] = adset_data['name']
+
+                    grouped['value'] = grouped['value'].apply(
+                        lambda x: id_to_info.get(str(x), str(x))
+                    )
+                    logger.info(f"   ✏️ IDs substituídos por nomes de adset para exibição")
+
+                elif dimension == 'ad':
+                    # Filtrar ads com spend=0
+                    before_filter = len(grouped)
+                    grouped = grouped[grouped['spend'] > 0].copy()
+                    after_filter = len(grouped)
+                    if before_filter > after_filter:
+                        removed = before_filter - after_filter
+                        logger.info(f"   🗑️ Removidos {removed} ads com spend=0")
+
+                    # Para ads, 'value' já é o nome (não ID), então não precisa substituir
+                    logger.info(f"   ✅ {len(grouped)} ads com custo > 0")
+
                 # Enriquecer com métricas econômicas
+                # Para campaigns e adsets (medium), usar budget info para condicionar ação
+                if dimension == 'campaign':
+                    budget_control_col = 'has_campaign_budget'
+                elif dimension == 'medium':
+                    budget_control_col = 'has_adset_budget'
+                else:
+                    budget_control_col = None
+
                 enriched = enrich_utm_with_economic_metrics(
                     utm_df=grouped,
                     product_value=product_value,
                     min_roas=min_roas,
                     conversion_rates=conversion_rates,
-                    dimension=dimension
+                    dimension=dimension,
+                    budget_control_col=budget_control_col,
+                    period_days=period_days
                 )
-
-                # Adicionar tier
-                enriched['tier'] = enriched['roas_proj'].apply(lambda x: calculate_tier(x, min_roas))
 
                 # Tratar NaN em métricas calculadas (podem surgir de divisões por zero)
                 enriched = enriched.fillna({
                     'leads': 0,
                     'spend': 0.0,
                     'cpl': 0.0,
-                    'pct_d10': 0.0,
                     'taxa_proj': 0.0,
                     'roas_proj': 0.0,
                     'cpl_max': 0.0,
                     'margem': 0.0,
-                    'tier': 'D',
                     'acao': ''
                 })
 
                 # Converter para lista de dicts
                 metrics_list = []
                 for _, row in enriched.iterrows():
+                    # Para adsets, incluir campaign_name
+                    # Para ads, incluir campaign_name e adset_name
+                    campaign_value = None
+                    adset_value = None
+
+                    if dimension == 'medium':
+                        campaign_value = row.get('campaign_name')
+                    elif dimension == 'ad':
+                        campaign_value = row.get('campaign_name')
+                        adset_value = row.get('adset_name')
+
                     metrics_list.append(UTMDimensionMetrics(
+                        campaign=campaign_value,
+                        adset=adset_value,
                         value=str(row['value']) if pd.notna(row['value']) else '(vazio)',
                         leads=int(row['leads']),
                         spend=float(row['spend']),
                         cpl=float(row['cpl']),
-                        pct_d10=float(row['pct_d10']),
                         taxa_proj=float(row['taxa_proj']),
                         roas_proj=float(row['roas_proj']),
                         cpl_max=float(row['cpl_max']),
                         margem=float(row['margem']),
-                        tier=row['tier'],
-                        acao=row['acao']
+                        acao=row['acao'],
+                        budget_current=float(row.get('budget_current', 0.0)),
+                        budget_target=float(row.get('budget_target', 0.0))
                     ))
 
                 period_analysis[dimension] = metrics_list
@@ -957,7 +1222,9 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
         )
 
     except Exception as e:
+        import traceback
         logger.error(f"❌ Erro na análise UTM: {str(e)}")
+        logger.error(f"Traceback completo:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Erro na análise: {str(e)}")
     finally:
         if temp_file and os.path.exists(temp_file):
