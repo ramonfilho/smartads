@@ -1,12 +1,26 @@
 """
 Módulo de Cálculo de Métricas Econômicas
 Calcula CPL, ROAS projetado, margem de manobra e ações recomendadas
+
+VERSÃO 2.0 (2025-10-27): Nova lógica de recomendação contínua
+- Função sigmoid para confiança baseada em leads
+- Multiplicador de ROAS para ajuste fino
+- Eliminação de saltos bruscos entre categorias
 """
 
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple
 import logging
+from api.business_config import (
+    SPEND_THRESHOLD_ZERO_LEADS,
+    MINIMUM_LEADS_THRESHOLD,
+    MIN_ROAS_SAFETY,
+    CAP_VARIATION_MAX,
+    CONFIDENCE_SIGMOID_L50,
+    CONFIDENCE_SIGMOID_K,
+    ROAS_TARGET
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +53,7 @@ def calculate_projected_conversion_rate(
         conversion_rates: {'D1': 0.0026, 'D2': 0.0026, ...} (taxas históricas)
 
     Returns:
-        Taxa de conversão projetada (0.0 a 1.0)
+        Taxa de conversão projetada (valor decimal, ex: 0.035 = 3.5%)
     """
     projected_rate = 0.0
 
@@ -62,7 +76,7 @@ def calculate_projected_roas(
 
     Args:
         product_value: Valor do produto em R$
-        projected_conversion_rate: Taxa de conversão projetada (0.0 a 1.0)
+        projected_conversion_rate: Taxa de conversão projetada (decimal, ex: 0.035 = 3.5%)
         cpl: Custo por Lead em R$
 
     Returns:
@@ -75,49 +89,108 @@ def calculate_projected_roas(
     return expected_revenue / cpl
 
 
-def calculate_max_acceptable_cpl(
+def calculate_contribution_margin(
     product_value: float,
     projected_conversion_rate: float,
-    min_roas: float
-) -> float:
+    leads: int,
+    spend: float
+) -> Tuple[float, float]:
     """
-    Calcula CPL máximo aceitável para manter ROAS mínimo
-
-    Formula: (Valor Produto × Taxa Projetada) / ROAS Mínimo
+    Calcula Receita Projetada e Margem de Contribuição
 
     Args:
         product_value: Valor do produto em R$
-        projected_conversion_rate: Taxa de conversão projetada
-        min_roas: ROAS mínimo desejado (ex: 2.0x)
+        projected_conversion_rate: Taxa de conversão projetada (decimal, ex: 0.035 = 3.5%)
+        leads: Número de leads
+        spend: Gasto em R$
 
     Returns:
-        CPL máximo em R$
+        Tuple (receita_projetada, margem_contribuicao)
+
+    Example:
+        >>> calculate_contribution_margin(2027.38, 0.035, 50, 1000.0)
+        (3547.91, 2547.91)
     """
-    if min_roas == 0:
-        return 0.0
+    receita_proj = leads * projected_conversion_rate * product_value
+    margem_contrib = receita_proj - spend
 
-    expected_revenue = product_value * projected_conversion_rate
-    return expected_revenue / min_roas
+    return receita_proj, margem_contrib
 
 
-def calculate_margin(cpl_actual: float, cpl_max: float) -> float:
+def calculate_confidence_sigmoid(leads: int, period_days: int = 1) -> float:
     """
-    Calcula margem de manobra percentual
+    Calcula fator de confiança contínuo usando função sigmoid
 
-    Formula: ((CPL Max - CPL Atual) / CPL Max) × 100%
+    Substitui as faixas discretas (baixa/média/alta) por curva suave.
+    Quanto mais leads, maior a confiança, de forma gradual.
+
+    Fórmula: f(leads) = 1 / (1 + e^(-k * (leads_per_day - L50)))
 
     Args:
-        cpl_actual: CPL atual em R$
-        cpl_max: CPL máximo aceitável em R$
+        leads: Número total de leads no período
+        period_days: Número de dias do período (default: 1)
 
     Returns:
-        Margem em % (-100 a +100)
-    """
-    if cpl_max == 0:
-        return -100.0
+        Fator de confiança entre 0.0 e 1.0
 
-    margin = ((cpl_max - cpl_actual) / cpl_max) * 100
-    return margin
+    Example:
+        >>> calculate_confidence_sigmoid(15, 1)  # 15 leads em 1 dia
+        0.50  # 50% de confiança (ponto médio)
+
+        >>> calculate_confidence_sigmoid(30, 1)  # 30 leads em 1 dia
+        0.80  # 80% de confiança (alta)
+    """
+    # Leads por dia (normalizar pelo período)
+    leads_per_day = leads / period_days
+
+    # Sigmoid: 1 / (1 + e^(-k*(x - L50)))
+    confidence = 1.0 / (1.0 + np.exp(-CONFIDENCE_SIGMOID_K * (leads_per_day - CONFIDENCE_SIGMOID_L50)))
+
+    return confidence
+
+
+def calculate_roas_multiplier(roas_proj: float) -> float:
+    """
+    Calcula multiplicador baseado na magnitude do ROAS
+
+    ROAS alto permite escalada mais agressiva, pois há mais "margem de erro".
+
+    Lógica:
+    - ROAS < MIN_ROAS_SAFETY (2.5x): multiplicador = 0 (não escala, safety check)
+    - ROAS entre 2.5x e ROAS_TARGET (8.0x): multiplicador cresce linearmente de 0.5 a 1.0
+    - ROAS > ROAS_TARGET: multiplicador = 1.0 (confiança máxima)
+
+    Args:
+        roas_proj: ROAS projetado
+
+    Returns:
+        Multiplicador entre 0.0 e 1.0
+
+    Example:
+        >>> calculate_roas_multiplier(2.0)   # Abaixo do mínimo
+        0.0
+
+        >>> calculate_roas_multiplier(2.5)   # No limite mínimo
+        0.5
+
+        >>> calculate_roas_multiplier(5.0)   # Médio
+        0.73
+
+        >>> calculate_roas_multiplier(10.0)  # Muito alto
+        1.0
+    """
+    if roas_proj < MIN_ROAS_SAFETY:
+        return 0.0
+
+    if roas_proj >= ROAS_TARGET:
+        return 1.0
+
+    # Interpolação linear entre MIN_ROAS_SAFETY e ROAS_TARGET
+    # De 0.5 (no mínimo) até 1.0 (no target)
+    normalized = (roas_proj - MIN_ROAS_SAFETY) / (ROAS_TARGET - MIN_ROAS_SAFETY)
+    multiplier = 0.5 + 0.5 * normalized
+
+    return multiplier
 
 
 def calculate_confidence_level(leads: int, period_days: int = 1) -> str:
@@ -139,9 +212,10 @@ def calculate_confidence_level(leads: int, period_days: int = 1) -> str:
         Nível de confiança: 'insuficiente', 'baixa', 'media', 'alta'
     """
     # Thresholds ajustados por período (leads/dia × período)
-    threshold_insuficiente = 3 * period_days     # 3/dia
-    threshold_baixa = 10 * period_days           # 10/dia
-    threshold_media = 20 * period_days           # 20/dia
+    # Importados de business_config.py
+    threshold_insuficiente = CONFIDENCE_THRESHOLDS_PER_DAY["insufficient"] * period_days
+    threshold_baixa = CONFIDENCE_THRESHOLDS_PER_DAY["low"] * period_days
+    threshold_media = CONFIDENCE_THRESHOLDS_PER_DAY["medium"] * period_days
 
     if leads < threshold_insuficiente:
         return 'insuficiente'
@@ -154,86 +228,104 @@ def calculate_confidence_level(leads: int, period_days: int = 1) -> str:
 
 
 def calculate_budget_variation(
-    margin: float,
-    confidence: str,
-    cpl_actual: float,
-    cpl_max: float
+    margem_contrib: float,
+    spend: float,
+    roas_proj: float,
+    leads: int,
+    period_days: int = 1
 ) -> float:
     """
-    Calcula percentual de variação de budget recomendado
+    Calcula variação de budget usando lógica contínua (sigmoid + multiplicador ROAS)
 
-    Lógica simples e consistente:
-    - Margem > 0: variation = margem × fator_confiança
-    - Margem < 0: variation = redução necessária × ajuste por confiança
+    NOVA LÓGICA (v2.0 - 2025-10-27):
+    variacao = min(margem%, CAP_MAX) × f_confianca(leads) × f_roas(ROAS)
+
+    Onde:
+    - f_confianca: função sigmoid contínua baseada em leads
+    - f_roas: multiplicador linear baseado em ROAS
+    - CAP_MAX: 100% (limite para não quebrar Learning Phase do Meta)
 
     Args:
-        margin: Margem de manobra em %
-        confidence: Nível de confiança ('baixa', 'media', 'alta')
-        cpl_actual: CPL atual em R$
-        cpl_max: CPL máximo aceitável em R$
+        margem_contrib: Margem de contribuição em R$ (receita - gasto)
+        spend: Gasto atual em R$
+        roas_proj: ROAS projetado
+        leads: Número de leads no período
+        period_days: Número de dias do período (default: 1)
 
     Returns:
         Percentual de variação (-100 a +100)
         Positivo = aumentar, Negativo = reduzir
+
+    Example:
+        >>> calculate_budget_variation(918.26, 100.84, 10.11, 15, 1)
+        50.0  # Aumentar 50%
+        # Cálculo: min(910%, 100%) × sigmoid(15) × roas_mult(10.11)
+        #        = 100% × 0.50 × 1.0 = 50%
     """
-    # Fatores de confiança (quanto usar da margem disponível)
-    confidence_factors = {
-        'baixa': 0.3,   # 30% da margem
-        'media': 0.5,   # 50% da margem
-        'alta': 0.8     # 80% da margem
-    }
+    if spend == 0:
+        return 0.0
 
-    factor = confidence_factors.get(confidence, 0.5)
+    # CENÁRIO 1: Margem POSITIVA (lucrativa)
+    if margem_contrib > 0:
+        # 1. Calcular percentual de margem em relação ao gasto
+        margem_pct = (margem_contrib / spend) * 100
 
-    if margin > 0:
-        # AUMENTAR: usar margem disponível ajustado por confiança
-        # Sempre consistente: margem × fator
-        variation = (margin / 100.0) * factor
-        return round(variation * 100, 0)  # Retornar em %
+        # 2. Aplicar CAP absoluto (100% = dobrar orçamento, limite do Meta)
+        margem_capped = min(margem_pct, CAP_VARIATION_MAX)
 
+        # 3. Fator de confiança contínuo (sigmoid baseado em leads)
+        confidence_factor = calculate_confidence_sigmoid(leads, period_days)
+
+        # 4. Multiplicador de ROAS (considera magnitude do ROAS)
+        roas_multiplier = calculate_roas_multiplier(roas_proj)
+
+        # 5. Variação final
+        variation = margem_capped * confidence_factor * roas_multiplier
+
+        return round(variation, 1)
+
+    # CENÁRIO 2: Margem NEGATIVA (prejuízo)
     else:
-        # REDUZIR (margin <= 0): calcular redução necessária para atingir CPL Max
-        if cpl_actual == 0:
-            return -100.0
-        variation = (cpl_max / cpl_actual) - 1.0
-        # Aplicar fator de confiança para redução (ser mais agressivo com alta confiança)
-        variation_adjusted = variation * (1.0 + (factor - 0.5))  # Mais agressivo com alta confiança
-        return round(variation_adjusted * 100, 0)  # Será negativo
+        # Redução proporcional ao prejuízo
+        # Usar confiança para determinar quão agressivo ser no corte
+        margem_pct = (margem_contrib / spend) * 100
+        confidence_factor = calculate_confidence_sigmoid(leads, period_days)
+
+        variation = margem_pct * confidence_factor  # Será negativo
+
+        # Limitar redução máxima em -100% (pausar)
+        variation = max(variation, -100.0)
+
+        return round(variation, 1)
 
 
 def determine_action(
-    margin: float,
     dimension: str,
     has_budget_control: bool = True,
     leads: int = 0,
-    cpl_actual: float = 0.0,
-    cpl_max: float = 0.0,
     period_days: int = 1,
-    spend: float = 0.0
+    spend: float = 0.0,
+    margem_contrib: float = 0.0,
+    roas_proj: float = 0.0
 ) -> str:
     """
-    Determina ação recomendada baseada na margem, tipo de dimensão e volume de leads
+    Determina ação recomendada baseada em Margem de Contribuição
 
     Args:
-        margin: Margem de manobra em %
         dimension: Tipo de dimensão (campaign, adset, ad, medium, term, content)
         has_budget_control: Se False, indica que não pode controlar orçamento neste nível
-                           - Para campaign: retorna "ABO" (budget no adset)
-                           - Para medium (adset): retorna "CBO" (budget na campanha)
         leads: Número de leads (para validação estatística)
-        cpl_actual: CPL atual (para cálculo de variação)
-        cpl_max: CPL máximo aceitável (para cálculo de variação)
         period_days: Número de dias do período analisado
         spend: Gasto total em R$ (para detectar alto gasto sem leads)
+        margem_contrib: Margem de contribuição em R$ (receita - gasto)
+        roas_proj: ROAS projetado
 
     Returns:
         Ação recomendada como string (ex: "Aumentar 25%", "Reduzir 30%", "Manter")
     """
-    # REGRA ESPECIAL: Gasto alto sem NENHUM lead = Remover/Pausar imediatamente
-    # Threshold fixo: R$ 50
-    SPEND_THRESHOLD = 50.0
-
-    if leads == 0 and spend > SPEND_THRESHOLD:
+    # REGRA ESPECIAL 1: Gasto alto sem NENHUM lead = Remover/Pausar imediatamente
+    # Threshold importado de business_config.py
+    if leads == 0 and spend > SPEND_THRESHOLD_ZERO_LEADS:
         # Dimensões sem controle de orçamento (apenas on/off)
         onoff_dimensions = ['ad', 'content']
         if dimension in onoff_dimensions:
@@ -242,14 +334,24 @@ def determine_action(
             # Dimensões com budget: pausar completamente
             return "Reduzir 100%"
 
-    # Verificar confiança estatística
-    confidence = calculate_confidence_level(leads, period_days)
+    # REGRA ESPECIAL 2: Poucos leads MAS performance comprovadamente RUIM
+    # Caso: 1-2 leads, gasto alto (>R$50), ROAS <1.0 (prejuízo confirmado)
+    # Ação: Não aguardar mais dados, remover/pausar imediatamente
+    threshold_min = MINIMUM_LEADS_THRESHOLD * period_days
+    if leads < threshold_min and spend > SPEND_THRESHOLD_ZERO_LEADS and roas_proj < 1.0:
+        onoff_dimensions = ['ad', 'content']
+        if dimension in onoff_dimensions:
+            return "Remover (ROAS < 1.0)"
+        else:
+            return "Reduzir 100%"
 
-    # Se dados insuficientes, mostrar quantos faltam
-    if confidence == 'insuficiente':
-        threshold_min = 3 * period_days
+    # Se dados insuficientes mas sem indicação de performance ruim, aguardar
+    if leads < threshold_min:
         faltam = threshold_min - leads
-        return f"Aguardar dados (falta {'1 lead' if faltam == 1 else f'{faltam} leads'})"
+        if faltam == 1:
+            return "Aguardar dados (falta 1 lead)"
+        else:
+            return f"Aguardar dados (faltam {faltam} leads)"
 
     # Se não tem controle de orçamento nessa dimensão
     if not has_budget_control:
@@ -269,25 +371,25 @@ def determine_action(
     onoff_dimensions = ['ad', 'content']
 
     if dimension in budget_dimensions:
-        # Calcular variação percentual
-        variation_pct = calculate_budget_variation(margin, confidence, cpl_actual, cpl_max)
+        # Calcular variação baseada em nova lógica contínua
+        variation_pct = calculate_budget_variation(margem_contrib, spend, roas_proj, leads, period_days)
 
         if variation_pct > 0:
             return f"Aumentar {variation_pct:.1f}%"
         elif variation_pct < 0:
             return f"Reduzir {abs(variation_pct):.1f}%"
         else:
-            return "Manter"
+            return "Manter (ROAS baixo)"
 
     elif dimension in onoff_dimensions:
-        if margin >= 0:
+        if margem_contrib >= 0:
             return "Manter"
         else:
             return "Remover"
 
     else:
         # Dimensão desconhecida, usar lógica padrão de orçamento
-        variation_pct = calculate_budget_variation(margin, confidence, cpl_actual, cpl_max)
+        variation_pct = calculate_budget_variation(margem_contrib, spend, roas_proj, leads, period_days)
 
         if variation_pct > 0:
             return f"Aumentar {variation_pct:.1f}%"
@@ -295,26 +397,6 @@ def determine_action(
             return f"Reduzir {abs(variation_pct):.1f}%"
         else:
             return "Manter"
-
-
-def calculate_decile_distribution(df: pd.DataFrame, decile_col: str = 'decil') -> Dict[str, float]:
-    """
-    Calcula distribuição percentual de leads por decil
-
-    Args:
-        df: DataFrame com predições
-        decile_col: Nome da coluna de decil
-
-    Returns:
-        Dict com percentual por decil {'D1': 0.10, 'D2': 0.15, ...}
-    """
-    if len(df) == 0:
-        return {}
-
-    decile_counts = df[decile_col].value_counts()
-    decile_distribution = (decile_counts / len(df)).to_dict()
-
-    return decile_distribution
 
 
 def enrich_utm_with_economic_metrics(
@@ -327,35 +409,36 @@ def enrich_utm_with_economic_metrics(
     period_days: int = 1
 ) -> pd.DataFrame:
     """
-    Enriquece DataFrame de análise UTM com métricas econômicas
+    Enriquece DataFrame de análise UTM com métricas econômicas (Margem de Contribuição)
 
     Args:
         utm_df: DataFrame com colunas: value, leads, spend, decile distribution
         product_value: Valor do produto em R$
-        min_roas: ROAS mínimo desejado
+        min_roas: ROAS mínimo desejado (não usado mais, mantido por compatibilidade)
         conversion_rates: Dict com taxas de conversão por decil
         dimension: Tipo de dimensão (campaign, adset, ad, etc.)
         budget_control_col: Nome da coluna que indica se tem controle de orçamento (opcional)
-                           Para campaigns: 'has_campaign_budget'
         period_days: Número de dias do período analisado (para ajustar thresholds)
 
     Returns:
         DataFrame enriquecido com colunas adicionais:
         - cpl: Custo por Lead
         - taxa_proj: Taxa de conversão projetada
+        - receita_proj: Receita projetada (NOVO)
+        - margem_contrib: Margem de Contribuição em R$ (NOVO)
         - roas_proj: ROAS projetado
-        - cpl_max: CPL máximo aceitável
-        - margem: Margem de manobra em %
-        - acao: Ação recomendada (ou "N/A" se não tem controle de orçamento)
+        - acao: Ação recomendada
+        - budget_current: Orçamento atual
+        - budget_target: Orçamento alvo
     """
     df = utm_df.copy()
 
     # Inicializar colunas
     df['cpl'] = 0.0
     df['taxa_proj'] = 0.0
+    df['receita_proj'] = 0.0       # NOVO
+    df['margem_contrib'] = 0.0     # NOVO
     df['roas_proj'] = 0.0
-    df['cpl_max'] = 0.0
-    df['margem'] = 0.0
     df['acao'] = ""
     df['budget_current'] = 0.0
     df['budget_target'] = 0.0
@@ -384,25 +467,32 @@ def enrich_utm_with_economic_metrics(
             taxa_proj = 0.0
         df.at[idx, 'taxa_proj'] = taxa_proj
 
+        # NOVO: Receita Projetada e Margem de Contribuição
+        receita_proj, margem_contrib = calculate_contribution_margin(
+            product_value, taxa_proj, leads, spend
+        )
+        df.at[idx, 'receita_proj'] = receita_proj
+        df.at[idx, 'margem_contrib'] = margem_contrib
+
         # ROAS projetado
         roas_proj = calculate_projected_roas(product_value, taxa_proj, cpl)
         df.at[idx, 'roas_proj'] = roas_proj
-
-        # CPL máximo
-        cpl_max = calculate_max_acceptable_cpl(product_value, taxa_proj, min_roas)
-        df.at[idx, 'cpl_max'] = cpl_max
-
-        # Margem
-        margin = calculate_margin(cpl, cpl_max)
-        df.at[idx, 'margem'] = margin
 
         # Verificar se tem controle de orçamento
         has_budget_control = True
         if budget_control_col and budget_control_col in row:
             has_budget_control = bool(row[budget_control_col])
 
-        # Ação (inclui validação estatística, cálculo de variação e detecção de gasto alto sem leads)
-        action = determine_action(margin, dimension, has_budget_control, leads, cpl, cpl_max, period_days, spend)
+        # NOVO: Ação baseada em Margem de Contribuição
+        action = determine_action(
+            dimension=dimension,
+            has_budget_control=has_budget_control,
+            leads=leads,
+            period_days=period_days,
+            spend=spend,
+            margem_contrib=margem_contrib,
+            roas_proj=roas_proj
+        )
         df.at[idx, 'acao'] = action
 
         # Orçamento atual (gasto do período)
@@ -429,57 +519,3 @@ def enrich_utm_with_economic_metrics(
     logger.info(f"✅ Métricas econômicas calculadas para dimensão '{dimension}': {len(df)} registros")
 
     return df
-
-
-def format_economic_metrics(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Formata colunas de métricas econômicas para exibição
-
-    Args:
-        df: DataFrame com métricas calculadas
-
-    Returns:
-        DataFrame com valores formatados
-    """
-    df = df.copy()
-
-    # Formatar valores monetários (R$)
-    money_cols = ['spend', 'cpl', 'cpl_max']
-    for col in money_cols:
-        if col in df.columns:
-            df[col] = df[col].apply(lambda x: f"R$ {x:,.2f}" if pd.notna(x) else "R$ 0,00")
-
-    # Formatar percentuais
-    pct_cols = ['taxa_proj', 'margem']
-    for col in pct_cols:
-        if col in df.columns:
-            df[col] = df[col].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "0.00%")
-
-    # Formatar ROAS
-    if 'roas_proj' in df.columns:
-        df['roas_proj'] = df['roas_proj'].apply(lambda x: f"{x:.2f}x" if pd.notna(x) else "0.00x")
-
-    return df
-
-
-def calculate_tier(roas_proj: float, min_roas: float) -> str:
-    """
-    Determina tier baseado no ROAS projetado
-
-    Args:
-        roas_proj: ROAS projetado
-        min_roas: ROAS mínimo
-
-    Returns:
-        Tier (A+, A, B, C, D)
-    """
-    if roas_proj >= min_roas * 2:
-        return "A+"
-    elif roas_proj >= min_roas * 1.5:
-        return "A"
-    elif roas_proj >= min_roas:
-        return "B"
-    elif roas_proj >= min_roas * 0.5:
-        return "C"
-    else:
-        return "D"

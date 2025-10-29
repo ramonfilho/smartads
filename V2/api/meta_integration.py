@@ -69,7 +69,7 @@ class MetaAdsIntegration:
         logger.info(f"Buscando insights: account={account_id}, level={level}, days={days}")
 
         try:
-            response = requests.get(url, params=params)
+            response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
 
             data = response.json()
@@ -108,7 +108,7 @@ class MetaAdsIntegration:
         }
 
         try:
-            response = requests.get(url, params=params)
+            response = requests.get(url, params=params, timeout=3)
             response.raise_for_status()
             data = response.json()
 
@@ -155,7 +155,7 @@ class MetaAdsIntegration:
         }
 
         try:
-            response = requests.get(url, params=params)
+            response = requests.get(url, params=params, timeout=3)
             response.raise_for_status()
             data = response.json()
 

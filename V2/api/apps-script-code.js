@@ -4,7 +4,7 @@
  * ========================================
  *
  * Sistema automatizado de predições ML e análise UTM
- * Execução diária às 08:00 com análises 1D, 3D, 7D
+ * Execução diária à meia-noite (00:00) com análises 1D, 3D, 7D
  */
 
 // =============================================================================
@@ -78,9 +78,9 @@ function activateML() {
       'ML Ativado',
       'Smart Ads ML foi ativado com sucesso!\n\n' +
       '✅ Predições dos últimos 7 dias: OK\n' +
-      '✅ Execução diária às 08:00: Configurada\n' +
+      '✅ Execução diária à meia-noite: Configurada\n' +
       '✅ Análises UTM: Atualizadas\n\n' +
-      'O sistema irá rodar automaticamente todos os dias às 08:00.',
+      'O sistema irá rodar automaticamente todos os dias à 00:00 (meia-noite).',
       ui.ButtonSet.OK
     );
 
@@ -97,30 +97,30 @@ function activateML() {
 }
 
 // =============================================================================
-// EXECUÇÃO DIÁRIA AUTOMÁTICA (Trigger 08:00)
+// EXECUÇÃO DIÁRIA AUTOMÁTICA (Trigger 00:00)
 // =============================================================================
 
 /**
- * Executado diariamente às 08:00 via trigger
- * 1. Gera predições do dia anterior (ontem 08:00 → hoje 08:00)
+ * Executado diariamente à meia-noite via trigger
+ * 1. Gera predições do dia anterior (ontem 00:00 → hoje 00:00)
  * 2. Atualiza análises UTM (1D, 3D, 7D)
  * 3. Atualiza "Info do Modelo" se metadados mudaram
  */
 function executeDailyMLUpdate() {
   try {
-    Logger.log('🌅 Executando atualização diária ML - ' + new Date().toISOString());
+    Logger.log('🌙 Executando atualização diária ML - ' + new Date().toISOString());
 
-    // Etapa 1: Gerar predições do dia anterior
+    // Etapa 1: Gerar predições do dia anterior (00:00 → 00:00)
     const now = new Date();
-    const yesterday8am = new Date(now);
-    yesterday8am.setDate(yesterday8am.getDate() - 1);
-    yesterday8am.setHours(8, 0, 0, 0);
+    const yesterday00 = new Date(now);
+    yesterday00.setDate(yesterday00.getDate() - 1);
+    yesterday00.setHours(0, 0, 0, 0);
 
-    const today8am = new Date(now);
-    today8am.setHours(8, 0, 0, 0);
+    const today00 = new Date(now);
+    today00.setHours(0, 0, 0, 0);
 
-    Logger.log(`📅 Gerando predições: ${yesterday8am.toLocaleString()} → ${today8am.toLocaleString()}`);
-    generatePredictionsFor24hBlock(yesterday8am, today8am);
+    Logger.log(`📅 Gerando predições: ${yesterday00.toLocaleString()} → ${today00.toLocaleString()}`);
+    generatePredictionsFor24hBlock(yesterday00, today00);
 
     // Etapa 2: Atualizar análises UTM
     Logger.log('📊 Atualizando análises UTM...');
@@ -391,13 +391,22 @@ function updateUTMAnalysis() {
     // Criar abas para períodos 1D, 3D, 7D (sem Total)
     const periods = ['1D', '3D', '7D'];
 
+    // IMPORTANTE: Processar cada aba separadamente com tratamento de erro individual
+    // Se uma aba falhar, as outras ainda serão criadas
     for (const period of periods) {
       if (result.periods[period]) {
-        writeAnalysisSheet(period, result.periods[period], result.config);
+        try {
+          Logger.log(`📝 Processando aba ${period}...`);
+          writeAnalysisSheet(period, result.periods[period], result.config);
+          Logger.log(`✅ Aba ${period} criada com sucesso`);
+        } catch (periodError) {
+          Logger.log(`❌ Erro ao criar aba ${period}: ${periodError.message}`);
+          // Não throw - continuar processando outras abas
+        }
       }
     }
 
-    Logger.log('✅ Análises UTM atualizadas com sucesso');
+    Logger.log('✅ Análises UTM atualizadas');
 
   } catch (error) {
     Logger.log(`❌ Erro ao atualizar análises UTM: ${error.message}`);
@@ -477,16 +486,16 @@ function updateModelInfoIfChanged() {
 // =============================================================================
 
 /**
- * Cria trigger diário para executar às 08:00
+ * Cria trigger diário para executar à meia-noite (00:00)
  */
 function createDailyTrigger() {
   ScriptApp.newTrigger('executeDailyMLUpdate')
     .timeBased()
-    .atHour(8)
+    .atHour(0)  // Meia-noite (00:00)
     .everyDays(1)
     .create();
 
-  Logger.log('✅ Trigger diário criado para 08:00');
+  Logger.log('✅ Trigger diário criado para 00:00 (meia-noite)');
 }
 
 /**
@@ -514,15 +523,22 @@ function writeAnalysisSheet(period, periodData, config) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheetName = `Análise UTM - ${period}`;
 
-  // Deletar aba se já existir
-  let sheet = ss.getSheetByName(sheetName);
-  if (sheet) {
-    ss.deleteSheet(sheet);
+  // Deletar aba se já existir (com tratamento robusto)
+  try {
+    let sheet = ss.getSheetByName(sheetName);
+    if (sheet) {
+      Logger.log(`🗑️ Deletando aba existente: ${sheetName}`);
+      ss.deleteSheet(sheet);
+      SpreadsheetApp.flush();  // Garantir que deleção foi aplicada
+      Utilities.sleep(500);     // Pequeno delay para evitar conflito
+    }
+  } catch (deleteError) {
+    Logger.log(`⚠️ Erro ao deletar aba ${sheetName}: ${deleteError.message}`);
+    // Continuar mesmo se não conseguir deletar
   }
 
   // Criar nova aba
-  sheet = ss.insertSheet(sheetName);
-
+  const sheet = ss.insertSheet(sheetName);
   Logger.log(`📝 Criando aba: ${sheetName}`);
 
   // =============================================================================
@@ -579,8 +595,8 @@ function writeAnalysisSheet(period, periodData, config) {
   // =============================================================================
   const headers = [
     'Campaign', 'Adset', 'Ad', 'Leads', 'Gasto (R$)', 'CPL (R$)',
-    'Taxa Proj. (%)', 'ROAS Proj.',
-    'CPL Máx (R$)', 'Margem (%)', 'Orç. Atual (R$)', 'Orç. Alvo (R$)', 'Ação'
+    'Taxa Proj. (%)', 'Receita Proj. (R$)', 'Margem Contrib (R$)', 'ROAS Proj.',
+    'Orç. Atual (R$)', 'Orç. Alvo (R$)', 'Ação'
   ];
 
   sheet.getRange(headerRow, 1, 1, headers.length).setValues([headers]);
@@ -594,6 +610,14 @@ function writeAnalysisSheet(period, periodData, config) {
 
   let currentRow = headerRow + 1;
 
+  // =============================================================================
+  // OTIMIZAÇÃO: Coletar todos os dados primeiro, depois escrever em LOTE
+  // =============================================================================
+
+  const allRowsData = [];        // Dados das células
+  const rowBackgrounds = [];     // Cores de fundo por linha
+  const acaoFormatting = [];     // Formatação especial da coluna Ação
+
   // Dimensões (ordem: campaign, medium, ad, google_ads)
   const dimensions = ['campaign', 'medium', 'ad', 'google_ads'];
 
@@ -606,19 +630,15 @@ function writeAnalysisSheet(period, periodData, config) {
 
     // Adicionar título destacado para Google Ads
     if (dimension === 'google_ads' && metrics.length > 0) {
-      currentRow++;
+      // Linha vazia antes do título
+      allRowsData.push(Array(13).fill(''));
+      rowBackgrounds.push(Array(13).fill('#FFFFFF'));
+      acaoFormatting.push(null);
 
-      const titleCell = sheet.getRange(currentRow, 1, 1, 13);
-      titleCell.merge();
-      titleCell.setValue('🔍 GOOGLE ADS (sem custos Meta - plataforma diferente)');
-      titleCell.setFontWeight('bold');
-      titleCell.setFontSize(11);
-      titleCell.setBackground('#FFF3E0');
-      titleCell.setFontColor('#E65100');
-      titleCell.setHorizontalAlignment('center');
-      titleCell.setBorder(true, true, true, true, false, false, '#E65100', SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
-
-      currentRow++;
+      // Título Google Ads (será mesclado depois)
+      allRowsData.push(['🔍 GOOGLE ADS (sem custos Meta - plataforma diferente)', ...Array(12).fill('')]);
+      rowBackgrounds.push(Array(13).fill('#FFF3E0'));
+      acaoFormatting.push(null);
     }
 
     for (const metric of metrics) {
@@ -632,8 +652,7 @@ function writeAnalysisSheet(period, periodData, config) {
           '',                     // Adset (vazio)
           '',                     // Ad (vazio)
           metric.leads, metric.spend, metric.cpl,
-          metric.taxa_proj * 100, metric.roas_proj,
-          metric.cpl_max, metric.margem,
+          metric.taxa_proj * 100, metric.receita_proj, metric.margem_contrib, metric.roas_proj,
           metric.budget_current, metric.budget_target,
           metric.acao
         ];
@@ -644,8 +663,7 @@ function writeAnalysisSheet(period, periodData, config) {
           metric.value,           // Adset
           '',                     // Ad (vazio)
           metric.leads, metric.spend, metric.cpl,
-          metric.taxa_proj * 100, metric.roas_proj,
-          metric.cpl_max, metric.margem,
+          metric.taxa_proj * 100, metric.receita_proj, metric.margem_contrib, metric.roas_proj,
           metric.budget_current, metric.budget_target,
           metric.acao
         ];
@@ -656,8 +674,7 @@ function writeAnalysisSheet(period, periodData, config) {
           metric.adset || '',     // Adset
           metric.value,           // Ad
           metric.leads, metric.spend, metric.cpl,
-          metric.taxa_proj * 100, metric.roas_proj,
-          metric.cpl_max, metric.margem,
+          metric.taxa_proj * 100, metric.receita_proj, metric.margem_contrib, metric.roas_proj,
           metric.budget_current, metric.budget_target,
           metric.acao
         ];
@@ -668,88 +685,112 @@ function writeAnalysisSheet(period, periodData, config) {
           '',                     // Adset (vazio)
           metric.value,           // Keyword
           metric.leads, metric.spend, metric.cpl,
-          metric.taxa_proj * 100, metric.roas_proj,
-          metric.cpl_max, metric.margem,
+          metric.taxa_proj * 100, metric.receita_proj, metric.margem_contrib, metric.roas_proj,
           metric.budget_current, metric.budget_target,
           metric.acao
         ];
         backgroundColor = '#F3E5F5';  // Roxo claro para Google Ads
       }
 
-      sheet.getRange(currentRow, 1, 1, row.length).setValues([row]);
+      allRowsData.push(row);
+      rowBackgrounds.push(Array(13).fill(backgroundColor));
 
-      // Aplicar cor de fundo para toda a linha
-      sheet.getRange(currentRow, 1, 1, row.length).setBackground(backgroundColor);
-
-      // Formatação condicional da ação
-      const acaoCell = sheet.getRange(currentRow, 13);  // Coluna Ação (agora é coluna 13)
-
-      // Casos especiais em cinza (sem ação numérica)
-      if (metric.acao === 'ABO' ||
-          metric.acao === 'CBO' ||
-          metric.acao === 'Manter' ||
-          metric.acao.includes('Aguardar dados')) {
-        acaoCell.setBackground('#E0E0E0');  // Cinza claro
-        acaoCell.setFontColor('#666666');   // Texto cinza escuro
-        acaoCell.setFontWeight('bold');
-      }
-      // Aumentar (verde se > 30%, amarelo se ≤ 30%)
-      else if (metric.acao.includes('Aumentar')) {
-        // Extrair percentual (ex: "Aumentar 45%" → 45)
-        const match = metric.acao.match(/Aumentar (\d+)%/);
-        if (match) {
-          const pct = parseInt(match[1]);
-          if (pct > 30) {
-            acaoCell.setBackground('#34A853');  // Verde
-            acaoCell.setFontColor('#FFFFFF');
-          } else {
-            acaoCell.setBackground('#FBBC04');  // Amarelo
-            acaoCell.setFontColor('#000000');
-          }
+      // Determinar formatação da coluna Ação
+      let acaoColor = null;
+      if (metric.acao === 'ABO' || metric.acao === 'CBO' || metric.acao === 'Manter' || metric.acao.includes('Aguardar dados')) {
+        acaoColor = { bg: '#E0E0E0', fg: '#666666' };
+      } else if (metric.acao.includes('Aumentar')) {
+        const match = metric.acao.match(/Aumentar (\d+)/);
+        if (match && parseInt(match[1]) > 30) {
+          acaoColor = { bg: '#34A853', fg: '#FFFFFF' };
         } else {
-          // Fallback: amarelo
-          acaoCell.setBackground('#FBBC04');
-          acaoCell.setFontColor('#000000');
+          acaoColor = { bg: '#FBBC04', fg: '#000000' };
         }
-        acaoCell.setFontWeight('bold');
+      } else if (metric.acao.includes('Reduzir') || metric.acao === 'Remover') {
+        acaoColor = { bg: '#EA4335', fg: '#FFFFFF' };
+      } else {
+        acaoColor = { bg: '#E0E0E0', fg: '#666666' };
       }
-      // Reduzir ou Remover (vermelho)
-      else if (metric.acao.includes('Reduzir') || metric.acao === 'Remover') {
-        acaoCell.setBackground('#EA4335');  // Vermelho
-        acaoCell.setFontColor('#FFFFFF');
-        acaoCell.setFontWeight('bold');
-      }
-      // Fallback: cinza
-      else {
-        acaoCell.setBackground('#E0E0E0');
-        acaoCell.setFontColor('#666666');
-        acaoCell.setFontWeight('bold');
-      }
-
-      currentRow++;
+      acaoFormatting.push(acaoColor);
     }
 
-    // Adicionar linha vazia de separação entre dimensões
-    currentRow++;
+    // Linha vazia de separação entre dimensões
+    allRowsData.push(Array(13).fill(''));
+    rowBackgrounds.push(Array(13).fill('#FFFFFF'));
+    acaoFormatting.push(null);
   }
 
-  // Formatar colunas numéricas
+  // Escrever TODOS os dados de uma vez (MUITO mais rápido!)
+  if (allRowsData.length > 0) {
+    const dataRange = sheet.getRange(currentRow, 1, allRowsData.length, 13);
+    dataRange.setValues(allRowsData);
+    Logger.log(`✅ Escreveu ${allRowsData.length} linhas em lote`);
+
+    SpreadsheetApp.flush();  // Forçar aplicação
+
+    // Aplicar formatações em lote
+    dataRange.setBackgrounds(rowBackgrounds);
+
+    // Aplicar formatação especial da coluna Ação
+    for (let i = 0; i < acaoFormatting.length; i++) {
+      const fmt = acaoFormatting[i];
+      if (fmt) {
+        const acaoCell = sheet.getRange(currentRow + i, 13);
+        acaoCell.setBackground(fmt.bg);
+        acaoCell.setFontColor(fmt.fg);
+        acaoCell.setFontWeight('bold');
+      }
+    }
+
+    currentRow += allRowsData.length;
+    SpreadsheetApp.flush();  // Forçar aplicação de formatação
+  }
+
+  // Formatar colunas numéricas EM LOTE (muito mais rápido!)
   const lastRow = currentRow - 1;
   const firstDataRow = headerRow + 1;
   if (lastRow >= firstDataRow) {
     const numDataRows = lastRow - firstDataRow + 1;
 
-    // Gasto, CPL, CPL Máx (formato moeda)
+    // Formato moeda: Gasto, CPL, Receita Proj, Margem Contrib, Orç. Atual, Orç. Alvo
     sheet.getRange(firstDataRow, 5, numDataRows, 1).setNumberFormat('R$ #,##0.00');  // Gasto
     sheet.getRange(firstDataRow, 6, numDataRows, 1).setNumberFormat('R$ #,##0.00');  // CPL
-    sheet.getRange(firstDataRow, 9, numDataRows, 1).setNumberFormat('R$ #,##0.00');  // CPL Máx
+    sheet.getRange(firstDataRow, 8, numDataRows, 1).setNumberFormat('R$ #,##0.00');  // Receita Proj
+    sheet.getRange(firstDataRow, 9, numDataRows, 1).setNumberFormat('R$ #,##0.00');  // Margem Contrib
+    sheet.getRange(firstDataRow, 11, numDataRows, 1).setNumberFormat('R$ #,##0.00'); // Orç. Atual
+    sheet.getRange(firstDataRow, 12, numDataRows, 1).setNumberFormat('R$ #,##0.00'); // Orç. Alvo
 
-    // Percentuais
+    // Percentual: Taxa Proj
     sheet.getRange(firstDataRow, 7, numDataRows, 1).setNumberFormat('0.00"%"');  // Taxa Proj
-    sheet.getRange(firstDataRow, 10, numDataRows, 1).setNumberFormat('0.00"%"');  // Margem
 
     // ROAS
-    sheet.getRange(firstDataRow, 8, numDataRows, 1).setNumberFormat('0.00"x"');
+    sheet.getRange(firstDataRow, 10, numDataRows, 1).setNumberFormat('0.00"x"');  // ROAS Proj
+
+    SpreadsheetApp.flush();  // Forçar aplicação dos formatos numéricos
+
+    // Destacar Margem Contrib (coluna 9) com cores - EM LOTE
+    const margemValues = sheet.getRange(firstDataRow, 9, numDataRows, 1).getValues();
+    const margemBackgrounds = [];
+    const margemFontWeights = [];
+
+    for (let i = 0; i < margemValues.length; i++) {
+      const margemValue = margemValues[i][0];
+      if (margemValue > 0) {
+        margemBackgrounds.push(['#D4EDDA']);  // Verde claro (lucrativa)
+        margemFontWeights.push(['bold']);
+      } else if (margemValue < 0) {
+        margemBackgrounds.push(['#F8D7DA']);  // Vermelho claro (prejuízo)
+        margemFontWeights.push(['bold']);
+      } else {
+        margemBackgrounds.push(['#FFFFFF']);  // Branco (neutro)
+        margemFontWeights.push(['normal']);
+      }
+    }
+
+    sheet.getRange(firstDataRow, 9, numDataRows, 1).setBackgrounds(margemBackgrounds);
+    sheet.getRange(firstDataRow, 9, numDataRows, 1).setFontWeights(margemFontWeights);
+
+    SpreadsheetApp.flush();  // Forçar aplicação da formatação de margem
   }
 
   // Ajustar largura das colunas
@@ -758,7 +799,7 @@ function writeAnalysisSheet(period, periodData, config) {
   }
 
   // Adicionar nota com configuração
-  sheet.getRange(lastRow + 2, 1).setValue(`Configuração: Product Value = R$ ${config.product_value.toFixed(2)} | ROAS Mínimo = ${config.min_roas}x`);
+  sheet.getRange(lastRow + 2, 1).setValue(`Configuração: Product Value = R$ ${config.product_value.toFixed(2)} | ROAS Mínimo de Segurança = 2.5x | CAP Variação Máxima = 80%`);
   sheet.getRange(lastRow + 2, 1).setFontStyle('italic');
   sheet.getRange(lastRow + 2, 1).setFontColor('#666666');
 
