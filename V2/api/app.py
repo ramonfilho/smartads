@@ -30,6 +30,12 @@ from api.meta_integration import MetaAdsIntegration, enrich_utm_analysis_with_co
 from api.meta_config import META_CONFIG, BUSINESS_CONFIG
 from api.economic_metrics import enrich_utm_with_economic_metrics
 
+# Importar módulos CAPI
+from api.database import get_db, init_database, create_lead_capi, count_leads, count_leads_with_fbp, count_leads_with_fbc, get_leads_by_emails
+from api.capi_integration import send_batch_events
+from fastapi import Depends, Request
+from sqlalchemy.orm import Session
+
 # Padrões de UTMs inválidos (bare names e genéricos)
 BARE_CAMPAIGN_NAMES = ['DEVLF', 'devlf']                      # Prefixos incompletos
 BARE_MEDIUM_NAMES = ['dgen', 'paid']                          # Termos genéricos sem estrutura
@@ -113,6 +119,12 @@ async def startup_event():
         logger.error("❌ Falha ao inicializar pipeline!")
     else:
         logger.info("✅ API V2 pronta para receber requisições!")
+
+    # Inicializar database
+    if init_database():
+        logger.info("✅ Database inicializado com sucesso")
+    else:
+        logger.warning("⚠️ Database não inicializado (desenvolvimento sem PostgreSQL?)")
 
 @app.get("/")
 async def root():
@@ -320,6 +332,191 @@ async def predict_batch_csv(file: UploadFile = File(...)):
         if temp_file and os.path.exists(temp_file):
             os.remove(temp_file)
 
+# === WEBHOOK PARA CAPTURA DE LEADS (CAPI) ===
+
+class LeadCaptureRequest(BaseModel):
+    """Dados capturados do lead no frontend"""
+    # Dados pessoais
+    name: str
+    email: str
+    phone: Optional[str] = None
+
+    # Dados CAPI
+    fbp: Optional[str] = None
+    fbc: Optional[str] = None
+    event_id: str
+    user_agent: Optional[str] = None
+    event_source_url: Optional[str] = None
+
+    # UTMs
+    utm_source: Optional[str] = None
+    utm_medium: Optional[str] = None
+    utm_campaign: Optional[str] = None
+    utm_term: Optional[str] = None
+    utm_content: Optional[str] = None
+
+    # Outros
+    tem_comp: Optional[str] = None
+
+@app.post("/webhook/lead_capture")
+async def webhook_lead_capture(
+    request: Request,
+    lead_data: LeadCaptureRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Webhook para capturar dados de leads com FBP/FBC
+    Chamado pelo formulário frontend após envio do lead
+    """
+    try:
+        # Capturar IP do cliente (real, não do proxy Cloud Run)
+        client_ip = request.headers.get('X-Forwarded-For', request.client.host).split(',')[0].strip()
+
+        # Preparar dados para banco
+        lead_dict = {
+            'email': lead_data.email,
+            'name': lead_data.name,
+            'phone': lead_data.phone,
+            'fbp': lead_data.fbp,
+            'fbc': lead_data.fbc,
+            'event_id': lead_data.event_id,
+            'user_agent': lead_data.user_agent,
+            'client_ip': client_ip,
+            'event_source_url': lead_data.event_source_url,
+            'utm_source': lead_data.utm_source,
+            'utm_medium': lead_data.utm_medium,
+            'utm_campaign': lead_data.utm_campaign,
+            'utm_term': lead_data.utm_term,
+            'utm_content': lead_data.utm_content,
+            'tem_comp': lead_data.tem_comp
+        }
+
+        # Salvar no banco
+        lead_record = create_lead_capi(db, lead_dict)
+
+        logger.info(f"✅ Lead capturado: {lead_data.email} (ID: {lead_record.id}, Event ID: {lead_data.event_id})")
+
+        return {
+            "status": "success",
+            "message": "Lead capturado com sucesso",
+            "lead_id": lead_record.id,
+            "event_id": lead_data.event_id
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Erro ao capturar lead: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro ao capturar lead: {str(e)}")
+
+@app.get("/webhook/lead_capture/stats")
+async def lead_capture_stats(db: Session = Depends(get_db)):
+    """
+    Estatísticas de captura de leads CAPI
+    Útil para monitoramento e debug
+    """
+    try:
+        total = count_leads(db)
+        with_fbp = count_leads_with_fbp(db)
+        with_fbc = count_leads_with_fbc(db)
+
+        return {
+            "total_leads": total,
+            "leads_with_fbp": with_fbp,
+            "leads_with_fbc": with_fbc,
+            "fbp_fill_rate": round(with_fbp / total * 100, 2) if total > 0 else 0,
+            "fbc_fill_rate": round(with_fbc / total * 100, 2) if total > 0 else 0
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Erro ao obter stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro ao obter stats: {str(e)}")
+
+# === CAPI BATCH PROCESSING ===
+
+class CapiBatchRequest(BaseModel):
+    """Request para processamento batch CAPI"""
+    leads_d10: List[Dict[str, Any]] = Field(..., description="Leads D10 do dia anterior")
+
+@app.post("/capi/process_daily_batch")
+async def process_daily_batch_capi(
+    request: CapiBatchRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Processa batch diário de CAPI
+    Envia eventos LeadQualified para leads D10
+
+    Chamado pelo Apps Script às 00:00 após classificação ML
+    """
+    try:
+        logger.info(f"📊 Processando batch CAPI: {len(request.leads_d10)} leads D10")
+
+        # Extrair emails dos leads
+        emails = [lead['email'] for lead in request.leads_d10 if 'email' in lead]
+
+        if not emails:
+            logger.warning("⚠️ Nenhum email encontrado nos leads D10")
+            return {
+                "status": "error",
+                "message": "Nenhum email encontrado",
+                "total": 0,
+                "success": 0,
+                "errors": 0
+            }
+
+        # Buscar dados CAPI do banco
+        leads_capi = get_leads_by_emails(db, emails)
+
+        # Criar mapeamento email → dados CAPI
+        capi_map = {lead.email: lead for lead in leads_capi}
+
+        logger.info(f"   {len(capi_map)} leads encontrados no banco CAPI")
+
+        # Enriquecer leads D10 com dados CAPI
+        enriched_leads = []
+        for lead in request.leads_d10:
+            email = lead.get('email')
+            if not email:
+                continue
+
+            capi_data = capi_map.get(email)
+
+            # Montar dados para CAPI
+            lead_capi = {
+                'email': email,
+                'phone': lead.get('phone'),
+                'lead_score': lead['lead_score'],
+                'decil': lead['decil'],
+                'event_id': capi_data.event_id if capi_data else f"lead_{int(time.time())}_{email[:8]}",
+                'fbp': capi_data.fbp if capi_data else None,
+                'fbc': capi_data.fbc if capi_data else None,
+                'user_agent': capi_data.user_agent if capi_data else None,
+                'client_ip': capi_data.client_ip if capi_data else None,
+                'event_source_url': capi_data.event_source_url if capi_data else None,
+                'event_timestamp': int(pd.to_datetime(lead['data']).timestamp()) if 'data' in lead else int(time.time())
+            }
+
+            enriched_leads.append(lead_capi)
+
+        logger.info(f"   {len(enriched_leads)} leads enriquecidos para envio CAPI")
+
+        # Enviar batch
+        results = send_batch_events(enriched_leads)
+
+        logger.info(f"✅ Batch CAPI processado: {results['success']}/{results['total']} enviados")
+
+        return {
+            "status": "success",
+            "total": results['total'],
+            "success": results['success'],
+            "errors": results['errors'],
+            "leads_with_capi_data": len([l for l in enriched_leads if l['fbp'] or l['fbc']]),
+            "details": results.get('details', [])
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Erro no batch CAPI: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro no batch CAPI: {str(e)}")
+
 # === ANÁLISE UTM COM CUSTOS ===
 
 class UTMAnalysisRequest(BaseModel):
@@ -338,9 +535,9 @@ class UTMDimensionMetrics(BaseModel):
     spend: float
     cpl: float
     taxa_proj: float
+    receita_proj: float     # Receita projetada (NOVO - Margem de Contribuição)
+    margem_contrib: float   # Margem de Contribuição (NOVO - substitui margem%)
     roas_proj: float
-    cpl_max: float
-    margem: float
     acao: str
     budget_current: float  # Orçamento atual (gasto do período)
     budget_target: float   # Orçamento alvo (baseado na ação)
@@ -544,14 +741,16 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
         for period, start_date in period_windows.items():
             logger.info(f"   {period}: {start_date.strftime('%Y-%m-%d %H:%M')} até {cutoff_end.strftime('%Y-%m-%d %H:%M')}")
 
-        # 3. BUSCAR CUSTOS DA API META (HIERARQUIA COMPLETA)
+        # 3. BUSCAR CUSTOS DA API META (HIERARQUIA COMPLETA POR PERÍODO)
         logger.info("💰 Buscando hierarquia de custos da API Meta...")
         meta_client = MetaAdsIntegration(
             access_token=META_CONFIG['access_token'],
             api_version=META_CONFIG['api_version']
         )
 
-        # Buscar hierarquia completa para cada período
+        # Buscar hierarquia completa para cada período separadamente
+        # IMPORTANTE: Meta API retorna dados AGREGADOS do período solicitado
+        # Não é possível buscar 7D e filtrar para 1D - os custos são diferentes!
         hierarchy_by_period = {}
         for period_key, start_date in period_windows.items():
             # Converter timestamps para strings no formato YYYY-MM-DD
@@ -576,7 +775,49 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
             total_ads = sum(sum(len(a['ads']) for a in c['adsets'].values()) for c in hierarchy['campaigns'].values())
             logger.info(f"   {period_key}: {total_campaigns} campaigns, {total_adsets} adsets, {total_ads} ads | R$ {total_spend:.2f}")
 
-        # 4. GERAR ANÁLISE UTM POR PERÍODO E DIMENSÃO
+        # 4. CALCULAR DECIS UMA VEZ NOS LEADS 21D (BASE DE REFERÊNCIA)
+        logger.info("📊 Calculando decis nos leads 21D (base de referência estatística)...")
+
+        # Filtrar leads para 21D (3 semanas - janela de referência)
+        cutoff_21d_start = cutoff_end - pd.Timedelta(days=21)
+        if 'Data' in result_df.columns:
+            dates = pd.to_datetime(result_df['Data'])
+            if dates.dt.tz is not None:
+                dates = dates.dt.tz_localize(None)
+
+            result_df_21d = result_df[(dates >= cutoff_21d_start) & (dates < cutoff_end)].copy()
+            logger.info(f"   Leads 21D: {len(result_df_21d)} de {len(result_df)} totais")
+        else:
+            result_df_21d = result_df.copy()
+            logger.warning(f"   Coluna 'Data' não encontrada, usando todos os {len(result_df)} leads")
+
+        # Garantir que lead_score é numérico
+        result_df_21d['lead_score'] = pd.to_numeric(result_df_21d['lead_score'], errors='coerce')
+
+        # Remover linhas com lead_score inválido
+        result_df_21d = result_df_21d[result_df_21d['lead_score'].notna()].copy()
+
+        if len(result_df_21d) >= 10:
+            try:
+                result_df_21d['decil'] = pd.qcut(
+                    result_df_21d['lead_score'],
+                    q=10,
+                    labels=[f'D{i}' for i in range(1, 11)],
+                    duplicates='drop'
+                )
+                logger.info(f"✅ Decis calculados para {len(result_df_21d)} leads 21D (base de referência)")
+            except Exception as e:
+                logger.warning(f"⚠️ Erro ao calcular decis: {e}, usando faixas fixas")
+                result_df_21d['decil'] = result_df_21d['lead_score'].apply(
+                    lambda x: f"D{min(10, max(1, int(float(x) * 10) + 1))}" if x > 0 else "D1"
+                )
+        else:
+            logger.warning(f"⚠️ Menos de 10 leads em 21D, usando faixas fixas")
+            result_df_21d['decil'] = result_df_21d['lead_score'].apply(
+                lambda x: f"D{min(10, max(1, int(float(x) * 10) + 1))}" if x > 0 else "D1"
+            )
+
+        # 5. GERAR ANÁLISE UTM POR PERÍODO E DIMENSÃO
         logger.info("📈 Gerando análise UTM...")
 
         periods_analysis = {}
@@ -597,18 +838,19 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
             # Usar janela pré-calculada
             cutoff_start = period_windows[period_key]
 
-            # Filtrar leads dentro da janela: [start, end)
-            if 'Data' in result_df.columns:
-                dates = pd.to_datetime(result_df['Data'])
-                if dates.dt.tz is not None:
-                    dates = dates.dt.tz_localize(None)
+            # Filtrar do dataset 21D (que já tem decis calculados)
+            if 'Data' in result_df_21d.columns:
+                dates_21d = pd.to_datetime(result_df_21d['Data'])
+                if dates_21d.dt.tz is not None:
+                    dates_21d = dates_21d.dt.tz_localize(None)
 
                 # Filtrar: Data >= cutoff_start AND Data < cutoff_end
-                period_df = result_df[(dates >= cutoff_start) & (dates < cutoff_end)].copy()
-                logger.info(f"   Leads no período {period_key}: {len(period_df)} de {len(result_df)} totais")
+                # IMPORTANTE: Decis já foram calculados no dataset 21D e são mantidos
+                period_df = result_df_21d[(dates_21d >= cutoff_start) & (dates_21d < cutoff_end)].copy()
+                logger.info(f"   Leads no período {period_key}: {len(period_df)} (decis de base 21D)")
             else:
-                period_df = result_df.copy()
-                logger.warning(f"   Coluna 'Data' não encontrada, usando todos os {len(result_df)} leads")
+                period_df = result_df_21d.copy()
+                logger.warning(f"   Coluna 'Data' não encontrada, usando todos os leads 21D")
 
             # Capturar metadados: timestamps reais dos leads dentro da janela
             if 'Data' in period_df.columns and len(period_df) > 0:
@@ -634,38 +876,15 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
 
             logger.info(f"   📊 Metadados: {period_start} até {period_end} | Total: {total_leads} | Meta: {meta_leads} | Google: {google_leads}")
 
-            # Calcular decis para os leads deste período
-            # Garantir que lead_score é numérico
-            period_df['lead_score'] = pd.to_numeric(period_df['lead_score'], errors='coerce')
-
-            # Remover linhas com lead_score inválido (NaN, None, string vazia)
-            period_df = period_df[period_df['lead_score'].notna()].copy()
-
+            # Validar que temos leads e decis (já calculados em 21D)
             if len(period_df) == 0:
-                logger.warning(f"   ⚠️ Nenhum lead com score válido no período {period_key}")
+                logger.warning(f"   ⚠️ Nenhum lead no período {period_key}")
                 continue
 
-            if len(period_df) >= 10 and 'lead_score' in period_df.columns:
-                try:
-                    period_df['decil'] = pd.qcut(
-                        period_df['lead_score'],
-                        q=10,
-                        labels=[f'D{i}' for i in range(1, 11)],
-                        duplicates='drop'
-                    )
-                    logger.info(f"   ✅ Decis calculados para período {period_key}")
-                except Exception as e:
-                    logger.warning(f"   ⚠️ Erro ao calcular decis: {e}, usando faixas fixas")
-                    # Fallback: usar faixas fixas (agora seguro, lead_score é numérico)
-                    period_df['decil'] = period_df['lead_score'].apply(
-                        lambda x: f"D{min(10, max(1, int(float(x) * 10) + 1))}" if x > 0 else "D1"
-                    )
-            else:
-                # Poucos leads, usar faixas fixas
-                period_df['decil'] = period_df['lead_score'].apply(
-                    lambda x: f"D{min(10, max(1, int(float(x) * 10) + 1))}" if x > 0 else "D1"
-                )
-                logger.warning(f"   ⚠️ Menos de 10 leads no período, usando faixas fixas")
+            if 'decil' not in period_df.columns:
+                logger.error(f"   ❌ ERRO: Coluna 'decil' não encontrada após filtro (bug!)")
+                # Fallback emergencial
+                period_df['decil'] = 'D5'
 
             period_analysis = {}
 
@@ -745,9 +964,9 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
                             'spend': 0.0,
                             'cpl': 0.0,
                             'taxa_proj': 0.0,
+                            'receita_proj': 0.0,
+                            'margem_contrib': 0.0,
                             'roas_proj': 0.0,
-                            'cpl_max': 0.0,
-                            'margem': 0.0,
                             'acao': 'N/A - Google Ads',
                             'budget_current': 0.0,
                             'budget_target': 0.0
@@ -761,9 +980,9 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
                                 spend=float(row['spend']),
                                 cpl=float(row['cpl']),
                                 taxa_proj=float(row['taxa_proj']),
+                                receita_proj=float(row['receita_proj']),
+                                margem_contrib=float(row['margem_contrib']),
                                 roas_proj=float(row['roas_proj']),
-                                cpl_max=float(row['cpl_max']),
-                                margem=float(row['margem']),
                                 acao=str(row['acao']),
                                 budget_current=float(row.get('budget_current', 0.0)),
                                 budget_target=float(row.get('budget_target', 0.0))
@@ -1159,9 +1378,9 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
                     'spend': 0.0,
                     'cpl': 0.0,
                     'taxa_proj': 0.0,
+                    'receita_proj': 0.0,
+                    'margem_contrib': 0.0,
                     'roas_proj': 0.0,
-                    'cpl_max': 0.0,
-                    'margem': 0.0,
                     'acao': ''
                 })
 
@@ -1187,9 +1406,9 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
                         spend=float(row['spend']),
                         cpl=float(row['cpl']),
                         taxa_proj=float(row['taxa_proj']),
+                        receita_proj=float(row['receita_proj']),
+                        margem_contrib=float(row['margem_contrib']),
                         roas_proj=float(row['roas_proj']),
-                        cpl_max=float(row['cpl_max']),
-                        margem=float(row['margem']),
                         acao=row['acao'],
                         budget_current=float(row.get('budget_current', 0.0)),
                         budget_target=float(row.get('budget_target', 0.0))
