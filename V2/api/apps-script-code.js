@@ -126,7 +126,11 @@ function executeDailyMLUpdate() {
     Logger.log('📊 Atualizando análises UTM...');
     updateUTMAnalysis();
 
-    // Etapa 3: Atualizar Info do Modelo se necessário
+    // Etapa 3: Enviar batch CAPI para leads D10
+    Logger.log('📤 Enviando batch CAPI para leads D10...');
+    sendCapiBatchForD10Leads(yesterday00, today00);
+
+    // Etapa 4: Atualizar Info do Modelo se necessário
     updateModelInfoIfChanged();
 
     Logger.log('✅ Atualização diária concluída com sucesso');
@@ -1019,5 +1023,95 @@ function testConnection() {
       `Não foi possível conectar à API:\n${error.message}`,
       SpreadsheetApp.getUi().ButtonSet.OK
     );
+  }
+}
+
+// =============================================================================
+// CAPI: ENVIO DE BATCH PARA LEADS D10
+// =============================================================================
+
+/**
+ * Envia leads D10 do período para API processar batch CAPI
+ * Chamado diariamente após classificação ML
+ */
+function sendCapiBatchForD10Leads(startDate, endDate) {
+  try {
+    Logger.log(`📤 Enviando batch CAPI: ${startDate.toLocaleString()} → ${endDate.toLocaleString()}`);
+
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('[LF] Pesquisa');
+    if (!sheet) {
+      Logger.log('⚠️ Aba "[LF] Pesquisa" não encontrada');
+      return;
+    }
+
+    const values = sheet.getDataRange().getValues();
+    if (values.length <= 1) {
+      Logger.log('⚠️ Nenhum dado na planilha');
+      return;
+    }
+
+    const headers = values[0];
+    const dataColIndex = headers.indexOf('Data');
+    const emailColIndex = headers.indexOf('E-mail');
+    const phoneColIndex = headers.indexOf('Telefone');
+    const scoreColIndex = headers.indexOf('lead_score');
+    const decilColIndex = headers.indexOf('decil');
+
+    // Coletar leads D10 do período
+    const leadsD10 = [];
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i];
+      const leadDate = new Date(row[dataColIndex]);
+      const decil = row[decilColIndex];
+      const leadScore = row[scoreColIndex];
+      const email = row[emailColIndex];
+
+      // Lead está no período e é D10
+      if (leadDate >= startDate && leadDate < endDate && decil === 'D10') {
+        leadsD10.push({
+          email: email,
+          phone: row[phoneColIndex],
+          lead_score: leadScore,
+          decil: decil,
+          data: Utilities.formatDate(leadDate, Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ss")
+        });
+      }
+    }
+
+    if (leadsD10.length === 0) {
+      Logger.log('✅ Nenhum lead D10 no período');
+      return;
+    }
+
+    Logger.log(`📊 ${leadsD10.length} leads D10 encontrados, enviando para API...`);
+
+    // Enviar para API
+    const API_URL = 'https://smart-ads-api-12955519745.us-central1.run.app';
+    const payload = {
+      leads_d10: leadsD10
+    };
+
+    const options = {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    };
+
+    const response = UrlFetchApp.fetch(`${API_URL}/capi/process_daily_batch`, options);
+    const responseCode = response.getResponseCode();
+    const responseBody = response.getContentText();
+
+    if (responseCode === 200) {
+      const result = JSON.parse(responseBody);
+      Logger.log(`✅ Batch CAPI enviado: ${result.success}/${result.total} eventos com sucesso`);
+      Logger.log(`   Leads com dados CAPI: ${result.leads_with_capi_data}`);
+    } else {
+      Logger.log(`❌ Erro no batch CAPI: ${responseCode} - ${responseBody}`);
+    }
+
+  } catch (error) {
+    Logger.log(`❌ Erro ao enviar batch CAPI: ${error.message}`);
+    Logger.log(error.stack);
   }
 }
