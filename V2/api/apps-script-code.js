@@ -701,8 +701,10 @@ function writeAnalysisSheet(period, periodData, config) {
 
       // Determinar formatação da coluna Ação
       let acaoColor = null;
-      if (metric.acao === 'ABO' || metric.acao === 'CBO' || metric.acao === 'Manter' || metric.acao.includes('Aguardar dados')) {
-        acaoColor = { bg: '#E0E0E0', fg: '#666666' };
+      if (metric.acao === 'ABO' || metric.acao === 'Manter' || metric.acao === 'CBO - Manter' || metric.acao.includes('Aguardar dados')) {
+        acaoColor = { bg: '#E0E0E0', fg: '#666666' };  // Cinza neutro
+      } else if (metric.acao === 'CBO - Pausar / Alterar' || metric.acao.includes('Pausar')) {
+        acaoColor = { bg: '#EA4335', fg: '#FFFFFF' };  // Vermelho para pausar
       } else if (metric.acao.includes('Aumentar')) {
         const match = metric.acao.match(/Aumentar (\d+)/);
         if (match && parseInt(match[1]) > 30) {

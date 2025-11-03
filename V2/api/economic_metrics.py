@@ -360,7 +360,24 @@ def determine_action(
             return "ABO"
         # AdSet sem budget → orçamento está na Campaign (CBO)
         elif dimension == 'medium':
-            return "CBO"
+            # AdSet em campanha CBO: recomendar ações baseadas em performance
+            # Não pode alterar orçamento, mas pode pausar ou manter
+
+            # Poucos dados: aguardar
+            if leads < threshold_min:
+                faltam = threshold_min - leads
+                if faltam == 1:
+                    return "CBO - Aguardar dados (falta 1 lead)"
+                else:
+                    return f"CBO - Aguardar dados (faltam {faltam} leads)"
+
+            # Dados suficientes: analisar performance
+            if margem_contrib < 0 or roas_proj < MIN_ROAS_SAFETY:
+                # Prejuízo ou ROAS muito baixo
+                return "CBO - Pausar / Alterar"
+            else:
+                # Performance aceitável ou boa
+                return "CBO - Manter"
         else:
             return "N/A"
 
