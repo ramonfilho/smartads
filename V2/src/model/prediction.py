@@ -17,18 +17,23 @@ logger = logging.getLogger(__name__)
 class LeadScoringPredictor:
     """Classe para realizar predições de lead scoring."""
 
-    def __init__(self, model_name: str = "v1_devclub_rf_temporal"):
+    def __init__(self, model_name: str = "v1_devclub_rf_temporal", model_path: str = None):
         """
         Inicializa o preditor com um modelo específico.
 
         Args:
             model_name: Nome do modelo a ser carregado (sem extensão)
+            model_path: Caminho customizado para a pasta do modelo (opcional)
         """
         self.model_name = model_name
         self.model = None
         self.feature_names = None
         self.metadata = None
-        self.model_path = Path(__file__).parent.parent.parent / "arquivos_modelo"
+
+        if model_path:
+            self.model_path = Path(model_path)
+        else:
+            self.model_path = Path(__file__).parent.parent.parent / "arquivos_modelo"
 
     def load_model(self):
         """Carrega o modelo pickle e seus metadados."""

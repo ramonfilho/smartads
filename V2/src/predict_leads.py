@@ -42,6 +42,12 @@ def main():
         default=None,
         help='Salvar apenas os top N leads com maior score'
     )
+    parser.add_argument(
+        '--model-path',
+        type=str,
+        default=None,
+        help='Caminho customizado para a pasta do modelo (default: arquivos_modelo/)'
+    )
 
     args = parser.parse_args()
 
@@ -61,12 +67,14 @@ def main():
     print(f"📁 Arquivo de entrada: {input_path}")
     print(f"📁 Arquivo de saída: {output_path}")
     print(f"🤖 Modelo: {args.model}")
+    if args.model_path:
+        print(f"📂 Caminho do modelo: {args.model_path}")
     print("-" * 50)
 
     try:
         # Inicializar pipeline
         print("🔧 Inicializando pipeline...")
-        pipeline = LeadScoringPipeline(model_name=args.model)
+        pipeline = LeadScoringPipeline(model_name=args.model, model_path=args.model_path)
 
         # Executar pipeline com predições
         print("🚀 Processando dados e fazendo predições...")

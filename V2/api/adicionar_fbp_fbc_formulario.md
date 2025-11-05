@@ -1,8 +1,3 @@
-# Captura de Dados para CAPI
-
-## Objetivo
-Recall de atribuição Meta: 50-60% → 90-100%
-
 ## Fluxo Completo do Sistema
 
 ### 1. Frontend captura dados do lead

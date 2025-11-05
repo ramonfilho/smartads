@@ -275,8 +275,10 @@ def remove_unnecessary_columns(
                 if col.lower() in colunas_remover_lower:
                     colunas_para_remover.append(col)
                 # Remover colunas Unnamed
-                elif col.startswith('Unnamed:'):
+                elif str(col).startswith('Unnamed:'):
                     colunas_para_remover.append(col)
+                # NÃO remover colunas vazias aqui - será feito na célula 8
+                # Mantendo compatibilidade com notebook
 
             # Aplicar remoção (linha 199)
             df_limpo = df.drop(columns=colunas_para_remover) if colunas_para_remover else df.copy()

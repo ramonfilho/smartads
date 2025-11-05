@@ -1,18 +1,6 @@
 /**
- * ============================================================================
- * CÓDIGO COMPLETO DO FORMULÁRIO COM CAPI INTEGRADO
- * ============================================================================
- *
- * Para usar:
- * 1. Substitua o código JavaScript existente da página por este arquivo completo
- * 2. Teste preenchendo o formulário
- * 3. Verifique logs no Console (Cmd + Option + I no Mac)
+ * Captura cookie Meta (_fbp ou _fbc)
  */
-
-// ============================================================================
-// FUNÇÕES CAPI (NOVAS - ADICIONADAS)
-// ============================================================================
-
 function getCookie(name) {
   const value = `; ${document.cookie}`;
   const parts = value.split(`; ${name}=`);
@@ -20,10 +8,16 @@ function getCookie(name) {
   return null;
 }
 
+/**
+ * Gera ID único para evento (deduplicação)
+ */
 function generateEventID() {
   return `lead_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
+/**
+ * Envia dados CAPI para nossa API
+ */
 async function sendToCapiAPI(name, email, phone, hasComputer, utm, fbp, fbc, eventID, userAgent, eventSourceUrl) {
   const payload = {
     name: name,
@@ -58,10 +52,62 @@ async function sendToCapiAPI(name, email, phone, hasComputer, utm, fbp, fbc, eve
   }
 }
 
-// ============================================================================
-// CÓDIGO ORIGINAL (SEM ALTERAÇÕES)
-// ============================================================================
+// ========================================================================
+// FUNÇÃO ACTIVECAMPAIGN (MANTIDA)
+// ========================================================================
 
+function submitToActiveCampaign(formData) {
+  return new Promise((resolve, reject) => {
+    const iframeId = "hidden-submit-iframe";
+    let iframe = document.getElementById(iframeId);
+
+    if (!iframe) {
+      iframe = document.createElement("iframe");
+      iframe.id = iframeId;
+      iframe.name = iframeId;
+      iframe.style.display = "none";
+      document.body.appendChild(iframe);
+    }
+
+    const tempForm = document.createElement("form");
+    tempForm.method = "POST";
+    tempForm.action = "https://rodolfomori.activehosted.com/proc.php";
+    tempForm.target = iframeId;
+
+    for (const [key, value] of formData.entries()) {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = key;
+      input.value = value;
+      tempForm.appendChild(input);
+    }
+
+    document.body.appendChild(tempForm);
+
+    const timeoutId = setTimeout(() => {
+      resolve();
+    }, 3000);
+
+    iframe.onload = function() {
+      clearTimeout(timeoutId);
+      resolve();
+    };
+
+    tempForm.submit();
+
+    setTimeout(() => {
+      if (document.body.contains(tempForm)) {
+        document.body.removeChild(tempForm);
+      }
+    }, 100);
+  });
+}
+
+// ========================================================================
+// CÓDIGO ORIGINAL DA PÁGINA (MANTIDO)
+// ========================================================================
+
+// Efeito ripple nos botões
 document.querySelectorAll('.bottom').forEach(button => {
   button.addEventListener('click', function() {
     button.classList.remove('ripple-animate');
@@ -70,10 +116,12 @@ document.querySelectorAll('.bottom').forEach(button => {
   });
 });
 
+// Inicialização do formulário
 document.addEventListener("DOMContentLoaded", function() {
   const phoneInput = document.querySelector("#phone-input");
   let iti;
 
+  // Configurar máscara de telefone internacional
   if (phoneInput) {
     iti = window.intlTelInput(phoneInput, {
       initialCountry: "br",
@@ -111,7 +159,7 @@ document.addEventListener("DOMContentLoaded", function() {
     phoneInput.addEventListener('countrychange', setMaskAndPlaceholder);
   }
 
-  const form = document.getElementById("email-form");
+  const form = document.getElementById("cadastro") || document.getElementById("email-form");
   const submitButton = document.getElementById("email-form_submit");
   const fullnameInput = document.getElementById("fullname");
   const emailInput = document.getElementById("email");
@@ -136,123 +184,138 @@ document.addEventListener("DOMContentLoaded", function() {
     };
   }
 
-  function sendToSellFlux(name, email, phone, hasComputer, utm) {
-    const baseUrl = "https://webhook.sellflux.app/v2/webhook/custom/fa992dd333629168fd067e62ff1b830f";
-    const now = new Date();
-    const dataHora = now.toLocaleString('pt-BR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    });
-
-    const params = new URLSearchParams();
-    if (utm.utm_source) params.append("utm_source", utm.utm_source);
-    if (utm.utm_medium) params.append("utm_medium", utm.utm_medium);
-    if (utm.utm_campaign) params.append("utm_campaign", utm.utm_campaign);
-    if (utm.utm_term) params.append("utm_term", utm.utm_term);
-    if (utm.utm_content) params.append("utm_content", utm.utm_content);
-    if (hasComputer) params.append("tem_comp", hasComputer);
-    params.append("data", dataHora);
-
-    const webhookUrl = baseUrl + "?" + params.toString();
-    const payload = {
-      name: name,
-      email: email,
-      phone: phone,
-      tem_comp: hasComputer,
-      utm_source: utm.utm_source,
-      utm_medium: utm.utm_medium,
-      utm_campaign: utm.utm_campaign,
-      utm_term: utm.utm_term,
-      utm_content: utm.utm_content,
-      data: dataHora
-    };
-
-    return fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    })
-      .then(res => {
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-        }
-        return res.json();
-      })
-      .then(data => {
-        console.log("✅ SellFlux - Dados enviados com sucesso:", data);
-        return true;
-      })
-      .catch(err => {
-        console.error("❌ Erro ao enviar para SellFlux:", err);
-        throw err;
+  function addToDataLayer(leadData) {
+    if (typeof dataLayer !== 'undefined') {
+      dataLayer.push({
+        event: 'cadastro',
+        ...leadData
       });
+    }
   }
 
+  function saveFormData() {
+    // Implementação de cache se necessário
+    return true;
+  }
+
+  // Event listener do botão de envio
   if (submitButton) {
-    submitButton.addEventListener("click", async function(event) {
+    submitButton.addEventListener("click", function(event) {
       event.preventDefault();
 
-      if (!fullnameInput || !fullnameInput.value.trim() || !emailInput || !emailInput.value.trim() || !phoneInput || !phoneInput.value.trim() || !((radioSim && radioSim.checked) || (radioNao && radioNao.checked))) {
+      // Validação de campos obrigatórios
+      const hasComputerSelected = (radioSim && radioSim.checked) || (radioNao && radioNao.checked);
+
+      if ((!fullnameInput || !fullnameInput.value.trim()) ||
+          (!emailInput || !emailInput.value.trim()) ||
+          (!phoneInput || !phoneInput.value.trim()) ||
+          !hasComputerSelected) {
         alert("Por favor, preencha todos os campos obrigatórios");
         return;
       }
 
+      // Captura de dados do formulário
+      const cachedData = saveFormData();
+      const phoneFormatted = iti ? iti.getNumber() : phoneInput.value.replace(/\D/g, "");
       const fullname = fullnameInput.value.trim();
       const email = emailInput.value.trim();
-      const phone = iti ? iti.getNumber() : phoneInput.value.replace(/\D/g, "");
-      const hasComputer = (radioSim && radioSim.checked) ? "Sim" : "Não";
-      const utm = getUTMParameters();
+      const phone = phoneFormatted;
+      const hasComputer = radioSim && radioSim.checked ? "SIM" : "Não";
+      const utmParams = getUTMParameters();
 
-      // ============================================================================
-      // NOVO: CAPTURAR E ENVIAR DADOS CAPI
-      // ============================================================================
+      // DataLayer GTM
+      const leadData = {
+        user_name: fullname,
+        user_email: email,
+        user_phone: phone,
+        has_computer: hasComputer,
+        form_id: 'cadastro',
+        form_name: 'Formulário de Cadastro',
+        timestamp: new Date().toISOString(),
+        page_url: window.location.href,
+        page_title: document.title,
+        utm_source: utmParams.utm_source || null,
+        utm_medium: utmParams.utm_medium || null,
+        utm_campaign: utmParams.utm_campaign || null,
+        utm_term: utmParams.utm_term || null,
+        utm_content: utmParams.utm_content || null
+      };
+
+      addToDataLayer(leadData);
+
+      // ========================================================================
+      // CAPTURA DE DADOS CAPI (NOVO)
+      // ========================================================================
       const fbp = getCookie('_fbp');
       const fbc = getCookie('_fbc');
       const eventID = generateEventID();
       const userAgent = navigator.userAgent;
       const eventSourceUrl = window.location.href;
 
-      console.log('📊 CAPI - FBP:', fbp || '❌ ausente', '| FBC:', fbc || '⚠️ ausente (normal)');
+      console.log('📊 CAPI - FBP:', fbp || '❌ ausente', '| FBC:', fbc || '⚠️ ausente (normal se não clicou em anúncio)');
 
       // Enviar para CAPI API (não bloqueia o fluxo)
-      sendToCapiAPI(fullname, email, phone, hasComputer, utm, fbp, fbc, eventID, userAgent, eventSourceUrl);
-      // ============================================================================
+      sendToCapiAPI(fullname, email, phone, hasComputer, utmParams, fbp, fbc, eventID, userAgent, eventSourceUrl);
+      // ========================================================================
 
-      const originalText = submitButton.value;
-      submitButton.value = "Enviando...";
+      // Preparar dados para ActiveCampaign
+      const formData = new FormData();
+      formData.append("u", "359");
+      formData.append("f", "359");
+      formData.append("s", "");
+      formData.append("c", "0");
+      formData.append("m", "0");
+      formData.append("act", "sub");
+      formData.append("v", "2");
+      formData.append("or", "a84f9ed3437e39229a15e731cae61176");
+      formData.append("fullname", fullname);
+      formData.append("email", email);
+      formData.append("phone", phone);
+      formData.append("field[144]", hasComputer);
+      formData.append("field[10]", utmParams.utm_source || "");
+      formData.append("field[11]", utmParams.utm_medium || "");
+      formData.append("field[13]", utmParams.utm_campaign || "");
+      formData.append("field[12]", utmParams.utm_term || "");
+      formData.append("field[14]", utmParams.utm_content || "");
+
+      // Desabilitar botão durante envio
+      const originalButtonText = submitButton.value || submitButton.textContent.trim();
+      if (submitButton.tagName.toLowerCase() === 'input') {
+        submitButton.value = "Enviando...";
+      } else {
+        submitButton.textContent = "Enviando...";
+      }
       submitButton.disabled = true;
 
-      try {
-        await sendToSellFlux(fullname, email, phone, hasComputer, utm);
+      // Enviar para ActiveCampaign
+      submitToActiveCampaign(formData)
+        .then(() => {
+          // Redirecionar para página de obrigado
+          let redirectURL = "https://lp5.rodolfomori.com.br/parabens-psq-devf/";
+          const redirectParams = new URLSearchParams();
+          redirectParams.append("nome", fullname);
+          redirectParams.append("email", email);
+          redirectParams.append("telefone", phone);
+          redirectParams.append("computador", hasComputer);
 
-        let redirectURL = "https://lp.devclub.com.br/parabens-psq-devf/";
-        const params = new URLSearchParams({
-          nome: fullname,
-          email: email,
-          telefone: phone,
-          computador: hasComputer,
-          utm_source: utm.utm_source,
-          utm_medium: utm.utm_medium,
-          utm_campaign: utm.utm_campaign,
-          utm_term: utm.utm_term,
-          utm_content: utm.utm_content
-        });
+          Object.keys(utmParams).forEach(key => {
+            if (utmParams[key]) {
+              redirectParams.append(key, utmParams[key]);
+            }
+          });
 
-        redirectURL = redirectURL + "?" + params.toString();
-
-        setTimeout(() => {
+          redirectURL = `${redirectURL}?${redirectParams.toString()}`;
           window.location.href = redirectURL;
-        }, 500);
-      } catch (err) {
-        console.error("Erro no processamento:", err);
-        alert("Ocorreu um erro ao processar seu cadastro. Por favor, tente novamente.");
-        submitButton.disabled = false;
-        submitButton.value = originalText;
-      }
+        })
+        .catch(error => {
+          alert("Ocorreu um erro ao processar seu cadastro. Por favor, tente novamente.");
+          submitButton.disabled = false;
+          if (submitButton.tagName.toLowerCase() === 'input') {
+            submitButton.value = originalButtonText;
+          } else {
+            submitButton.textContent = originalButtonText;
+          }
+        });
     });
   }
 });
