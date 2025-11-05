@@ -377,7 +377,7 @@ def registrar_features_e_modelo_devclub(dataset_devclub_encoded: pd.DataFrame, d
 
     # Criar pasta com timestamp
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    output_dir = f'V2/arquivos_modelo/{timestamp}'
+    output_dir = f'files/{timestamp}'
     os.makedirs(output_dir, exist_ok=True)
 
     # Salvar feature registry

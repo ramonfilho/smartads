@@ -6,11 +6,12 @@ Integra funções modularizadas conforme são aprovadas.
 
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import yaml
 import glob
 import logging
+import argparse
 from src.data_processing.ingestion import (
     read_excel_files,
     filter_sheets,
@@ -22,10 +23,12 @@ from src.data_processing.column_unification import unificar_colunas_datasets
 from src.data_processing.category_unification import unificar_categorias_completo, gerar_relatorio_final_categorias
 from src.data_processing.feature_removal import remover_features_desnecessarias, listar_colunas_restantes
 from src.data_processing.utm_training import unificar_utm_source_term, verificar_consistencia_utm
-from src.data_processing.medium_training import extrair_publico_medium, relatorio_final_medium, exportar_categorias_medium
+from src.data_processing.medium_training import extrair_publico_medium, relatorio_final_medium
 from src.data_processing.medium_production_training import unificar_medium_para_producao, relatorio_unificacao_producao
 from src.data_processing.dataset_versioning_training import criar_dataset_pos_cutoff, disponibilizar_dataset
-from src.data_processing.matching_training import fazer_matching_robusto
+from src.matching.matching_training import fazer_matching_robusto as fazer_matching_variantes
+from src.matching.matching_robusto import fazer_matching_robusto
+from src.matching.matching_email_only import fazer_matching_email_only
 from src.data_processing.devclub_filtering_training import criar_dataset_devclub
 from src.features.feature_engineering_training import criar_features_derivadas
 from src.features.encoding_training import aplicar_encoding_estrategico
@@ -36,15 +39,23 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 
-def main():
-    """Executa pipeline de treino completo."""
+def main(initial_matching='email_only'):
+    """Executa pipeline de treino completo.
+
+    Args:
+        initial_matching: Método de matching inicial na célula 15
+                         ('email_only', 'variantes' ou 'robusto')
+    """
 
     print("\n" + "=" * 80)
     print("PIPELINE DE TREINO")
     print("=" * 80)
+    print(f"\n🔧 CONFIGURAÇÃO:")
+    print(f"   Método de matching inicial (célula 15): {initial_matching}")
+    print("=" * 80)
 
     # Carregar configuração
-    config_path = os.path.join(os.path.dirname(__file__), '../../configs/devclub.yaml')
+    config_path = os.path.join(os.path.dirname(__file__), '../configs/devclub.yaml')
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
 
@@ -254,9 +265,6 @@ def main():
     # Gerar relatório final
     relatorio_final_medium(df_medium_unificado)
 
-    # Exportar categorias para CSV
-    exportar_categorias_medium(df_medium_unificado)
-
     # === CÉLULA 11.1: Unificação de Medium para Produção ===
     print("\nUNIFICAÇÃO DE UTM MEDIUM BASEADA EM ACTIONS + TRATAMENTO DE PRODUÇÃO")
     print("=" * 72)
@@ -286,7 +294,14 @@ def main():
     print(f"Duas versões do dataset criadas com sucesso.")
 
     # === CÉLULA 15: Matching robusto por email e telefone ===
-    dataset_v1_final = fazer_matching_robusto(df_pos_cutoff, df_vendas_final)
+    if initial_matching == 'email_only':
+        dataset_v1_final = fazer_matching_email_only(df_pos_cutoff, df_vendas_final)
+    elif initial_matching == 'variantes':
+        dataset_v1_final = fazer_matching_variantes(df_pos_cutoff, df_vendas_final)
+    elif initial_matching == 'robusto':
+        dataset_v1_final = fazer_matching_robusto(df_pos_cutoff, df_vendas_final)
+    else:
+        raise ValueError(f"Método de matching inicial inválido: {initial_matching}. Use 'email_only', 'variantes' ou 'robusto'")
 
     # === CÉLULA 17: Filtragem DevClub ===
     dataset_v1_devclub = criar_dataset_devclub(dataset_v1_final, df_vendas_final)
@@ -302,4 +317,14 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='Pipeline de treino DevClub')
+    parser.add_argument(
+        '--initial-matching',
+        type=str,
+        choices=['email_only', 'variantes', 'robusto'],
+        default='email_only',
+        help='Método de matching inicial (célula 15) - padrão: email_only (100%% monotonia, máxima precisão)'
+    )
+
+    args = parser.parse_args()
+    main(initial_matching=args.initial_matching)
