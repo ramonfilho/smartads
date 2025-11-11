@@ -104,36 +104,84 @@ def unificar_colunas_datasets(
         df_vendas_unificado['valor'] = df_vendas_unificado['Ticket (R$)'].fillna(df_vendas_unificado['valor produtos'])
         df_vendas_unificado = df_vendas_unificado.drop(columns=['Ticket (R$)', 'valor produtos'])
         print("  Ticket (R$) + valor produtos → valor")
+    elif 'Ticket (R$)' in df_vendas_unificado.columns:
+        df_vendas_unificado['valor'] = df_vendas_unificado['Ticket (R$)']
+        df_vendas_unificado = df_vendas_unificado.drop(columns=['Ticket (R$)'])
+        print("  Ticket (R$) → valor")
+    elif 'valor produtos' in df_vendas_unificado.columns:
+        df_vendas_unificado['valor'] = df_vendas_unificado['valor produtos']
+        df_vendas_unificado = df_vendas_unificado.drop(columns=['valor produtos'])
+        print("  valor produtos → valor")
 
     # Unificar produto
     if 'Produto' in df_vendas_unificado.columns and 'nome produto' in df_vendas_unificado.columns:
         df_vendas_unificado['produto'] = df_vendas_unificado['Produto'].fillna(df_vendas_unificado['nome produto'])
         df_vendas_unificado = df_vendas_unificado.drop(columns=['Produto', 'nome produto'])
         print("  Produto + nome produto → produto")
+    elif 'Produto' in df_vendas_unificado.columns:
+        df_vendas_unificado['produto'] = df_vendas_unificado['Produto']
+        df_vendas_unificado = df_vendas_unificado.drop(columns=['Produto'])
+        print("  Produto → produto")
+    elif 'nome produto' in df_vendas_unificado.columns:
+        df_vendas_unificado['produto'] = df_vendas_unificado['nome produto']
+        df_vendas_unificado = df_vendas_unificado.drop(columns=['nome produto'])
+        print("  nome produto → produto")
 
     # Unificar nome
     if 'Cliente Nome' in df_vendas_unificado.columns and 'nome contato' in df_vendas_unificado.columns:
         df_vendas_unificado['nome'] = df_vendas_unificado['Cliente Nome'].fillna(df_vendas_unificado['nome contato'])
         df_vendas_unificado = df_vendas_unificado.drop(columns=['Cliente Nome', 'nome contato'])
         print("  Cliente Nome + nome contato → nome")
+    elif 'Cliente Nome' in df_vendas_unificado.columns:
+        df_vendas_unificado['nome'] = df_vendas_unificado['Cliente Nome']
+        df_vendas_unificado = df_vendas_unificado.drop(columns=['Cliente Nome'])
+        print("  Cliente Nome → nome")
+    elif 'nome contato' in df_vendas_unificado.columns:
+        df_vendas_unificado['nome'] = df_vendas_unificado['nome contato']
+        df_vendas_unificado = df_vendas_unificado.drop(columns=['nome contato'])
+        print("  nome contato → nome")
 
     # Unificar email
     if 'Cliente Email' in df_vendas_unificado.columns and 'email contato' in df_vendas_unificado.columns:
         df_vendas_unificado['email'] = df_vendas_unificado['Cliente Email'].fillna(df_vendas_unificado['email contato'])
         df_vendas_unificado = df_vendas_unificado.drop(columns=['Cliente Email', 'email contato'])
         print("  Cliente Email + email contato → email")
+    elif 'Cliente Email' in df_vendas_unificado.columns:
+        df_vendas_unificado['email'] = df_vendas_unificado['Cliente Email']
+        df_vendas_unificado = df_vendas_unificado.drop(columns=['Cliente Email'])
+        print("  Cliente Email → email")
+    elif 'email contato' in df_vendas_unificado.columns:
+        df_vendas_unificado['email'] = df_vendas_unificado['email contato']
+        df_vendas_unificado = df_vendas_unificado.drop(columns=['email contato'])
+        print("  email contato → email")
 
     # Unificar data
     if 'Criado Em' in df_vendas_unificado.columns and 'data aprovacao' in df_vendas_unificado.columns:
         df_vendas_unificado['data'] = df_vendas_unificado['Criado Em'].fillna(df_vendas_unificado['data aprovacao'])
         df_vendas_unificado = df_vendas_unificado.drop(columns=['Criado Em', 'data aprovacao'])
         print("  Criado Em + data aprovacao → data")
+    elif 'Criado Em' in df_vendas_unificado.columns:
+        df_vendas_unificado['data'] = df_vendas_unificado['Criado Em']
+        df_vendas_unificado = df_vendas_unificado.drop(columns=['Criado Em'])
+        print("  Criado Em → data")
+    elif 'data aprovacao' in df_vendas_unificado.columns:
+        df_vendas_unificado['data'] = df_vendas_unificado['data aprovacao']
+        df_vendas_unificado = df_vendas_unificado.drop(columns=['data aprovacao'])
+        print("  data aprovacao → data")
 
     # Unificar telefone
     if 'Telefone' in df_vendas_unificado.columns and 'telefone contato' in df_vendas_unificado.columns:
         df_vendas_unificado['telefone'] = df_vendas_unificado['Telefone'].fillna(df_vendas_unificado['telefone contato'])
         df_vendas_unificado = df_vendas_unificado.drop(columns=['Telefone', 'telefone contato'])
         print("  Telefone + telefone contato → telefone")
+    elif 'Telefone' in df_vendas_unificado.columns:
+        df_vendas_unificado['telefone'] = df_vendas_unificado['Telefone']
+        df_vendas_unificado = df_vendas_unificado.drop(columns=['Telefone'])
+        print("  Telefone → telefone")
+    elif 'telefone contato' in df_vendas_unificado.columns:
+        df_vendas_unificado['telefone'] = df_vendas_unificado['telefone contato']
+        df_vendas_unificado = df_vendas_unificado.drop(columns=['telefone contato'])
+        print("  telefone contato → telefone")
 
     # Unificar UTMs (manter as versões 'last' quando disponíveis)
     utms_map = [

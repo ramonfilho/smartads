@@ -44,9 +44,9 @@ function activateML() {
 
     const ui = SpreadsheetApp.getUi();
 
-    // Etapa 1: Completar predições dos últimos 7 dias
-    Logger.log('📊 Verificando predições dos últimos 7 dias...');
-    const missingBlocks = checkMissingPredictions7D();
+    // Etapa 1: Completar predições dos últimos 21 dias
+    Logger.log('📊 Verificando predições dos últimos 21 dias...');
+    const missingBlocks = checkMissingPredictions21D();
 
     if (missingBlocks.length > 0) {
       Logger.log(`⚠️ Encontrados ${missingBlocks.length} blocos de 24h sem predições`);
@@ -57,9 +57,9 @@ function activateML() {
         generatePredictionsFor24hBlock(block.start, block.end);
       }
 
-      Logger.log('✅ Todas as predições dos últimos 7 dias foram geradas');
+      Logger.log('✅ Todas as predições dos últimos 21 dias foram geradas');
     } else {
-      Logger.log('✅ Todos os últimos 7 dias já possuem predições');
+      Logger.log('✅ Todos os últimos 21 dias já possuem predições');
     }
 
     // Etapa 2: Criar trigger diário às 08:00
@@ -77,10 +77,10 @@ function activateML() {
     ui.alert(
       'ML Ativado',
       'Smart Ads ML foi ativado com sucesso!\n\n' +
-      '✅ Predições dos últimos 7 dias: OK\n' +
-      '✅ Execução diária à meia-noite: Configurada\n' +
+      '✅ Predições dos últimos 21 dias: OK\n' +
+      '✅ Execução diária às 08:00: Configurada\n' +
       '✅ Análises UTM: Atualizadas\n\n' +
-      'O sistema irá rodar automaticamente todos os dias à 00:00 (meia-noite).',
+      'O sistema irá rodar automaticamente todos os dias às 08:00.',
       ui.ButtonSet.OK
     );
 
@@ -154,10 +154,10 @@ function executeDailyMLUpdate() {
 // =============================================================================
 
 /**
- * Verifica se há blocos de 24h sem predições nos últimos 7 dias
+ * Verifica se há blocos de 24h sem predições nos últimos 21 dias
  * Retorna array de blocos faltantes: [{start: Date, end: Date}, ...]
  */
-function checkMissingPredictions7D() {
+function checkMissingPredictions21D() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('[LF] Pesquisa');
   if (!sheet) throw new Error('Aba "[LF] Pesquisa" não encontrada');
 
@@ -173,13 +173,13 @@ function checkMissingPredictions7D() {
     return [];
   }
 
-  // Criar blocos de 24h dos últimos 7 dias (excluindo hoje)
+  // Criar blocos de 24h dos últimos 21 dias (excluindo hoje)
   const blocks = [];
   const now = new Date();
   const today8am = new Date(now);
   today8am.setHours(8, 0, 0, 0);
 
-  for (let i = 1; i <= 7; i++) {
+  for (let i = 1; i <= 21; i++) {
     const blockStart = new Date(today8am);
     blockStart.setDate(blockStart.getDate() - i);
 
@@ -951,8 +951,8 @@ function writeModelInfoSheet(modelInfo) {
 
   currentRow += 2;
 
-  // === SEÇÃO 5: TOP 20 FEATURE IMPORTANCES ===
-  sheet.getRange(currentRow, 1).setValue('🔍 TOP 20 FEATURES MAIS IMPORTANTES');
+  // === SEÇÃO 5: FEATURE IMPORTANCES ===
+  sheet.getRange(currentRow, 1).setValue('🔍 IMPORTÂNCIA DAS FEATURES');
   sheet.getRange(currentRow, 1).setFontWeight('bold');
   sheet.getRange(currentRow, 1).setFontSize(14);
   sheet.getRange(currentRow, 1).setBackground('#9C27B0');
@@ -1029,11 +1029,12 @@ function testConnection() {
 }
 
 // =============================================================================
-// CAPI: ENVIO DE BATCH PARA LEADS D10
+// CAPI: ENVIO DE BATCH PARA TODOS OS LEADS (D1-D10)
 // =============================================================================
 
 /**
- * Envia leads D10 do período para API processar batch CAPI
+ * Envia TODOS os leads do período para API processar batch CAPI
+ * A API decide quais eventos enviar (LeadQualified para todos, LeadQualifiedHighQuality para D8-D10)
  * Chamado diariamente após classificação ML
  */
 function sendCapiBatchForD10Leads(startDate, endDate) {
@@ -1059,8 +1060,8 @@ function sendCapiBatchForD10Leads(startDate, endDate) {
     const scoreColIndex = headers.indexOf('lead_score');
     const decilColIndex = headers.indexOf('decil');
 
-    // Coletar leads D10 do período
-    const leadsD10 = [];
+    // Coletar TODOS os leads do período (D1-D10) com TODOS os campos da pesquisa
+    const allLeads = [];
     for (let i = 1; i < values.length; i++) {
       const row = values[i];
       const leadDate = new Date(row[dataColIndex]);
@@ -1068,29 +1069,40 @@ function sendCapiBatchForD10Leads(startDate, endDate) {
       const leadScore = row[scoreColIndex];
       const email = row[emailColIndex];
 
-      // Lead está no período e é D10
-      if (leadDate >= startDate && leadDate < endDate && decil === 'D10') {
-        leadsD10.push({
+      // Lead está no período (qualquer decil)
+      if (leadDate >= startDate && leadDate < endDate) {
+        // Criar objeto com TODOS os campos da planilha (nome exato das colunas)
+        const leadData = {
           email: email,
           phone: row[phoneColIndex],
           lead_score: leadScore,
           decil: decil,
           data: Utilities.formatDate(leadDate, Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ss")
+        };
+
+        // Adicionar TODOS os campos da pesquisa (nomes exatos das colunas do Sheets)
+        headers.forEach((header, index) => {
+          // Pular campos que já adicionamos ou que são técnicos
+          if (header !== 'email' && header !== 'phone' && header !== 'lead_score' && header !== 'decil' && header !== 'data') {
+            leadData[header] = row[index];
+          }
         });
+
+        allLeads.push(leadData);
       }
     }
 
-    if (leadsD10.length === 0) {
-      Logger.log('✅ Nenhum lead D10 no período');
+    if (allLeads.length === 0) {
+      Logger.log('✅ Nenhum lead no período');
       return;
     }
 
-    Logger.log(`📊 ${leadsD10.length} leads D10 encontrados, enviando para API...`);
+    Logger.log(`📊 ${allLeads.length} leads encontrados (D1-D10), enviando para API CAPI...`);
 
     // Enviar para API
     const API_URL = 'https://smart-ads-api-12955519745.us-central1.run.app';
     const payload = {
-      leads_d10: leadsD10
+      leads: allLeads
     };
 
     const options = {

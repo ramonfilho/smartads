@@ -88,10 +88,14 @@ def criar_dataset_devclub(df_v1_final: pd.DataFrame, df_vendas_unificado: pd.Dat
         'DevClub - Full Stack 2025',
         'DevClub FullStack Pro - OFICIAL',
         'Formação DevClub FullStack Pro - OFICI',
+        'Formação DevClub FullStack Pro - OFICIAL',  # Nome completo (não truncado)
         'DevClub - Full Stack 2025 - EV',
         'DevClub - FS - Vitalício',
         '[Vitalício] Formação DevClub FullStack',
+        '[Vitalício] Formação DevClub FullStack Pro - OFICIAL',  # Vitalício completo
         'Formação DevClub FullStack Pro - COMER',
+        'Formação DevClub FullStack Pro - COMERCIAL',  # Nome completo (não truncado)
+        'Formação DevClub FullStack Pro',  # Sem sufixo
         'DevClub Vitalício',
         'DevClub 3.0 - 2024',
         '(Desativado) DevClub 3.0 - 2024',
@@ -149,6 +153,46 @@ def criar_dataset_devclub(df_v1_final: pd.DataFrame, df_vendas_unificado: pd.Dat
                 matches_por_email += 1
             else:
                 matches_por_telefone += 1
+
+    # 4.5. ANALISAR PRODUTOS DOS MATCHES DESCARTADOS
+    indices_descartados = set(indices_matches) - devclub_matches
+
+    if len(indices_descartados) > 0:
+        print(f"\n🔍 ANALISANDO {len(indices_descartados):,} MATCHES DESCARTADOS:")
+        print("-" * 70)
+
+        # Normalizar vendas para busca
+        df_vendas_unificado['email_clean'] = df_vendas_unificado['email'].apply(normalizar_email)
+        df_vendas_unificado['telefone_clean'] = df_vendas_unificado['telefone'].apply(normalizar_telefone_robusto)
+
+        # Coletar produtos dos descartados
+        produtos_descartados = []
+
+        for idx in indices_descartados:
+            email = df_devclub.loc[idx, 'email_temp']
+            telefone = df_devclub.loc[idx, 'telefone_temp']
+
+            # Buscar vendas dessa pessoa
+            vendas_pessoa = df_vendas_unificado[
+                (df_vendas_unificado['email_clean'] == email) |
+                (df_vendas_unificado['telefone_clean'] == telefone)
+            ]
+
+            produtos_pessoa = vendas_pessoa['produto'].dropna().unique().tolist()
+            produtos_descartados.extend(produtos_pessoa)
+
+        # Contar produtos
+        from collections import Counter
+        produtos_count = Counter(produtos_descartados)
+        produtos_sorted = produtos_count.most_common()
+
+        print(f"\n{'PRODUTO':<60} {'QUANTIDADE':>10}")
+        print("-" * 70)
+        for produto, qtd in produtos_sorted:
+            print(f"{str(produto)[:58]:<60} {qtd:>10}")
+
+        print(f"\n{'TOTAL DE PRODUTOS DIFERENTES:':<60} {len(produtos_sorted):>10}")
+        print(f"{'TOTAL DE COMPRAS (pode haver duplicatas):':<60} {len(produtos_descartados):>10}")
 
     # 5. ATUALIZAR TARGET - ZERAR NÃO-DEVCLUB
     df_devclub['target_devclub'] = 0

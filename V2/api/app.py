@@ -170,8 +170,28 @@ async def get_model_info():
         # Obter metadados
         metadata = pipeline.predictor.metadata
 
-        # Obter feature importances (top 20)
-        feature_importances = pipeline.predictor.get_feature_importances(top_n=20)
+        # Obter feature importances (todas)
+        feature_importances = pipeline.predictor.get_feature_importances(top_n=None)
+
+        # Carregar mapeamento de nomes de features (transformado → legível)
+        try:
+            import json
+            from pathlib import Path
+            mapping_file = Path(__file__).parent.parent / "arquivos_modelo" / "feature_name_mapping_v1_devclub_rf_temporal_single.json"
+            if mapping_file.exists():
+                with open(mapping_file) as f:
+                    mapping_data = json.load(f)
+                    feature_name_mapping = mapping_data.get("feature_name_mapping", {})
+
+                # Traduzir nomes das features para versão legível
+                for feature_importance in feature_importances:
+                    transformed_name = feature_importance['feature']
+                    readable_name = feature_name_mapping.get(transformed_name, transformed_name.replace('_', ' '))
+                    feature_importance['feature_readable'] = readable_name
+                    feature_importance['feature_transformed'] = transformed_name
+                    feature_importance['feature'] = readable_name  # Usar nome legível por padrão
+        except Exception as e:
+            logger.warning(f"⚠️ Não foi possível carregar mapeamento de features: {e}")
 
         # Estruturar resposta
         response = {
@@ -430,11 +450,29 @@ async def lead_capture_stats(db: Session = Depends(get_db)):
         logger.error(f"❌ Erro ao obter stats: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erro ao obter stats: {str(e)}")
 
+@app.get("/webhook/lead_capture/recent")
+async def get_recent_leads_endpoint(limit: int = 10, db: Session = Depends(get_db)):
+    """
+    DEBUG: Retorna leads mais recentes
+    """
+    try:
+        from api.database import get_recent_leads
+        leads = get_recent_leads(db, limit=limit)
+
+        return {
+            "total": len(leads),
+            "leads": [lead.to_dict() for lead in leads]
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Erro ao buscar leads: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
+
 # === CAPI BATCH PROCESSING ===
 
 class CapiBatchRequest(BaseModel):
     """Request para processamento batch CAPI"""
-    leads_d10: List[Dict[str, Any]] = Field(..., description="Leads D10 do dia anterior")
+    leads: List[Dict[str, Any]] = Field(..., description="TODOS os leads do dia anterior (D1-D10)")
 
 @app.post("/capi/process_daily_batch")
 async def process_daily_batch_capi(
@@ -443,18 +481,20 @@ async def process_daily_batch_capi(
 ):
     """
     Processa batch diário de CAPI
-    Envia eventos LeadQualified para leads D10
+    Envia 2 eventos para cada lead:
+    - LeadQualified (com valor): TODOS os leads (D1-D10)
+    - LeadQualifiedHighQuality (sem valor): Apenas D8-D10
 
     Chamado pelo Apps Script às 00:00 após classificação ML
     """
     try:
-        logger.info(f"📊 Processando batch CAPI: {len(request.leads_d10)} leads D10")
+        logger.info(f"📊 Processando batch CAPI: {len(request.leads)} leads (D1-D10)")
 
         # Extrair emails dos leads
-        emails = [lead['email'] for lead in request.leads_d10 if 'email' in lead]
+        emails = [lead['email'] for lead in request.leads if 'email' in lead]
 
         if not emails:
-            logger.warning("⚠️ Nenhum email encontrado nos leads D10")
+            logger.warning("⚠️ Nenhum email encontrado nos leads")
             return {
                 "status": "error",
                 "message": "Nenhum email encontrado",
@@ -471,9 +511,9 @@ async def process_daily_batch_capi(
 
         logger.info(f"   {len(capi_map)} leads encontrados no banco CAPI")
 
-        # Enriquecer leads D10 com dados CAPI
+        # Enriquecer todos os leads com dados CAPI
         enriched_leads = []
-        for lead in request.leads_d10:
+        for lead in request.leads:
             email = lead.get('email')
             if not email:
                 continue
@@ -492,7 +532,25 @@ async def process_daily_batch_capi(
                 'user_agent': capi_data.user_agent if capi_data else None,
                 'client_ip': capi_data.client_ip if capi_data else None,
                 'event_source_url': capi_data.event_source_url if capi_data else None,
-                'event_timestamp': int(pd.to_datetime(lead['data']).timestamp()) if 'data' in lead else int(time.time())
+                'event_timestamp': int(pd.to_datetime(lead['data']).timestamp()) if 'data' in lead else int(time.time()),
+
+                # NOVO: Dados da pesquisa (enriquecem targeting da Meta)
+                'survey_data': {
+                    'genero': lead.get('O seu gênero:'),
+                    'estado': lead.get('Qual estado você mora?'),
+                    'idade': lead.get('Qual a sua idade?'),
+                    'ocupacao': lead.get('O que você faz atualmente?'),
+                    'faixa_salarial': lead.get('Atualmente, qual a sua faixa salarial?'),
+                    'tem_cartao': lead.get('Você possui cartão de crédito?'),
+                    'ja_estudou_prog': lead.get('Já estudou programação?'),
+                    'faculdade': lead.get('Você já fez/faz/pretende fazer faculdade?'),
+                    'investiu_curso': lead.get('Já investiu em algum curso online para aprender uma nova forma de ganhar dinheiro?'),
+                    'interesse_prog': lead.get('O que mais te chama atenção na profissão de Programador?'),
+                    'quer_ver_evento': lead.get('O que mais você quer ver no evento?'),
+                    'tem_computador': lead.get('Tem computador/notebook?'),
+                    'cidade': lead.get('cidade'),
+                    'cep': lead.get('cep')
+                }
             }
 
             enriched_leads.append(lead_capi)

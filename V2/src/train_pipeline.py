@@ -12,6 +12,7 @@ import yaml
 import glob
 import logging
 import argparse
+import pandas as pd
 from src.data_processing.ingestion import (
     read_excel_files,
     filter_sheets,
@@ -29,22 +30,31 @@ from src.data_processing.dataset_versioning_training import criar_dataset_pos_cu
 from src.matching.matching_training import fazer_matching_robusto as fazer_matching_variantes
 from src.matching.matching_robusto import fazer_matching_robusto
 from src.matching.matching_email_only import fazer_matching_email_only
+from src.matching.matching_email_with_validation import fazer_matching_email_with_validation
+from src.matching.matching_email_telefone import fazer_matching_email_telefone
 from src.data_processing.devclub_filtering_training import criar_dataset_devclub
+from src.data_processing.conversion_window import aplicar_janela_conversao
 from src.features.feature_engineering_training import criar_features_derivadas
 from src.features.encoding_training import aplicar_encoding_estrategico
 from src.model.training_model import registrar_features_e_modelo_devclub
+from src.model.hyperparameter_tuning import hyperparameter_tuning
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 
-def main(initial_matching='email_only'):
+def main(initial_matching='email_telefone', save_files=False, tune_hyperparams=False, grid_size='small', split_method='temporal', use_guru_only=None):
     """Executa pipeline de treino completo.
 
     Args:
         initial_matching: Método de matching inicial na célula 15
-                         ('email_only', 'variantes' ou 'robusto')
+                         ('email_only', 'email_telefone', 'variantes', 'robusto' ou 'validation')
+        split_method: Método de split ('temporal' para 70% dos dias, 'stratified' para 70% dos registros)
+        save_files: Se True, salva arquivos locais em files/{timestamp}
+        tune_hyperparams: Se True, executa hyperparameter tuning antes do treino
+        grid_size: Tamanho do grid search ('small', 'medium', 'large')
+        use_guru_only: Se True, usa apenas GURU. Se False, usa GURU+TMB. Se None, usa valor do config.
     """
 
     print("\n" + "=" * 80)
@@ -52,6 +62,10 @@ def main(initial_matching='email_only'):
     print("=" * 80)
     print(f"\n🔧 CONFIGURAÇÃO:")
     print(f"   Método de matching inicial (célula 15): {initial_matching}")
+    print(f"   Salvar arquivos locais: {save_files}")
+    print(f"   Hyperparameter tuning: {tune_hyperparams}")
+    if tune_hyperparams:
+        print(f"   Grid size: {grid_size}")
     print("=" * 80)
 
     # Carregar configuração
@@ -75,7 +89,22 @@ def main(initial_matching='email_only'):
 
     filepaths = sorted(glob.glob(os.path.join(data_dir, "*.xlsx")), key=notebook_sort_key)
 
-    print(f"Total de arquivos: {len(filepaths)}")
+    # Aplicar filtro GURU only
+    # Se passado via argumento, usa argumento. Caso contrário, usa config.
+    if use_guru_only is None:
+        use_guru_only = config['ingestion'].get('use_guru_only', False)
+    if use_guru_only:
+        filepaths_original = filepaths.copy()
+        filepaths = [f for f in filepaths if 'guru' in os.path.basename(f).lower() or 'pesquisa' in os.path.basename(f).lower() or 'lead' in os.path.basename(f).lower()]
+
+        # Arquivos removidos (TMB)
+        removed = [f for f in filepaths_original if f not in filepaths]
+        if removed:
+            print(f"\n🚫 GURU ONLY MODE - Arquivos TMB excluídos:")
+            for f in removed:
+                print(f"  - {os.path.basename(f)}")
+
+    print(f"\nTotal de arquivos: {len(filepaths)}")
     for f in filepaths:
         print(f"  - {os.path.basename(f)}")
 
@@ -296,15 +325,174 @@ def main(initial_matching='email_only'):
     # === CÉLULA 15: Matching robusto por email e telefone ===
     if initial_matching == 'email_only':
         dataset_v1_final = fazer_matching_email_only(df_pos_cutoff, df_vendas_final)
+    elif initial_matching == 'email_telefone':
+        dataset_v1_final = fazer_matching_email_telefone(df_pos_cutoff, df_vendas_final)
     elif initial_matching == 'variantes':
         dataset_v1_final = fazer_matching_variantes(df_pos_cutoff, df_vendas_final)
     elif initial_matching == 'robusto':
         dataset_v1_final = fazer_matching_robusto(df_pos_cutoff, df_vendas_final)
+    elif initial_matching == 'validation':
+        dataset_v1_final = fazer_matching_email_with_validation(df_pos_cutoff, df_vendas_final)
     else:
-        raise ValueError(f"Método de matching inicial inválido: {initial_matching}. Use 'email_only', 'variantes' ou 'robusto'")
+        raise ValueError(f"Método de matching inicial inválido: {initial_matching}. Use 'email_only', 'email_telefone', 'variantes', 'robusto' ou 'validation'")
 
     # === CÉLULA 17: Filtragem DevClub ===
     dataset_v1_devclub = criar_dataset_devclub(dataset_v1_final, df_vendas_final)
+
+    # Aplicar janela de conversão de 20 dias (captação + CPL + carrinho)
+    # Captação: 7 dias (terça-segunda) + CPL: 6 dias (terça-domingo) + Carrinho: 7 dias (segunda-domingo) = 20 dias
+    dataset_v1_devclub = aplicar_janela_conversao(
+        df_leads=dataset_v1_devclub,
+        df_vendas=df_vendas_final,
+        janela_dias=20
+    )
+
+    # === LOG: VERIFICAÇÃO DE PRODUTOS DEVCLUB ===
+    print("\n" + "=" * 80)
+    print("VERIFICAÇÃO DE PRODUTOS DEVCLUB - Análise Completa")
+    print("=" * 80)
+
+    # 1. Listar TODOS os produtos que contêm "devclub"
+    print("\n📋 TODOS OS PRODUTOS COM 'DEVCLUB' NO NOME:")
+    print("-" * 80)
+
+    produtos_com_devclub = df_vendas_final[
+        df_vendas_final['produto'].fillna('').str.lower().str.contains('devclub', na=False)
+    ]['produto'].value_counts()
+
+    print(f"\nTotal de variações encontradas: {len(produtos_com_devclub)}")
+    print("\nProdutos e quantidade de vendas:")
+    for produto, count in produtos_com_devclub.items():
+        print(f"  {count:>5} vendas | {produto}")
+
+    # 2. Lista atual de produtos que estamos usando
+    produtos_devclub_lista_atual = [
+        'DevClub - Full Stack 2025',
+        'DevClub FullStack Pro - OFICIAL',
+        'Formação DevClub FullStack Pro - OFICI',
+        'Formação DevClub FullStack Pro - OFICIAL',
+        'DevClub - Full Stack 2025 - EV',
+        'DevClub - FS - Vitalício',
+        '[Vitalício] Formação DevClub FullStack',
+        '[Vitalício] Formação DevClub FullStack Pro - OFICIAL',
+        'Formação DevClub FullStack Pro - COMER',
+        'Formação DevClub FullStack Pro - COMERCIAL',
+        'Formação DevClub FullStack Pro',
+        'DevClub Vitalício',
+        'DevClub 3.0 - 2024',
+    ]
+
+    # 3. Verificar produtos que EXISTEM mas NÃO estão na lista
+    print("\n" + "=" * 80)
+    print("⚠️  PRODUTOS NÃO CONTABILIZADOS (existem mas não estão na lista):")
+    print("-" * 80)
+
+    produtos_nao_contabilizados = []
+    vendas_perdidas = 0
+
+    for produto in produtos_com_devclub.index:
+        if produto not in produtos_devclub_lista_atual:
+            produtos_nao_contabilizados.append(produto)
+            vendas_perdidas += produtos_com_devclub[produto]
+            print(f"  {produtos_com_devclub[produto]:>5} vendas | {produto}")
+
+    if not produtos_nao_contabilizados:
+        print("  ✅ Nenhum produto perdido! Todos estão sendo contabilizados.")
+    else:
+        print(f"\n  ⚠️  TOTAL DE VENDAS PERDIDAS: {vendas_perdidas}")
+
+    # 4. Verificar produtos na lista que NÃO existem
+    print("\n" + "=" * 80)
+    print("🔍 PRODUTOS NA LISTA MAS SEM VENDAS:")
+    print("-" * 80)
+
+    produtos_sem_vendas = []
+    for produto in produtos_devclub_lista_atual:
+        if produto not in produtos_com_devclub.index:
+            produtos_sem_vendas.append(produto)
+            print(f"  ⚠️  {produto}")
+
+    if not produtos_sem_vendas:
+        print("  ✅ Todos os produtos da lista têm vendas!")
+
+    # 5. Atualizar lista completa
+    produtos_devclub = list(produtos_com_devclub.index)
+
+    print("\n" + "=" * 80)
+    print("✅ LISTA ATUALIZADA - Usando TODOS os produtos DevClub encontrados")
+    print("=" * 80)
+    print(f"Total de produtos na lista atualizada: {len(produtos_devclub)}")
+
+    # === LOG: CÁLCULO DE RECALL E FATOR DE CORREÇÃO ===
+    print("\n" + "=" * 80)
+    print("CÁLCULO DE RECALL - Conversões Observadas vs Vendas Reais")
+    print("=" * 80)
+
+    # Contar conversões observadas (matches)
+    conversoes_observadas = dataset_v1_devclub['target'].sum()
+    total_leads = len(dataset_v1_devclub)
+
+    # Filtrar vendas DevClub
+    vendas_devclub = df_vendas_final[
+        df_vendas_final['produto'].isin(produtos_devclub)
+    ].copy()
+
+    # Filtrar por período (mesmo período dos leads)
+    if 'data' in vendas_devclub.columns:
+        vendas_devclub['data_dt'] = pd.to_datetime(vendas_devclub['data'], errors='coerce')
+        # Período dos leads (aproximado - 2025-03-01 a 2025-11-04)
+        periodo_inicio = pd.to_datetime('2025-03-01')
+        periodo_fim = pd.to_datetime('2025-11-04')
+        vendas_periodo = vendas_devclub[
+            (vendas_devclub['data_dt'] >= periodo_inicio - pd.Timedelta(days=20)) &
+            (vendas_devclub['data_dt'] <= periodo_fim + pd.Timedelta(days=20))
+        ].copy()
+    else:
+        vendas_periodo = vendas_devclub.copy()
+
+    # Remover duplicatas (mesmo email/telefone + produto + data + valor)
+    vendas_periodo['email_lower'] = vendas_periodo['email'].fillna('').astype(str).str.lower().str.strip()
+    vendas_periodo['telefone_clean'] = vendas_periodo['telefone'].fillna('').astype(str).str.strip()
+    vendas_periodo['produto_clean'] = vendas_periodo['produto'].fillna('').astype(str).str.strip()
+    vendas_periodo['data_str'] = vendas_periodo['data_dt'].astype(str) if 'data_dt' in vendas_periodo.columns else vendas_periodo['data'].astype(str)
+    vendas_periodo['valor_str'] = vendas_periodo['valor'].fillna(0).astype(str)
+
+    vendas_periodo['chave_dedup'] = (
+        vendas_periodo['email_lower'] + '|' +
+        vendas_periodo['telefone_clean'] + '|' +
+        vendas_periodo['produto_clean'] + '|' +
+        vendas_periodo['data_str'] + '|' +
+        vendas_periodo['valor_str']
+    )
+    vendas_unicas = vendas_periodo.drop_duplicates(subset='chave_dedup', keep='first')
+
+    # Calcular métricas
+    vendas_reais = len(vendas_unicas)
+    recall = conversoes_observadas / vendas_reais if vendas_reais > 0 else 0
+    fator_correcao = 1 / recall if recall > 0 else 0
+
+    taxa_observada = conversoes_observadas / total_leads if total_leads > 0 else 0
+    taxa_real = vendas_reais / total_leads if total_leads > 0 else 0
+
+    print(f"\n📊 DADOS:")
+    print(f"  Total de leads: {total_leads:,}")
+    print(f"  Conversões OBSERVADAS (matches): {conversoes_observadas}")
+    print(f"  Vendas REAIS (sem duplicatas): {vendas_reais:,}")
+
+    print(f"\n📈 TAXAS:")
+    print(f"  Taxa OBSERVADA: {taxa_observada*100:.4f}%")
+    print(f"  Taxa REAL: {taxa_real*100:.4f}%")
+
+    print(f"\n🔧 MÉTRICAS:")
+    print(f"  Recall: {recall*100:.1f}%")
+    print(f"  Fator de correção: {fator_correcao:.3f}x")
+
+    if fator_correcao > 1:
+        print(f"\n💡 IMPACTO:")
+        print(f"  Estamos SUBESTIMANDO em {fator_correcao:.3f}x")
+        print(f"  Valores CAPI deveriam ser {(fator_correcao-1)*100:.0f}% maiores")
+
+    print("=" * 80)
 
     # === CÉLULA 18: Feature Engineering ===
     dataset_v1_devclub_fe = criar_features_derivadas(dataset_v1_devclub)
@@ -312,8 +500,34 @@ def main(initial_matching='email_only'):
     # === CÉLULA 20: Encoding Estratégico ===
     dataset_v1_devclub_encoded = aplicar_encoding_estrategico(dataset_v1_devclub_fe)
 
+    # === HYPERPARAMETER TUNING (opcional) ===
+    melhores_params = None
+    if tune_hyperparams:
+        print("\n" + "=" * 80)
+        print("EXECUTANDO HYPERPARAMETER TUNING")
+        print("=" * 80)
+
+        resultado_tuning = hyperparameter_tuning(
+            dataset_v1_devclub_encoded,
+            dataset_v1_devclub,
+            grid_size=grid_size
+        )
+
+        if resultado_tuning and resultado_tuning['usar_tunado']:
+            melhores_params = resultado_tuning['melhores_params']
+            print(f"\n✅ Usando hiperparâmetros tunados no treino final")
+        else:
+            print(f"\n⚠️  Mantendo hiperparâmetros baseline (tuning não trouxe ganho significativo)")
+
     # === CÉLULA MODELAGEM: Treino e Registro do Modelo ===
-    resultado_registro_devclub = registrar_features_e_modelo_devclub(dataset_v1_devclub_encoded, dataset_v1_devclub)
+    resultado_registro_devclub = registrar_features_e_modelo_devclub(
+        dataset_v1_devclub_encoded,
+        dataset_v1_devclub,
+        save_files=save_files,
+        matching_method=initial_matching,
+        custom_hyperparams=melhores_params,
+        split_method=split_method
+    )
 
 
 if __name__ == "__main__":
@@ -321,10 +535,54 @@ if __name__ == "__main__":
     parser.add_argument(
         '--initial-matching',
         type=str,
-        choices=['email_only', 'variantes', 'robusto'],
-        default='email_only',
-        help='Método de matching inicial (célula 15) - padrão: email_only (100%% monotonia, máxima precisão)'
+        choices=['email_only', 'email_telefone', 'variantes', 'robusto', 'validation'],
+        default='email_telefone',
+        help='Método de matching inicial (célula 15) - padrão: email_telefone (+16.5%% dados, melhor separação D10/D1)'
+    )
+    parser.add_argument(
+        '--save-files',
+        action='store_true',
+        help='Salvar arquivos locais em files/{timestamp} (padrão: False - apenas MLflow)'
+    )
+    parser.add_argument(
+        '--tune-hyperparams',
+        action='store_true',
+        help='Executar hyperparameter tuning antes do treino (padrão: False)'
+    )
+    parser.add_argument(
+        '--grid-size',
+        type=str,
+        choices=['small', 'medium', 'large'],
+        default='small',
+        help='Tamanho do grid search: small (6 comb), medium (48), large (96) - padrão: small'
+    )
+    parser.add_argument(
+        '--split-method',
+        type=str,
+        choices=['temporal', 'stratified'],
+        default='temporal',
+        help='Método de split: temporal (70%% dos dias) ou stratified (70%% dos registros) - padrão: temporal'
+    )
+    parser.add_argument(
+        '--use-guru-only',
+        type=str,
+        choices=['true', 'false'],
+        default=None,
+        help='Filtro de produtos: true (apenas GURU), false (GURU+TMB) - padrão: usar config'
     )
 
     args = parser.parse_args()
-    main(initial_matching=args.initial_matching)
+
+    # Converter string para bool se fornecido
+    use_guru_only = None
+    if args.use_guru_only:
+        use_guru_only = args.use_guru_only.lower() == 'true'
+
+    main(
+        initial_matching=args.initial_matching,
+        save_files=args.save_files,
+        tune_hyperparams=args.tune_hyperparams,
+        grid_size=args.grid_size,
+        split_method=args.split_method,
+        use_guru_only=use_guru_only
+    )

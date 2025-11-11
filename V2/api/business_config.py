@@ -17,8 +17,9 @@ HISTÓRICO DE VERSÕES:
 # 1. MÉTRICAS DE PRODUTO
 # =============================================================================
 
-# Valor médio do produto (baseado em 1.970 vendas reais de 01/03/2025 a 12/08/2025)
-PRODUCT_VALUE = 2027.38
+# Valor médio do produto (baseado em análise de matches reais - 769 conversões, LTV R$ 1.782)
+# Valor arredondado para R$ 2.000 (conservador, considera 13.1% de recompra real)
+PRODUCT_VALUE = 2000.00
 
 # =============================================================================
 # 2. TAXAS DE CONVERSÃO CORRIGIDAS POR RECALL
@@ -37,17 +38,51 @@ PRODUCT_VALUE = 2027.38
 #
 # MÉTODO: Taxa corrigida = Taxa observada / Recall
 
+# TAXAS ANTIGAS (baseadas em recall 2.906x - DESATUALIZADAS)
+# CONVERSION_RATES = {
+#     "D1": 0.007555,   # 0.76% (era 0.26% observado, +0.50pp)
+#     "D2": 0.007555,   # 0.76% (era 0.26% observado, +0.50pp)
+#     "D3": 0.024698,   # 2.47% (era 0.85% observado, +1.62pp)
+#     "D4": 0.027313,   # 2.73% (era 0.94% observado, +1.79pp)
+#     "D5": 0.029637,   # 2.96% (era 1.02% observado, +1.94pp)
+#     "D6": 0.032252,   # 3.23% (era 1.11% observado, +2.12pp)
+#     "D7": 0.034577,   # 3.46% (era 1.19% observado, +2.27pp)
+#     "D8": 0.034577,   # 3.46% (era 1.19% observado, +2.27pp)
+#     "D9": 0.039807,   # 3.98% (era 1.37% observado, +2.61pp)
+#     "D10": 0.061889,  # 6.19% (era 2.13% observado, +4.06pp)
+# }
+
+# TAXAS OBSERVADAS - Modelo RandomForest (Run: b4bda5b375b24c219a4c04ff6e0f396d)
+# Data: 2025-11-10 | AUC: 0.6979 | Monotonia: 77.8% | Split: Stratified (Union-Find)
+# Hiperparâmetros: n_est=300, depth=8, split=2, leaf=1, feat=sqrt
+# IMPORTANTE: Estas taxas foram CORRIGIDAS por recall (55.7%) - fator 1.795x
+CONVERSION_RATES_OBSERVADAS = {
+    "D1": 0.002137,   # 0.21% | 7 conversões / 3,276 leads
+    "D2": 0.002748,   # 0.27% | 9 conversões / 3,275 leads
+    "D3": 0.002138,   # 0.21% | 7 conversões / 3,274 leads (quebra monotonia vs D2)
+    "D4": 0.005802,   # 0.58% | 19 conversões / 3,275 leads
+    "D5": 0.003053,   # 0.31% | 10 conversões / 3,276 leads (quebra monotonia vs D4)
+    "D6": 0.006721,   # 0.67% | 22 conversões / 3,274 leads
+    "D7": 0.006718,   # 0.67% | 22 conversões / 3,275 leads
+    "D8": 0.010382,   # 1.04% | 34 conversões / 3,275 leads
+    "D9": 0.014043,   # 1.40% | 46 conversões / 3,276 leads
+    "D10": 0.019243,  # 1.92% | 63 conversões / 3,274 leads
+}
+
+# TAXAS CORRIGIDAS - Aplicando recall 55.7% (fator 1.795x)
+# Análise: 769 conversões observadas / 1,380 vendas reais = 55.7% recall
+# Data: 2025-11-10 | Total leads: 108,700 | Vendas reais (sem duplicatas): 1,380
 CONVERSION_RATES = {
-    "D1": 0.007555,   # 0.76% (era 0.26% observado, +0.50pp)
-    "D2": 0.007555,   # 0.76% (era 0.26% observado, +0.50pp)
-    "D3": 0.024698,   # 2.47% (era 0.85% observado, +1.62pp)
-    "D4": 0.027313,   # 2.73% (era 0.94% observado, +1.79pp)
-    "D5": 0.029637,   # 2.96% (era 1.02% observado, +1.94pp)
-    "D6": 0.032252,   # 3.23% (era 1.11% observado, +2.12pp)
-    "D7": 0.034577,   # 3.46% (era 1.19% observado, +2.27pp)
-    "D8": 0.034577,   # 3.46% (era 1.19% observado, +2.27pp)
-    "D9": 0.039807,   # 3.98% (era 1.37% observado, +2.61pp)
-    "D10": 0.061889,  # 6.19% (era 2.13% observado, +4.06pp)
+    "D1": 0.003836,   # 0.38% | Corrigido de 0.21% (×1.795)
+    "D2": 0.004933,   # 0.49% | Corrigido de 0.27% (×1.795)
+    "D3": 0.003838,   # 0.38% | Corrigido de 0.21% (×1.795)
+    "D4": 0.010415,   # 1.04% | Corrigido de 0.58% (×1.795)
+    "D5": 0.005480,   # 0.55% | Corrigido de 0.31% (×1.795)
+    "D6": 0.012064,   # 1.21% | Corrigido de 0.67% (×1.795)
+    "D7": 0.012059,   # 1.21% | Corrigido de 0.67% (×1.795)
+    "D8": 0.018636,   # 1.86% | Corrigido de 1.04% (×1.795)
+    "D9": 0.025207,   # 2.52% | Corrigido de 1.40% (×1.795)
+    "D10": 0.034551,  # 3.45% | Corrigido de 1.92% (×1.795) → R$ 69.10
 }
 
 # =============================================================================

@@ -29,7 +29,7 @@ def criar_dataset_pos_cutoff(df_medium_producao: pd.DataFrame) -> pd.DataFrame:
 
     # Converter coluna de data para datetime se não estiver
     if 'Data' in df.columns:
-        df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
+        df['Data'] = pd.to_datetime(df['Data'], errors='coerce', dayfirst=True)
 
     # Definir cutoff de data (quando as features críticas começaram a ser preenchidas)
     cutoff_date = pd.to_datetime('2025-03-01')

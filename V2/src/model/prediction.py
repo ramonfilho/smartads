@@ -55,7 +55,8 @@ class LeadScoringPredictor:
         logger.info(f"Carregando features esperadas: {features_file}")
         with open(features_file, 'r') as f:
             features_data = json.load(f)
-            self.feature_names = features_data['feature_names']
+            # Extrair feature names do expected_dtypes (dict com feature: dtype)
+            self.feature_names = list(features_data.get('expected_dtypes', {}).keys())
 
         logger.info(f"Carregando metadados: {metadata_file}")
         with open(metadata_file, 'r') as f:
