@@ -25,22 +25,26 @@ class LeadScoringPipeline:
     Reproduz EXATAMENTE a lógica do notebook com parâmetros configuráveis.
     """
 
-    def __init__(self, model_name: str = "v1_devclub_rf_temporal_single", model_path: str = None):
+    def __init__(self, model_name: str = None, model_path: str = None):
         """
         Inicializa o pipeline com configuração fixa.
 
         Args:
-            model_name: Nome do modelo a usar para predições (default: v1_devclub_rf_temporal_single)
+            model_name: Nome do modelo a usar para predições (default: None = usa active_model.yaml)
             model_path: Caminho customizado para a pasta do modelo (opcional)
 
         Configuração:
         - Mantém features UTM (com_utm=True)
         - Dataset V1 (versao="v1")
         - Sem cutoff temporal
+        - Se model_name e model_path forem None, usa o modelo ativo do configs/active_model.yaml
         """
         self.data = None
         self.original_data = None  # Preservar dados originais
-        self.predictor = LeadScoringPredictor(model_name, model_path=model_path)
+        self.predictor = LeadScoringPredictor(model_name, model_path=model_path, use_active_model=True)
+
+        # Carregar modelo e metadados automaticamente
+        self.predictor.load_model()
 
     def load_data(self, filepath: str) -> pd.DataFrame:
         """

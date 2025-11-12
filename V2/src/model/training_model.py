@@ -18,6 +18,7 @@ import sklearn
 import logging
 import mlflow
 import mlflow.sklearn
+from src.model.decil_thresholds import calcular_thresholds_decis, comparar_distribuicoes, atribuir_decis_batch
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,8 @@ def registrar_features_e_modelo_devclub(
     save_files: bool = False,
     matching_method: str = 'email_only',
     custom_hyperparams: dict = None,
-    split_method: str = 'temporal'
+    split_method: str = 'temporal',
+    set_active: bool = False
 ) -> dict:
     """
     Registra features e salva modelo DevClub para produção.
@@ -46,6 +48,7 @@ def registrar_features_e_modelo_devclub(
         matching_method: Método de matching usado ('email_only', 'variantes', 'robusto')
         custom_hyperparams: Hiperparâmetros customizados do tuning (opcional)
         split_method: Método de split ('temporal' para 70% dos dias, 'stratified' para 70% dos registros)
+        set_active: Se True, atualiza configs/active_model.yaml com este modelo (requer save_files=True)
 
     Returns:
         Dicionário com resultados do registro
@@ -149,6 +152,63 @@ def registrar_features_e_modelo_devclub(
             # Logar dados do split
             mlflow.log_param("split_method", "temporal")
             mlflow.log_param("cut_date", data_corte.strftime('%Y-%m-%d'))
+
+        elif split_method == 'temporal_leads':
+            # Split temporal por LEADS: 70% dos LEADS (ordenados por data) para treino
+            # Test set contém últimos 30% dos leads (mais representativo de produção)
+
+            # Criar DataFrame auxiliar com índices e datas
+            df_indices = pd.DataFrame({
+                'index': range(len(dataset_original)),
+                'Data': data_dt
+            }).sort_values('Data').reset_index(drop=True)
+
+            n_total = len(df_indices)
+            n_train = int(n_total * 0.7)
+
+            # Índices de treino e teste (após ordenação por data)
+            train_indices = df_indices['index'].iloc[:n_train].values
+            test_indices = df_indices['index'].iloc[n_train:].values
+
+            # Extrair subsets
+            X_train = X_clean.iloc[train_indices]
+            X_test = X_clean.iloc[test_indices]
+            y_train = y.iloc[train_indices]
+            y_test = y.iloc[test_indices]
+
+            # Data de corte (última data do treino)
+            data_corte = df_indices['Data'].iloc[n_train - 1]
+            data_inicio_teste = df_indices['Data'].iloc[n_train]
+
+            # Calcular dias dos períodos
+            dias_treino = (data_corte - data_min).days
+            dias_teste = (data_max - data_inicio_teste).days
+
+            print(f"\nSplit temporal por LEADS (70% dos leads):")
+            print(f"  Período total: {data_min.strftime('%Y-%m-%d')} a {data_max.strftime('%Y-%m-%d')} ({(data_max - data_min).days} dias)")
+            print(f"  Treino: {len(X_train):,} leads ({len(X_train)/n_total*100:.1f}%)")
+            print(f"    Período: {data_min.strftime('%Y-%m-%d')} a {data_corte.strftime('%Y-%m-%d')} ({dias_treino} dias)")
+            print(f"    Taxa conversão: {y_train.mean()*100:.2f}%")
+            print(f"  Teste: {len(X_test):,} leads ({len(X_test)/n_total*100:.1f}%)")
+            print(f"    Período: {data_inicio_teste.strftime('%Y-%m-%d')} a {data_max.strftime('%Y-%m-%d')} ({dias_teste} dias)")
+            print(f"    Taxa conversão: {y_test.mean()*100:.2f}%")
+
+            # Quantificar data leakage
+            print(f"\n🔍 Análise de data leakage:")
+            train_emails = set(dataset_original.iloc[train_indices]['E-mail'].dropna().str.lower().str.strip())
+            test_emails = set(dataset_original.iloc[test_indices]['E-mail'].dropna().str.lower().str.strip())
+            train_emails.discard('')
+            test_emails.discard('')
+            emails_leak = len(train_emails & test_emails)
+            leak_pct = emails_leak / len(test_emails) * 100 if test_emails else 0
+            print(f"  Emails em ambos train/test: {emails_leak} ({leak_pct:.2f}% do test)")
+
+            # Logar dados do split
+            mlflow.log_param("split_method", "temporal_leads")
+            mlflow.log_param("cut_date", data_corte.strftime('%Y-%m-%d'))
+            mlflow.log_param("train_days", dias_treino)
+            mlflow.log_param("test_days", dias_teste)
+            mlflow.log_metric("leakage_email_pct", leak_pct)
 
         else:  # stratified
             # Split stratified POR PESSOA usando componentes conectados: garantir zero leakage
@@ -541,6 +601,30 @@ def registrar_features_e_modelo_devclub(
             duplicates='drop'
         )
 
+        # ====================================================================
+        # CALCULAR THRESHOLDS FIXOS DE DECIS (para uso em produção)
+        # ====================================================================
+        print("\n" + "=" * 80)
+        print("CALCULANDO THRESHOLDS FIXOS DE DECIS")
+        print("=" * 80)
+
+        decil_thresholds = calcular_thresholds_decis(y_prob, df_analise['decil'])
+
+        # Validar thresholds: classificar test set usando thresholds e comparar
+        print("\n📊 Validando thresholds: classificando test set...")
+        decis_via_threshold = atribuir_decis_batch(y_prob, decil_thresholds)
+        comparacao = comparar_distribuicoes(
+            df_analise['decil'],
+            decis_via_threshold,
+            verbose=True
+        )
+
+        print(f"\n✅ Validação concluída:")
+        print(f"   Diferença média: {comparacao['media_diferenca_absoluta']:.1f} leads por decil")
+        print(f"   Diferença máxima: {comparacao['max_diferenca_absoluta']} leads")
+        print(f"   Diferença máxima %: {comparacao['max_diferenca_percentual']:.1f}%")
+        print("=" * 80)
+
         analise_decis = df_analise.groupby('decil', observed=True).agg({
             'target_real': ['count', 'sum', 'mean']
         }).round(4)
@@ -622,6 +706,25 @@ def registrar_features_e_modelo_devclub(
                 }
                 for i, (_, row) in enumerate(analise_decis.iterrows())
             },
+            "decil_thresholds": {
+                "method": "exact_from_test_set",
+                "calculated_at": datetime.now().isoformat(),
+                "validation_metrics": {
+                    "max_diferenca_absoluta": int(comparacao['max_diferenca_absoluta']),
+                    "media_diferenca_absoluta": float(comparacao['media_diferenca_absoluta']),
+                    "max_diferenca_percentual": float(comparacao['max_diferenca_percentual'])
+                },
+                "thresholds": decil_thresholds,
+                "usage_notes": {
+                    "description": "Use these thresholds for consistent decil assignment in production",
+                    "benefits": [
+                        "Consistent scoring across different batch sizes",
+                        "Enables high-frequency CAPI batching (every 2-3 hours)",
+                        "Prevents value instability in Meta algorithm"
+                    ],
+                    "implementation": "Use atribuir_decil_por_threshold(score, thresholds) from src.model.decil_thresholds"
+                }
+            },
             "production_notes": {
                 "use_case": "Lead scoring for DevClub products with budget allocation optimization",
                 "prediction_interpretation": "Higher probability = higher priority for budget allocation",
@@ -691,10 +794,47 @@ def registrar_features_e_modelo_devclub(
             print(f"✓ {test_set_filename} salvo")
 
             logger.info(f"✅ Arquivos locais salvos em {output_dir}")
+
+            # Atualizar active_model.yaml se solicitado
+            if set_active:
+                print("\n5. ATUALIZANDO MODELO ATIVO")
+                print("-" * 50)
+
+                import yaml
+                from pathlib import Path
+
+                config_path = Path(__file__).parent.parent.parent / "configs" / "active_model.yaml"
+                active_config = {
+                    'active_model': {
+                        'model_name': f"v1_devclub_rf_{split_method}_single",
+                        'model_path': f"{output_dir}",
+                        'trained_at': model_metadata['model_info']['trained_at'],
+                        'split_method': split_method,
+                        'performance': {
+                            'auc': float(auc_final),
+                            'monotonia_percentage': float(monotonia),
+                            'lift_maximum': float(lift_maximo)
+                        }
+                    }
+                }
+
+                with open(config_path, 'w') as f:
+                    yaml.dump(active_config, f, default_flow_style=False, sort_keys=False)
+                    f.write("\n# Para mudar o modelo ativo:\n")
+                    f.write("# 1. Treine um novo modelo: python src/train_pipeline.py --split-method temporal_leads --save-files --set-active\n")
+                    f.write("# 2. Ou edite este arquivo manualmente apontando para outro model_path\n")
+
+                print(f"✓ {config_path} atualizado")
+                print(f"  Modelo ativo: v1_devclub_rf_{split_method}_single")
+                print(f"  Path: {output_dir}")
         else:
             print("\n4. ARQUIVOS LOCAIS NÃO SALVOS (--save-files=False)")
             print("-" * 50)
             print("Use --save-files para salvar arquivos locais")
+
+            if set_active:
+                print("\n⚠️  AVISO: --set-active requer --save-files")
+                print("   Modelo ativo não foi atualizado")
 
         # Sempre logar metadata como artifact no MLflow
         mlflow.log_dict(model_metadata, "model_metadata.json")

@@ -1,0 +1,17 @@
+/Users/ramonmoreira/.pyenv/versions/3.11.6/lib/python3.11/site-packages/mlflow/protos/service_pb2.py:11: UserWarning: google.protobuf.service module is deprecated. RPC implementations should provide code generator plugins which generate code specific to the RPC implementation. service.py will be removed in Jan 2025
+  from google.protobuf import service as _service
+[2025-11-11 13:53:00 -0300] [27919] [INFO] Starting gunicorn 23.0.0
+[2025-11-11 13:53:00 -0300] [27919] [INFO] Listening at: http://127.0.0.1:5001 (27919)
+[2025-11-11 13:53:00 -0300] [27919] [INFO] Using worker: sync
+[2025-11-11 13:53:00 -0300] [27920] [INFO] Booting worker with pid: 27920
+/Users/ramonmoreira/.pyenv/versions/3.11.6/lib/python3.11/site-packages/mlflow/protos/service_pb2.py:11: UserWarning: google.protobuf.service module is deprecated. RPC implementations should provide code generator plugins which generate code specific to the RPC implementation. service.py will be removed in Jan 2025
+  from google.protobuf import service as _service
+[2025-11-11 13:53:00 -0300] [27921] [INFO] Booting worker with pid: 27921
+[2025-11-11 13:53:00 -0300] [27922] [INFO] Booting worker with pid: 27922
+[2025-11-11 13:53:00 -0300] [27923] [INFO] Booting worker with pid: 27923
+/Users/ramonmoreira/.pyenv/versions/3.11.6/lib/python3.11/site-packages/mlflow/protos/service_pb2.py:11: UserWarning: google.protobuf.service module is deprecated. RPC implementations should provide code generator plugins which generate code specific to the RPC implementation. service.py will be removed in Jan 2025
+  from google.protobuf import service as _service
+/Users/ramonmoreira/.pyenv/versions/3.11.6/lib/python3.11/site-packages/mlflow/protos/service_pb2.py:11: UserWarning: google.protobuf.service module is deprecated. RPC implementations should provide code generator plugins which generate code specific to the RPC implementation. service.py will be removed in Jan 2025
+  from google.protobuf import service as _service
+/Users/ramonmoreira/.pyenv/versions/3.11.6/lib/python3.11/site-packages/mlflow/protos/service_pb2.py:11: UserWarning: google.protobuf.service module is deprecated. RPC implementations should provide code generator plugins which generate code specific to the RPC implementation. service.py will be removed in Jan 2025
+  from google.protobuf import service as _service

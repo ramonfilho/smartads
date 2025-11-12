@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 import logging
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -17,29 +18,49 @@ logger = logging.getLogger(__name__)
 class LeadScoringPredictor:
     """Classe para realizar predições de lead scoring."""
 
-    def __init__(self, model_name: str = "v1_devclub_rf_temporal", model_path: str = None):
+    def __init__(self, model_name: str = None, model_path: str = None, use_active_model: bool = True):
         """
         Inicializa o preditor com um modelo específico.
 
         Args:
-            model_name: Nome do modelo a ser carregado (sem extensão)
-            model_path: Caminho customizado para a pasta do modelo (opcional)
+            model_name: Nome do modelo a ser carregado (sem extensão). Se None, usa modelo ativo do config.
+            model_path: Caminho customizado para a pasta do modelo (opcional). Se None, usa modelo ativo do config.
+            use_active_model: Se True (padrão), carrega modelo do configs/active_model.yaml se model_name e model_path forem None
         """
-        self.model_name = model_name
         self.model = None
         self.feature_names = None
         self.metadata = None
 
-        if model_path:
+        # Prioridade: 1) model_path/model_name fornecidos, 2) config active_model, 3) fallback padrão
+        if model_path and model_name:
+            # Modo explícito: usar parâmetros fornecidos
             self.model_path = Path(model_path)
+            self.model_name = model_name
+        elif use_active_model:
+            # Modo config: carregar do active_model.yaml
+            try:
+                config_path = Path(__file__).parent.parent.parent / "configs" / "active_model.yaml"
+                with open(config_path, 'r') as f:
+                    config = yaml.safe_load(f)
+
+                self.model_name = config['active_model']['model_name']
+                self.model_path = Path(__file__).parent.parent.parent / config['active_model']['model_path']
+                logger.info(f"Carregando modelo ativo do config: {self.model_name} @ {self.model_path}")
+            except Exception as e:
+                logger.warning(f"Falha ao carregar active_model.yaml: {e}. Usando fallback padrão.")
+                # Fallback para o padrão antigo
+                self.model_name = model_name or "v1_devclub_rf_temporal"
+                self.model_path = Path(__file__).parent.parent.parent / "arquivos_modelo"
         else:
+            # Modo legacy: usar padrão antigo
+            self.model_name = model_name or "v1_devclub_rf_temporal"
             self.model_path = Path(__file__).parent.parent.parent / "arquivos_modelo"
 
     def load_model(self):
         """Carrega o modelo pickle e seus metadados."""
         model_file = self.model_path / f"modelo_lead_scoring_{self.model_name}.pkl"
-        features_file = self.model_path / f"features_ordenadas_{self.model_name}-3.json"
-        metadata_file = self.model_path / f"model_metadata_{self.model_name}-3.json"
+        features_file = self.model_path / f"features_ordenadas_{self.model_name}.json"
+        metadata_file = self.model_path / f"model_metadata_{self.model_name}.json"
 
         logger.info(f"Carregando modelo: {model_file}")
         try:
@@ -55,8 +76,15 @@ class LeadScoringPredictor:
         logger.info(f"Carregando features esperadas: {features_file}")
         with open(features_file, 'r') as f:
             features_data = json.load(f)
-            # Extrair feature names do expected_dtypes (dict com feature: dtype)
-            self.feature_names = list(features_data.get('expected_dtypes', {}).keys())
+            # Extrair feature names - suporta dois formatos:
+            # 1. 'expected_dtypes' (dict com feature: dtype) - formato antigo
+            # 2. 'feature_names' (list de strings) - formato novo
+            if 'expected_dtypes' in features_data:
+                self.feature_names = list(features_data['expected_dtypes'].keys())
+            elif 'feature_names' in features_data:
+                self.feature_names = features_data['feature_names']
+            else:
+                raise ValueError("Arquivo de features não contém 'expected_dtypes' nem 'feature_names'")
 
         logger.info(f"Carregando metadados: {metadata_file}")
         with open(metadata_file, 'r') as f:

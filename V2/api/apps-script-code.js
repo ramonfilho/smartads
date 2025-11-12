@@ -67,9 +67,123 @@ function activateML() {
     removeDailyTrigger();  // Remove trigger antigo se existir
     createDailyTrigger();
 
-    // Etapa 3: Executar primeira atualização
+    // Etapa 3: Executar primeira atualização com UTM OTIMIZADO (últimos 7 dias apenas)
     Logger.log('🔄 Executando primeira atualização...');
-    updateUTMAnalysis();
+
+    // ========== INÍCIO DO UTM ANALYSIS OTIMIZADO (INLINE) ==========
+    try {
+      Logger.log('📊 Atualizando análises UTM (otimizado - últimos 7 dias)...');
+
+      const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('[LF] Pesquisa');
+      if (!sheet) throw new Error('Aba "[LF] Pesquisa" não encontrada');
+
+      // Ler dados da planilha
+      const values = sheet.getDataRange().getValues();
+      if (values.length <= 1) {
+        Logger.log('⚠️ Nenhum dado na planilha');
+      } else {
+        const headers = values[0];
+
+        // Calcular data de corte (7 dias atrás)
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        sevenDaysAgo.setHours(0, 0, 0, 0);
+
+        Logger.log(`📅 Filtrando leads desde: ${sevenDaysAgo.toLocaleString()}`);
+
+        // Encontrar índice da coluna "Data"
+        const dataColumnIndex = headers.indexOf('Data');
+        if (dataColumnIndex === -1) {
+          throw new Error('Coluna "Data" não encontrada na planilha');
+        }
+
+        // Preparar leads para análise (apenas últimos 7 dias)
+        const leads = [];
+        let totalLeads = 0;
+        let filteredLeads = 0;
+
+        for (let i = 1; i < values.length; i++) {
+          totalLeads++;
+          const row = values[i];
+
+          // Obter data do lead
+          const leadDate = new Date(row[dataColumnIndex]);
+
+          // Filtrar apenas últimos 7 dias
+          if (leadDate >= sevenDaysAgo) {
+            filteredLeads++;
+            const leadData = {};
+
+            headers.forEach((header, index) => {
+              leadData[header] = row[index];
+            });
+
+            // Formato esperado pela API: {data: {...}}
+            leads.push({
+              data: leadData
+            });
+          }
+        }
+
+        Logger.log(`📋 Total de leads na planilha: ${totalLeads}`);
+        Logger.log(`📋 Leads dos últimos 7 dias: ${filteredLeads}`);
+        Logger.log(`📋 Enviando ${leads.length} leads para análise...`);
+
+        if (leads.length === 0) {
+          Logger.log('⚠️ Nenhum lead nos últimos 7 dias para análise');
+        } else {
+          // Chamar API de análise UTM
+          const payload = JSON.stringify({
+            leads: leads,
+            account_id: META_ACCOUNT_ID
+          });
+
+          const options = {
+            method: 'post',
+            contentType: 'application/json',
+            payload: payload,
+            muteHttpExceptions: true
+          };
+
+          const response = UrlFetchApp.fetch(`${API_URL}/analyze_utms_with_costs`, options);
+          const responseCode = response.getResponseCode();
+
+          if (responseCode !== 200) {
+            throw new Error(`API retornou erro: ${responseCode} - ${response.getContentText()}`);
+          }
+
+          const result = JSON.parse(response.getContentText());
+
+          Logger.log(`✅ Análise recebida: ${result.processing_time_seconds}s`);
+          Logger.log(`   Períodos: ${Object.keys(result.periods).join(', ')}`);
+
+          // Criar abas para períodos 1D, 3D, 7D (sem Total)
+          const periods = ['1D', '3D', '7D'];
+
+          // IMPORTANTE: Processar cada aba separadamente com tratamento de erro individual
+          // Se uma aba falhar, as outras ainda serão criadas
+          for (const period of periods) {
+            if (result.periods[period]) {
+              try {
+                Logger.log(`📝 Processando aba ${period}...`);
+                writeAnalysisSheet(period, result.periods[period], result.config);
+                Logger.log(`✅ Aba ${period} criada com sucesso`);
+              } catch (periodError) {
+                Logger.log(`❌ Erro ao criar aba ${period}: ${periodError.message}`);
+                // Não throw - continuar processando outras abas
+              }
+            }
+          }
+
+          Logger.log('✅ Análises UTM atualizadas');
+        }
+      }
+    } catch (error) {
+      Logger.log(`❌ Erro ao atualizar análises UTM: ${error.message}`);
+      throw error;
+    }
+    // ========== FIM DO UTM ANALYSIS OTIMIZADO (INLINE) ==========
+
     updateModelInfoIfChanged();
 
     Logger.log('✅ Smart Ads ML ativado com sucesso!');
@@ -79,7 +193,7 @@ function activateML() {
       'Smart Ads ML foi ativado com sucesso!\n\n' +
       '✅ Predições dos últimos 21 dias: OK\n' +
       '✅ Execução diária às 08:00: Configurada\n' +
-      '✅ Análises UTM: Atualizadas\n\n' +
+      '✅ Análises UTM: Atualizadas (últimos 7 dias)\n\n' +
       'O sistema irá rodar automaticamente todos os dias às 08:00.',
       ui.ButtonSet.OK
     );
@@ -105,6 +219,94 @@ function activateML() {
  * 1. Gera predições do dia anterior (ontem 00:00 → hoje 00:00)
  * 2. Atualiza análises UTM (1D, 3D, 7D)
  * 3. Atualiza "Info do Modelo" se metadados mudaram
+ */
+// =============================================================================
+// FUNÇÕES PRINCIPAIS - NOVA ARQUITETURA (CAPI 3H + RELATÓRIOS DIÁRIOS)
+// =============================================================================
+
+/**
+ * Execução a cada 3 horas (00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00, 21:00)
+ * RÁPIDA: ~15-25s
+ *
+ * Gera predições e envia CAPI para leads das últimas 3 horas
+ * Mantém o algoritmo do Meta sempre atualizado com sinais frescos
+ */
+function execute3HourUpdate() {
+  try {
+    Logger.log('⚡ Executando atualização 3h - ' + new Date().toISOString());
+
+    // Calcular janela de 3 horas
+    const now = new Date();
+    const threeHoursAgo = new Date(now.getTime() - (3 * 60 * 60 * 1000));
+
+    Logger.log(`📅 Janela: ${threeHoursAgo.toLocaleString()} → ${now.toLocaleString()}`);
+
+    // Etapa 1: Gerar predições (últimas 3h)
+    Logger.log('🔮 Gerando predições...');
+    generatePredictionsFor24hBlock(threeHoursAgo, now);
+
+    // Etapa 2: Enviar CAPI (últimas 3h)
+    Logger.log('📤 Enviando batch CAPI...');
+    sendCapiBatchForD10Leads(threeHoursAgo, now);
+
+    Logger.log('✅ Atualização 3h concluída com sucesso');
+
+  } catch (error) {
+    Logger.log(`❌ Erro na atualização 3h: ${error.message}`);
+    Logger.log(error.stack);
+
+    // Enviar email de erro crítico
+    const email = Session.getEffectiveUser().getEmail();
+    MailApp.sendEmail({
+      to: email,
+      subject: '❌ Erro Smart Ads ML - Atualização 3h',
+      body: `Erro na execução 3h de ${new Date().toLocaleString()}:\n\n${error.message}\n\n${error.stack}`
+    });
+  }
+}
+
+/**
+ * Execução 1x/dia às 00:00
+ * PESADA: ~3-5 min
+ *
+ * Atualiza relatórios UTM (análise completa de TODOS os dados históricos)
+ * e informações do modelo ativo
+ */
+function executeDailyReports() {
+  try {
+    Logger.log('🌙 Executando relatórios diários - ' + new Date().toISOString());
+
+    // Etapa 1: Atualizar análises UTM (PESADO - 3-5 min)
+    Logger.log('📊 Atualizando análises UTM completas...');
+    updateUTMAnalysis();
+
+    // Etapa 2: Atualizar Info do Modelo (se mudou)
+    Logger.log('ℹ️ Verificando info do modelo...');
+    updateModelInfoIfChanged();
+
+    Logger.log('✅ Relatórios diários concluídos com sucesso');
+
+  } catch (error) {
+    Logger.log(`❌ Erro nos relatórios diários: ${error.message}`);
+    Logger.log(error.stack);
+
+    // Enviar email de erro
+    const email = Session.getEffectiveUser().getEmail();
+    MailApp.sendEmail({
+      to: email,
+      subject: '❌ Erro Smart Ads ML - Relatórios Diários',
+      body: `Erro nos relatórios de ${new Date().toLocaleString()}:\n\n${error.message}\n\n${error.stack}`
+    });
+  }
+}
+
+// =============================================================================
+// FUNÇÃO LEGADA - MANTER POR COMPATIBILIDADE
+// =============================================================================
+
+/**
+ * @deprecated Use execute3HourUpdate() e executeDailyReports() separadamente
+ * Mantida por compatibilidade com triggers antigos
  */
 function executeDailyMLUpdate() {
   try {
@@ -490,29 +692,63 @@ function updateModelInfoIfChanged() {
 // =============================================================================
 
 /**
- * Cria trigger diário para executar à meia-noite (00:00)
+ * Cria NOVA ARQUITETURA de triggers:
+ * - 8 triggers para execute3HourUpdate() (00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00, 21:00)
+ * - 1 trigger para executeDailyReports() (00:00)
  */
 function createDailyTrigger() {
-  ScriptApp.newTrigger('executeDailyMLUpdate')
+  // Remover triggers antigos primeiro
+  removeDailyTrigger();
+
+  Logger.log('🔧 Criando NOVA arquitetura de triggers...');
+
+  // 1️⃣ TRIGGERS A CADA 3H: execute3HourUpdate()
+  const hours3h = [0, 3, 6, 9, 12, 15, 18, 21];
+
+  for (const hour of hours3h) {
+    ScriptApp.newTrigger('execute3HourUpdate')
+      .timeBased()
+      .atHour(hour)
+      .everyDays(1)
+      .create();
+
+    Logger.log(`✅ Trigger 3h criado para ${hour}:00 → execute3HourUpdate()`);
+  }
+
+  // 2️⃣ TRIGGER DIÁRIO: executeDailyReports() às 00:00
+  ScriptApp.newTrigger('executeDailyReports')
     .timeBased()
-    .atHour(0)  // Meia-noite (00:00)
+    .atHour(0)
     .everyDays(1)
     .create();
 
-  Logger.log('✅ Trigger diário criado para 00:00 (meia-noite)');
+  Logger.log(`✅ Trigger diário criado para 00:00 → executeDailyReports()`);
+
+  Logger.log('✅ Nova arquitetura configurada: 8 triggers de 3h + 1 trigger diário');
 }
 
 /**
- * Remove trigger diário existente
+ * Remove TODOS os triggers antigos (legacy + novos)
  */
 function removeDailyTrigger() {
   const triggers = ScriptApp.getProjectTriggers();
+  let removedCount = 0;
 
   for (const trigger of triggers) {
-    if (trigger.getHandlerFunction() === 'executeDailyMLUpdate') {
+    const funcName = trigger.getHandlerFunction();
+
+    // Remover triggers legados E novos
+    if (funcName === 'executeDailyMLUpdate' ||
+        funcName === 'execute3HourUpdate' ||
+        funcName === 'executeDailyReports') {
       ScriptApp.deleteTrigger(trigger);
-      Logger.log('🗑️ Trigger diário removido');
+      removedCount++;
+      Logger.log(`🗑️ Trigger removido: ${funcName}`);
     }
+  }
+
+  if (removedCount > 0) {
+    Logger.log(`✅ ${removedCount} trigger(s) removido(s)`);
   }
 }
 
@@ -1058,25 +1294,23 @@ function sendCapiBatchForD10Leads(startDate, endDate) {
     const emailColIndex = headers.indexOf('E-mail');
     const phoneColIndex = headers.indexOf('Telefone');
     const scoreColIndex = headers.indexOf('lead_score');
-    const decilColIndex = headers.indexOf('decil');
 
     // Coletar TODOS os leads do período (D1-D10) com TODOS os campos da pesquisa
     const allLeads = [];
     for (let i = 1; i < values.length; i++) {
       const row = values[i];
       const leadDate = new Date(row[dataColIndex]);
-      const decil = row[decilColIndex];
       const leadScore = row[scoreColIndex];
       const email = row[emailColIndex];
 
       // Lead está no período (qualquer decil)
       if (leadDate >= startDate && leadDate < endDate) {
         // Criar objeto com TODOS os campos da planilha (nome exato das colunas)
+        // Nota: decil será calculado pela API usando thresholds fixos do modelo
         const leadData = {
           email: email,
           phone: row[phoneColIndex],
           lead_score: leadScore,
-          decil: decil,
           data: Utilities.formatDate(leadDate, Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ss")
         };
 

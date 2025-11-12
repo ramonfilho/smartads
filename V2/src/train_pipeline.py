@@ -44,17 +44,21 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 
-def main(initial_matching='email_telefone', save_files=False, tune_hyperparams=False, grid_size='small', split_method='temporal', use_guru_only=None):
+def main(initial_matching='email_telefone', save_files=False, tune_hyperparams=False, grid_size='small', split_method='temporal', use_guru_only=None, set_active=False):
     """Executa pipeline de treino completo.
 
     Args:
         initial_matching: Método de matching inicial na célula 15
                          ('email_only', 'email_telefone', 'variantes', 'robusto' ou 'validation')
-        split_method: Método de split ('temporal' para 70% dos dias, 'stratified' para 70% dos registros)
+        split_method: Método de split do train/test
+                     - 'temporal': 70% dos DIAS para treino (split clássico por período)
+                     - 'temporal_leads': 70% dos LEADS para treino (ordenados por data, test set mais recente)
+                     - 'stratified': 70% dos registros com stratified split por pessoa
         save_files: Se True, salva arquivos locais em files/{timestamp}
         tune_hyperparams: Se True, executa hyperparameter tuning antes do treino
         grid_size: Tamanho do grid search ('small', 'medium', 'large')
         use_guru_only: Se True, usa apenas GURU. Se False, usa GURU+TMB. Se None, usa valor do config.
+        set_active: Se True, atualiza configs/active_model.yaml com este modelo (requer save_files=True)
     """
 
     print("\n" + "=" * 80)
@@ -526,7 +530,8 @@ def main(initial_matching='email_telefone', save_files=False, tune_hyperparams=F
         save_files=save_files,
         matching_method=initial_matching,
         custom_hyperparams=melhores_params,
-        split_method=split_method
+        split_method=split_method,
+        set_active=set_active
     )
 
 
@@ -559,9 +564,9 @@ if __name__ == "__main__":
     parser.add_argument(
         '--split-method',
         type=str,
-        choices=['temporal', 'stratified'],
+        choices=['temporal', 'temporal_leads', 'stratified'],
         default='temporal',
-        help='Método de split: temporal (70%% dos dias) ou stratified (70%% dos registros) - padrão: temporal'
+        help='Método de split: temporal (70%% dos dias), temporal_leads (70%% dos leads), ou stratified (70%% dos registros) - padrão: temporal'
     )
     parser.add_argument(
         '--use-guru-only',
@@ -569,6 +574,11 @@ if __name__ == "__main__":
         choices=['true', 'false'],
         default=None,
         help='Filtro de produtos: true (apenas GURU), false (GURU+TMB) - padrão: usar config'
+    )
+    parser.add_argument(
+        '--set-active',
+        action='store_true',
+        help='Definir este modelo como ativo em configs/active_model.yaml (requer --save-files)'
     )
 
     args = parser.parse_args()
@@ -584,5 +594,6 @@ if __name__ == "__main__":
         tune_hyperparams=args.tune_hyperparams,
         grid_size=args.grid_size,
         split_method=args.split_method,
-        use_guru_only=use_guru_only
+        use_guru_only=use_guru_only,
+        set_active=args.set_active
     )

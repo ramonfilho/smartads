@@ -1,0 +1,219 @@
+{
+  "model_info": {
+    "model_name": "v1_devclub_rf_stratified_single",
+    "model_type": "RandomForestClassifier",
+    "split_type": "stratified",
+    "library": "scikit-learn",
+    "library_version": "1.6.1",
+    "trained_at": "2025-11-11T13:41:57.343916",
+    "training_duration_info": "Trained with stratified split"
+  },
+  "hyperparameters": {
+    "n_estimators": 300,
+    "max_depth": 8,
+    "min_samples_split": 2,
+    "min_samples_leaf": 1,
+    "max_features": "sqrt",
+    "class_weight": "balanced",
+    "random_state": 42,
+    "n_jobs": -1
+  },
+  "training_data": {
+    "dataset_name": "dataset_devclub_rf_stratified",
+    "total_records": 108700,
+    "training_records": 75950,
+    "test_records": 32750,
+    "features_count": 57,
+    "target_distribution": {
+      "training_positive_rate": 0.006978275181040158,
+      "test_positive_rate": 0.007297709923664122,
+      "training_positive_count": 530,
+      "test_positive_count": 239
+    },
+    "temporal_split": {
+      "period_start": "2025-03-01",
+      "period_end": "2025-11-04",
+      "cut_date": "N/A (stratified)",
+      "training_days": 0,
+      "total_days": 248
+    }
+  },
+  "performance_metrics": {
+    "auc": 0.697896778805088,
+    "top3_decil_concentration": 59.84,
+    "top5_decil_concentration": 78.26,
+    "lift_maximum": 2.63,
+    "monotonia_percentage": 77.77777777777779,
+    "baseline_conversion_rate": 0.007297709923664122
+  },
+  "decil_analysis": {
+    "decil_1": {
+      "total_leads": 3276,
+      "conversions": 7,
+      "conversion_rate": 0.0021,
+      "pct_total_conversions": 2.93,
+      "lift": 0.29
+    },
+    "decil_2": {
+      "total_leads": 3275,
+      "conversions": 9,
+      "conversion_rate": 0.0027,
+      "pct_total_conversions": 3.77,
+      "lift": 0.37
+    },
+    "decil_3": {
+      "total_leads": 3274,
+      "conversions": 7,
+      "conversion_rate": 0.0021,
+      "pct_total_conversions": 2.93,
+      "lift": 0.29
+    },
+    "decil_4": {
+      "total_leads": 3275,
+      "conversions": 19,
+      "conversion_rate": 0.0058,
+      "pct_total_conversions": 7.95,
+      "lift": 0.79
+    },
+    "decil_5": {
+      "total_leads": 3276,
+      "conversions": 10,
+      "conversion_rate": 0.0031,
+      "pct_total_conversions": 4.18,
+      "lift": 0.42
+    },
+    "decil_6": {
+      "total_leads": 3274,
+      "conversions": 22,
+      "conversion_rate": 0.0067,
+      "pct_total_conversions": 9.21,
+      "lift": 0.92
+    },
+    "decil_7": {
+      "total_leads": 3275,
+      "conversions": 22,
+      "conversion_rate": 0.0067,
+      "pct_total_conversions": 9.21,
+      "lift": 0.92
+    },
+    "decil_8": {
+      "total_leads": 3275,
+      "conversions": 34,
+      "conversion_rate": 0.0104,
+      "pct_total_conversions": 14.23,
+      "lift": 1.43
+    },
+    "decil_9": {
+      "total_leads": 3276,
+      "conversions": 46,
+      "conversion_rate": 0.014,
+      "pct_total_conversions": 19.25,
+      "lift": 1.92
+    },
+    "decil_10": {
+      "total_leads": 3274,
+      "conversions": 63,
+      "conversion_rate": 0.0192,
+      "pct_total_conversions": 26.36,
+      "lift": 2.63
+    }
+  },
+  "decil_thresholds": {
+    "method": "exact_from_test_set",
+    "calculated_at": "2025-11-11T13:41:57.344633",
+    "validation_metrics": {
+      "max_diferenca_absoluta": 0,
+      "media_diferenca_absoluta": 0.0,
+      "max_diferenca_percentual": 0.0
+    },
+    "thresholds": {
+      "D1": {
+        "threshold_min": 0.034383530195944555,
+        "threshold_max": 0.13008101341944034,
+        "count": 3276,
+        "mean_probability": 0.09219288901240731,
+        "std_probability": 0.02149747697828482
+      },
+      "D2": {
+        "threshold_min": 0.13009099775240174,
+        "threshold_max": 0.1945271387633033,
+        "count": 3275,
+        "mean_probability": 0.16527951801288626,
+        "std_probability": 0.018375813629899308
+      },
+      "D3": {
+        "threshold_min": 0.19453621854027559,
+        "threshold_max": 0.23534207901647788,
+        "count": 3274,
+        "mean_probability": 0.21537477274861822,
+        "std_probability": 0.011767378799615445
+      },
+      "D4": {
+        "threshold_min": 0.23534973499671427,
+        "threshold_max": 0.27138817960485956,
+        "count": 3275,
+        "mean_probability": 0.2536811644483028,
+        "std_probability": 0.010268882745523223
+      },
+      "D5": {
+        "threshold_min": 0.27141719480860077,
+        "threshold_max": 0.3061736801917813,
+        "count": 3276,
+        "mean_probability": 0.28832054792114703,
+        "std_probability": 0.01017559264669217
+      },
+      "D6": {
+        "threshold_min": 0.30617506657730575,
+        "threshold_max": 0.3449691343920241,
+        "count": 3274,
+        "mean_probability": 0.32485552370113124,
+        "std_probability": 0.011011151542830212
+      },
+      "D7": {
+        "threshold_min": 0.34497750343379646,
+        "threshold_max": 0.39638699391893256,
+        "count": 3275,
+        "mean_probability": 0.36887080960821034,
+        "std_probability": 0.014766383582418788
+      },
+      "D8": {
+        "threshold_min": 0.39638757602799213,
+        "threshold_max": 0.4620838590074779,
+        "count": 3275,
+        "mean_probability": 0.42748301778152453,
+        "std_probability": 0.018527094469409398
+      },
+      "D9": {
+        "threshold_min": 0.46209895999742695,
+        "threshold_max": 0.5439791599047765,
+        "count": 3276,
+        "mean_probability": 0.5011756892037609,
+        "std_probability": 0.02395689997099527
+      },
+      "D10": {
+        "threshold_min": 0.5439983035151682,
+        "threshold_max": 0.8427383249776833,
+        "count": 3274,
+        "mean_probability": 0.6077457675767888,
+        "std_probability": 0.04754986988480922
+      }
+    },
+    "usage_notes": {
+      "description": "Use these thresholds for consistent decil assignment in production",
+      "benefits": [
+        "Consistent scoring across different batch sizes",
+        "Enables high-frequency CAPI batching (every 2-3 hours)",
+        "Prevents value instability in Meta algorithm"
+      ],
+      "implementation": "Use atribuir_decil_por_threshold(score, thresholds) from src.model.decil_thresholds"
+    }
+  },
+  "production_notes": {
+    "use_case": "Lead scoring for DevClub products with budget allocation optimization",
+    "prediction_interpretation": "Higher probability = higher priority for budget allocation",
+    "calibration_status": "Not calibrated - use for ranking only",
+    "recommended_deployment": "Batch scoring with validation on future launches",
+    "monitoring_requirements": "Track performance degradation and feature drift",
+    "model_limitations": "Monotonia at 77.8% - investigate if < 80%"
+  }
+}

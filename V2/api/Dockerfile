@@ -33,7 +33,14 @@ COPY ./api/ ./api/
 # Copiar módulos src necessários
 COPY ./src/ ./src/
 
-# Copiar arquivos do modelo
+# Copiar configurações
+COPY ./configs/ ./configs/
+
+# Copiar APENAS o modelo ativo (não todos os modelos antigos)
+# Isso reduz o tamanho da imagem de ~47MB para ~11MB
+COPY ./files/20251111_212345/ ./files/20251111_212345/
+
+# Copiar arquivos do modelo (legacy - manter por compatibilidade)
 COPY ./arquivos_modelo/ ./arquivos_modelo/
 
 # Definir variáveis de ambiente

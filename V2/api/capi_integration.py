@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # CONFIGURAÇÃO
 # =============================================================================
 
-PIXEL_ID = os.getenv('META_PIXEL_ID', '343395511916926')  # Pixel de BM - Campanhas
+PIXEL_ID = os.getenv('META_PIXEL_ID', '241752320666130')  # Pixel de BM - Campanhas
 ACCESS_TOKEN = os.getenv('META_ACCESS_TOKEN')  # Obrigatório via env var
 
 # Inicializar API do Facebook (se token disponível)

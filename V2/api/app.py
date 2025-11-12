@@ -92,11 +92,12 @@ app.add_middleware(
 pipeline = None
 
 def initialize_pipeline():
-    """Inicializa o pipeline de lead scoring"""
+    """Inicializa o pipeline de lead scoring com modelo ativo do configs/active_model.yaml"""
     global pipeline
     try:
         logger.info("Inicializando pipeline de Lead Scoring...")
-        pipeline = LeadScoringPipeline(model_name='v1_devclub_rf_temporal_single')
+        # Usar modelo ativo do configs/active_model.yaml (não passar model_name)
+        pipeline = LeadScoringPipeline()
         logger.info("Pipeline inicializado com sucesso!")
         return True
     except Exception as e:
@@ -480,30 +481,81 @@ async def process_daily_batch_capi(
     db: Session = Depends(get_db)
 ):
     """
-    Processa batch diário de CAPI
+    Processa batch de CAPI com thresholds fixos
     Envia 2 eventos para cada lead:
     - LeadQualified (com valor): TODOS os leads (D1-D10)
     - LeadQualifiedHighQuality (sem valor): Apenas D8-D10
 
-    Chamado pelo Apps Script às 00:00 após classificação ML
+    Chamado pelo Apps Script a cada 3 horas após classificação ML
     """
     try:
         logger.info(f"📊 Processando batch CAPI: {len(request.leads)} leads (D1-D10)")
 
-        # Extrair emails dos leads
-        emails = [lead['email'] for lead in request.leads if 'email' in lead]
+        # ====================================================================
+        # ETAPA 1: CARREGAR THRESHOLDS FIXOS DO MODELO ATIVO
+        # ====================================================================
+        from src.model.decil_thresholds import atribuir_decis_batch
 
-        if not emails:
-            logger.warning("⚠️ Nenhum email encontrado nos leads")
+        # Carregar thresholds do modelo ativo (via pipeline global)
+        thresholds = pipeline.predictor.metadata.get('decil_thresholds', {}).get('thresholds')
+
+        if not thresholds:
+            logger.error("❌ Thresholds não encontrados no metadata do modelo!")
+            raise HTTPException(
+                status_code=500,
+                detail="Thresholds não configurados no modelo. Retreine o modelo com --save-files."
+            )
+
+        logger.info(f"   ✅ Thresholds carregados: {pipeline.predictor.metadata['model_info']['model_name']}")
+
+        # ====================================================================
+        # ETAPA 2: CALCULAR DECIS USANDO THRESHOLDS FIXOS
+        # ====================================================================
+        # Criar DataFrame com lead_scores
+        leads_df = pd.DataFrame([
+            {
+                'email': lead['email'],
+                'lead_score': float(lead['lead_score']) if lead['lead_score'] not in [None, '', 'null'] else 0.0
+            }
+            for lead in request.leads if 'email' in lead and 'lead_score' in lead
+        ])
+
+        if len(leads_df) == 0:
+            logger.warning("⚠️ Nenhum lead com email e lead_score encontrado")
             return {
                 "status": "error",
-                "message": "Nenhum email encontrado",
+                "message": "Nenhum lead válido encontrado",
                 "total": 0,
                 "success": 0,
                 "errors": 0
             }
 
-        # Buscar dados CAPI do banco
+        # Análise de scores
+        logger.info(f"   📊 Análise de scores:")
+        logger.info(f"      - Total de leads: {len(leads_df)}")
+        logger.info(f"      - Valores únicos: {leads_df['lead_score'].nunique()}")
+        logger.info(f"      - Score min: {leads_df['lead_score'].min():.4f}")
+        logger.info(f"      - Score max: {leads_df['lead_score'].max():.4f}")
+        logger.info(f"      - Score mean: {leads_df['lead_score'].mean():.4f}")
+        logger.info(f"      - Score std: {leads_df['lead_score'].std():.4f}")
+
+        # Atribuir decis usando thresholds fixos
+        logger.info(f"   🔄 Atribuindo decis usando thresholds fixos...")
+        leads_df['decil'] = atribuir_decis_batch(
+            leads_df['lead_score'].values,
+            thresholds
+        )
+
+        # Criar mapeamento email → decil
+        decil_map = dict(zip(leads_df['email'], leads_df['decil']))
+
+        logger.info(f"   ✅ Decis calculados para {len(decil_map)} leads (thresholds fixos)")
+        logger.info(f"   📊 Distribuição por decil: {leads_df['decil'].value_counts().sort_index().to_dict()}")
+
+        # ====================================================================
+        # ETAPA 3: BUSCAR DADOS CAPI DO BANCO
+        # ====================================================================
+        emails = list(decil_map.keys())
         leads_capi = get_leads_by_emails(db, emails)
 
         # Criar mapeamento email → dados CAPI
@@ -511,12 +563,17 @@ async def process_daily_batch_capi(
 
         logger.info(f"   {len(capi_map)} leads encontrados no banco CAPI")
 
-        # Enriquecer todos os leads com dados CAPI
+        # ====================================================================
+        # ETAPA 4: ENRIQUECER LEADS COM DECIS E DADOS CAPI
+        # ====================================================================
         enriched_leads = []
         for lead in request.leads:
             email = lead.get('email')
             if not email:
                 continue
+
+            # Obter decil calculado
+            decil = str(decil_map.get(email, 'D1'))  # Default D1 se não encontrado
 
             capi_data = capi_map.get(email)
 
@@ -525,7 +582,7 @@ async def process_daily_batch_capi(
                 'email': email,
                 'phone': lead.get('phone'),
                 'lead_score': lead['lead_score'],
-                'decil': lead['decil'],
+                'decil': decil,
                 'event_id': capi_data.event_id if capi_data else f"lead_{int(time.time())}_{email[:8]}",
                 'fbp': capi_data.fbp if capi_data else None,
                 'fbc': capi_data.fbc if capi_data else None,
