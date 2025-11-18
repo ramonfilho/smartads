@@ -24,6 +24,7 @@ requests==2.31.0
 
 # Database
 psycopg2-binary==2.9.9
+pg8000==1.30.3
 sqlalchemy==2.0.23
 
 # Meta Conversions API
@@ -35,3 +36,6 @@ google-auth-oauthlib==1.2.0
 google-auth-httplib2==0.2.0
 google-api-python-client==2.110.0
 gspread==5.12.3
+
+# BigQuery
+google-cloud-bigquery==3.14.1

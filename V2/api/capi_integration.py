@@ -14,6 +14,7 @@ from facebook_business.adobjects.serverside.event_request import EventRequest
 from facebook_business.adobjects.serverside.user_data import UserData
 from facebook_business.adobjects.serverside.custom_data import CustomData
 from facebook_business.adobjects.serverside.action_source import ActionSource
+from facebook_business.adobjects.serverside.gender import Gender
 from api.business_config import PRODUCT_VALUE, CONVERSION_RATES
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,116 @@ logger = logging.getLogger(__name__)
 
 PIXEL_ID = os.getenv('META_PIXEL_ID', '241752320666130')  # Pixel de BM - Campanhas
 ACCESS_TOKEN = os.getenv('META_ACCESS_TOKEN')  # Obrigatório via env var
+
+# =============================================================================
+# MAPEAMENTO DDD → ESTADO (Brasil)
+# =============================================================================
+
+DDD_TO_STATE = {
+    # São Paulo
+    '11': 'SP', '12': 'SP', '13': 'SP', '14': 'SP', '15': 'SP', '16': 'SP', '17': 'SP', '18': 'SP', '19': 'SP',
+    # Rio de Janeiro
+    '21': 'RJ', '22': 'RJ', '24': 'RJ',
+    # Espírito Santo
+    '27': 'ES', '28': 'ES',
+    # Minas Gerais
+    '31': 'MG', '32': 'MG', '33': 'MG', '34': 'MG', '35': 'MG', '37': 'MG', '38': 'MG',
+    # Paraná
+    '41': 'PR', '42': 'PR', '43': 'PR', '44': 'PR', '45': 'PR', '46': 'PR',
+    # Santa Catarina
+    '47': 'SC', '48': 'SC', '49': 'SC',
+    # Rio Grande do Sul
+    '51': 'RS', '53': 'RS', '54': 'RS', '55': 'RS',
+    # Distrito Federal
+    '61': 'DF',
+    # Goiás
+    '62': 'GO', '64': 'GO',
+    # Tocantins
+    '63': 'TO',
+    # Mato Grosso
+    '65': 'MT', '66': 'MT',
+    # Mato Grosso do Sul
+    '67': 'MS',
+    # Acre
+    '68': 'AC',
+    # Rondônia
+    '69': 'RO',
+    # Bahia
+    '71': 'BA', '73': 'BA', '74': 'BA', '75': 'BA', '77': 'BA',
+    # Sergipe
+    '79': 'SE',
+    # Pernambuco
+    '81': 'PE', '87': 'PE',
+    # Alagoas
+    '82': 'AL',
+    # Paraíba
+    '83': 'PB',
+    # Rio Grande do Norte
+    '84': 'RN',
+    # Ceará
+    '85': 'CE', '88': 'CE',
+    # Piauí
+    '86': 'PI', '89': 'PI',
+    # Maranhão
+    '98': 'MA', '99': 'MA',
+    # Pará
+    '91': 'PA', '93': 'PA', '94': 'PA',
+    # Amazonas
+    '92': 'AM', '97': 'AM',
+    # Roraima
+    '95': 'RR',
+    # Amapá
+    '96': 'AP',
+}
+
+def get_state_from_phone(phone: str) -> Optional[str]:
+    """
+    Extrai o estado brasileiro a partir do DDD do telefone
+
+    Args:
+        phone: Telefone (pode ter +55, espaços, etc)
+
+    Returns:
+        Sigla do estado (SP, RJ, etc) ou None se não encontrar
+    """
+    if not phone:
+        return None
+
+    # Remove tudo que não é número
+    digits = ''.join(filter(str.isdigit, phone))
+
+    # Se começar com 55 (código Brasil), remove
+    if digits.startswith('55') and len(digits) > 10:
+        digits = digits[2:]
+
+    # O DDD são os 2 primeiros dígitos
+    if len(digits) >= 2:
+        ddd = digits[:2]
+        return DDD_TO_STATE.get(ddd)
+
+    return None
+
+def normalize_gender(gender_str: str) -> Optional[Gender]:
+    """
+    Normaliza o gênero para o formato Meta CAPI (enum Gender)
+
+    Args:
+        gender_str: Resposta do formulário ("Masculino", "Feminino", etc)
+
+    Returns:
+        Gender.MALE para masculino, Gender.FEMALE para feminino, None para outros
+    """
+    if not gender_str:
+        return None
+
+    gender_lower = str(gender_str).lower().strip()
+
+    if gender_lower in ['masculino', 'homem', 'male', 'm']:
+        return Gender.MALE
+    elif gender_lower in ['feminino', 'mulher', 'female', 'f']:
+        return Gender.FEMALE
+
+    return None
 
 # Inicializar API do Facebook (se token disponível)
 if ACCESS_TOKEN:
@@ -46,6 +157,8 @@ def hash_data(data: str) -> str:
 def send_lead_qualified_with_value(
     email: str,
     phone: Optional[str],
+    first_name: Optional[str],
+    last_name: Optional[str],
     lead_score: float,
     decil: str,
     event_id: str,
@@ -93,10 +206,40 @@ def send_lead_qualified_with_value(
         return {"status": "error", "message": "ACCESS_TOKEN não configurado"}
 
     try:
+        # Extrair dados adicionais para melhor matching
+        # 1. Estado: inferir do DDD do telefone
+        state = get_state_from_phone(phone)
+
+        # 2. País: Brasil como padrão (telefones brasileiros)
+        country = 'br' if phone else None
+
+        # 3. Cidade, CEP e Gênero: do survey_data se disponível
+        city = None
+        zip_code = None
+        gender = None
+
+        if survey_data:
+            city = survey_data.get('cidade')
+            zip_code = survey_data.get('cep')
+            # Gênero: normalizar para formato Meta (m/f)
+            # Nota: app.py monta survey_data com chave 'genero' (não 'O seu gênero:')
+            gender_raw = survey_data.get('genero')
+            gender = normalize_gender(gender_raw)
+
         # UserData (dados do usuário hashados)
+        # IMPORTANTE: Esses campos melhoram o Event Quality Score do Meta
         user_data = UserData(
             emails=[hash_data(email)] if email else None,
             phones=[hash_data(phone)] if phone else None,
+            first_names=[hash_data(first_name)] if first_name else None,
+            last_names=[hash_data(last_name)] if last_name else None,
+            # Novos campos para melhorar matching:
+            states=[hash_data(state)] if state else None,
+            cities=[hash_data(city)] if city else None,
+            country_codes=[hash_data(country)] if country else None,
+            zip_codes=[hash_data(zip_code)] if zip_code else None,
+            genders=[gender] if gender else None,
+            # Campos de contexto (não hashados):
             client_ip_address=client_ip,
             client_user_agent=user_agent,
             fbp=fbp,
@@ -174,6 +317,8 @@ def send_lead_qualified_with_value(
 def send_lead_qualified_high_quality(
     email: str,
     phone: Optional[str],
+    first_name: Optional[str],
+    last_name: Optional[str],
     lead_score: float,
     decil: str,
     event_id: str,
@@ -232,10 +377,40 @@ def send_lead_qualified_high_quality(
         return {"status": "error", "message": "ACCESS_TOKEN não configurado"}
 
     try:
+        # Extrair dados adicionais para melhor matching
+        # 1. Estado: inferir do DDD do telefone
+        state = get_state_from_phone(phone)
+
+        # 2. País: Brasil como padrão (telefones brasileiros)
+        country = 'br' if phone else None
+
+        # 3. Cidade, CEP e Gênero: do survey_data se disponível
+        city = None
+        zip_code = None
+        gender = None
+
+        if survey_data:
+            city = survey_data.get('cidade')
+            zip_code = survey_data.get('cep')
+            # Gênero: normalizar para formato Meta (m/f)
+            # Nota: app.py monta survey_data com chave 'genero' (não 'O seu gênero:')
+            gender_raw = survey_data.get('genero')
+            gender = normalize_gender(gender_raw)
+
         # UserData (dados do usuário hashados)
+        # IMPORTANTE: Esses campos melhoram o Event Quality Score do Meta
         user_data = UserData(
             emails=[hash_data(email)] if email else None,
             phones=[hash_data(phone)] if phone else None,
+            first_names=[hash_data(first_name)] if first_name else None,
+            last_names=[hash_data(last_name)] if last_name else None,
+            # Novos campos para melhorar matching:
+            states=[hash_data(state)] if state else None,
+            cities=[hash_data(city)] if city else None,
+            country_codes=[hash_data(country)] if country else None,
+            zip_codes=[hash_data(zip_code)] if zip_code else None,
+            genders=[gender] if gender else None,
+            # Campos de contexto (não hashados):
             client_ip_address=client_ip,
             client_user_agent=user_agent,
             fbp=fbp,
@@ -308,6 +483,8 @@ def send_lead_qualified_high_quality(
 def send_both_lead_events(
     email: str,
     phone: Optional[str],
+    first_name: Optional[str],
+    last_name: Optional[str],
     lead_score: float,
     decil: str,
     event_id: str,
@@ -346,6 +523,8 @@ def send_both_lead_events(
     result_with_value = send_lead_qualified_with_value(
         email=email,
         phone=phone,
+        first_name=first_name,
+        last_name=last_name,
         lead_score=lead_score,
         decil=decil,
         event_id=event_id,
@@ -363,6 +542,8 @@ def send_both_lead_events(
     result_high_quality = send_lead_qualified_high_quality(
         email=email,
         phone=phone,
+        first_name=first_name,
+        last_name=last_name,
         lead_score=lead_score,
         decil=decil,
         event_id=event_id,
@@ -387,6 +568,8 @@ def send_both_lead_events(
 def send_purchase_event(
     email: str,
     phone: Optional[str],
+    first_name: Optional[str],
+    last_name: Optional[str],
     valor_venda: float,
     original_event_id: str,
     fbp: Optional[str],
@@ -421,6 +604,8 @@ def send_purchase_event(
         user_data = UserData(
             emails=[hash_data(email)] if email else None,
             phones=[hash_data(phone)] if phone else None,
+            first_names=[hash_data(first_name)] if first_name else None,
+            last_names=[hash_data(last_name)] if last_name else None,
             client_ip_address=client_ip,
             client_user_agent=user_agent,
             fbp=fbp,
@@ -514,6 +699,8 @@ def send_batch_events(leads: List[Dict]) -> Dict:
         result = send_both_lead_events(
             email=lead['email'],
             phone=lead.get('phone'),
+            first_name=lead.get('first_name'),
+            last_name=lead.get('last_name'),
             lead_score=lead['lead_score'],
             decil=lead['decil'],
             event_id=lead['event_id'],

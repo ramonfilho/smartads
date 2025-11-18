@@ -80,12 +80,20 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Adicionar CORS para Google Apps Script
+# Adicionar CORS para Google Apps Script e Landing Pages
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://script.google.com", "https://script.googleusercontent.com"],
-    allow_methods=["POST", "GET"],
+    allow_origins=[
+        "https://script.google.com",
+        "https://script.googleusercontent.com",
+        "http://localhost:8001",
+        "http://localhost:8000",
+        "https://lp.devclub.com.br",
+        "*"  # Permitir todos (TEMPORÁRIO - em produção especificar domínios)
+    ],
+    allow_methods=["POST", "GET", "OPTIONS"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
 
 # Variável global para o pipeline
@@ -358,7 +366,9 @@ async def predict_batch_csv(file: UploadFile = File(...)):
 class LeadCaptureRequest(BaseModel):
     """Dados capturados do lead no frontend"""
     # Dados pessoais
-    name: str
+    name: str  # Nome completo (mantido para compatibilidade)
+    first_name: Optional[str] = None  # Primeiro nome (para CAPI)
+    last_name: Optional[str] = None   # Sobrenome (para CAPI)
     email: str
     phone: Optional[str] = None
 
@@ -397,6 +407,8 @@ async def webhook_lead_capture(
         lead_dict = {
             'email': lead_data.email,
             'name': lead_data.name,
+            'first_name': lead_data.first_name,
+            'last_name': lead_data.last_name,
             'phone': lead_data.phone,
             'fbp': lead_data.fbp,
             'fbc': lead_data.fbc,
@@ -470,6 +482,45 @@ async def get_recent_leads_endpoint(limit: int = 10, db: Session = Depends(get_d
         raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
 
 # === CAPI BATCH PROCESSING ===
+
+def _safe_parse_timestamp(data_value) -> int:
+    """
+    Parse timestamp de forma segura, tratando casos de erro
+
+    Args:
+        data_value: Valor da data (pode ser int, float, string, ou "#ERROR!")
+
+    Returns:
+        int: Timestamp UNIX (segundos desde epoch)
+    """
+    try:
+        # Caso 1: Já é timestamp numérico
+        if isinstance(data_value, (int, float)):
+            return int(data_value)
+
+        # Caso 2: String vazia ou None
+        if not data_value or str(data_value).strip() == '':
+            logger.warning("⚠️ Data vazia, usando timestamp atual")
+            return int(time.time())
+
+        # Caso 3: String "#ERROR!" do Google Sheets
+        if str(data_value).strip() == '#ERROR!':
+            logger.warning("⚠️ Data com erro (#ERROR!), usando timestamp atual")
+            return int(time.time())
+
+        # Caso 4: String de data válida
+        parsed_date = pd.to_datetime(data_value, errors='coerce')
+
+        # Se parsing falhou (NaT - Not a Time)
+        if pd.isna(parsed_date):
+            logger.warning(f"⚠️ Não foi possível parsear data '{data_value}', usando timestamp atual")
+            return int(time.time())
+
+        return int(parsed_date.timestamp())
+
+    except Exception as e:
+        logger.warning(f"⚠️ Erro ao parsear timestamp '{data_value}': {str(e)}, usando timestamp atual")
+        return int(time.time())
 
 class CapiBatchRequest(BaseModel):
     """Request para processamento batch CAPI"""
@@ -559,7 +610,17 @@ async def process_daily_batch_capi(
         leads_capi = get_leads_by_emails(db, emails)
 
         # Criar mapeamento email → dados CAPI
-        capi_map = {lead.email: lead for lead in leads_capi}
+        # Prioriza registros com first_name preenchido (evita sobrescrever com registro incompleto)
+        capi_map = {}
+        for lead in leads_capi:
+            existing = capi_map.get(lead.email)
+            if existing is None:
+                # Primeiro registro para este email
+                capi_map[lead.email] = lead
+            elif lead.first_name and not existing.first_name:
+                # Novo registro tem first_name, existente não tem - usar o novo
+                capi_map[lead.email] = lead
+            # Caso contrário, manter o existente
 
         logger.info(f"   {len(capi_map)} leads encontrados no banco CAPI")
 
@@ -577,19 +638,34 @@ async def process_daily_batch_capi(
 
             capi_data = capi_map.get(email)
 
+            # Extrair first_name e last_name do campo name se não estiverem preenchidos
+            first_name = None
+            last_name = None
+            if capi_data:
+                if capi_data.first_name:
+                    first_name = capi_data.first_name
+                    last_name = capi_data.last_name
+                elif capi_data.name:
+                    # Fallback: extrair do nome completo
+                    name_parts = capi_data.name.strip().split(' ', 1)
+                    first_name = name_parts[0]
+                    last_name = name_parts[1] if len(name_parts) > 1 else None
+
             # Montar dados para CAPI
             lead_capi = {
                 'email': email,
                 'phone': lead.get('phone'),
+                'first_name': first_name,
+                'last_name': last_name,
                 'lead_score': lead['lead_score'],
                 'decil': decil,
-                'event_id': capi_data.event_id if capi_data else f"lead_{int(time.time())}_{email[:8]}",
+                'event_id': capi_data.event_id if capi_data else f"lead_{int(time.time())}_{str(email)[:8]}",
                 'fbp': capi_data.fbp if capi_data else None,
                 'fbc': capi_data.fbc if capi_data else None,
                 'user_agent': capi_data.user_agent if capi_data else None,
                 'client_ip': capi_data.client_ip if capi_data else None,
                 'event_source_url': capi_data.event_source_url if capi_data else None,
-                'event_timestamp': int(pd.to_datetime(lead['data']).timestamp()) if 'data' in lead else int(time.time()),
+                'event_timestamp': _safe_parse_timestamp(lead.get('data')),
 
                 # NOVO: Dados da pesquisa (enriquecem targeting da Meta)
                 'survey_data': {
@@ -614,6 +690,16 @@ async def process_daily_batch_capi(
 
         logger.info(f"   {len(enriched_leads)} leads enriquecidos para envio CAPI")
 
+        # Logging de qualidade dos dados
+        leads_with_fbp = len([l for l in enriched_leads if l.get('fbp')])
+        leads_with_fbc = len([l for l in enriched_leads if l.get('fbc')])
+        leads_with_both = len([l for l in enriched_leads if l.get('fbp') and l.get('fbc')])
+
+        logger.info(f"   📊 Qualidade dos dados CAPI:")
+        logger.info(f"      - Com FBP: {leads_with_fbp}/{len(enriched_leads)} ({leads_with_fbp/len(enriched_leads)*100:.1f}%)")
+        logger.info(f"      - Com FBC: {leads_with_fbc}/{len(enriched_leads)} ({leads_with_fbc/len(enriched_leads)*100:.1f}%)")
+        logger.info(f"      - Com AMBOS: {leads_with_both}/{len(enriched_leads)} ({leads_with_both/len(enriched_leads)*100:.1f}%)")
+
         # Enviar batch
         results = send_batch_events(enriched_leads)
 
@@ -625,11 +711,17 @@ async def process_daily_batch_capi(
             "success": results['success'],
             "errors": results['errors'],
             "leads_with_capi_data": len([l for l in enriched_leads if l['fbp'] or l['fbc']]),
+            "leads_with_fbp": leads_with_fbp,
+            "leads_with_fbc": leads_with_fbc,
+            "leads_with_both": leads_with_both,
+            "capi_data_quality_pct": round(leads_with_both/len(enriched_leads)*100, 1) if enriched_leads else 0,
             "details": results.get('details', [])
         }
 
     except Exception as e:
+        import traceback
         logger.error(f"❌ Erro no batch CAPI: {str(e)}")
+        logger.error(f"Stack trace: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Erro no batch CAPI: {str(e)}")
 
 # === ANÁLISE UTM COM CUSTOS ===
@@ -1563,6 +1655,45 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
     finally:
         if temp_file and os.path.exists(temp_file):
             os.remove(temp_file)
+
+# =============================================================================
+# BIGQUERY SYNC ENDPOINTS
+# =============================================================================
+
+from api.bigquery_sync import sync_postgres_to_bigquery, get_bigquery_stats
+
+@app.post("/bigquery/sync")
+async def bigquery_sync(limit: int = 1000):
+    """
+    Sincroniza dados do PostgreSQL para BigQuery
+
+    Args:
+        limit: Número máximo de registros a sincronizar (default: 1000 últimos)
+
+    Returns:
+        Status e estatísticas do sync
+    """
+    try:
+        result = sync_postgres_to_bigquery(limit=limit)
+        return result
+    except Exception as e:
+        logger.error(f"❌ Erro no sync com BigQuery: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/bigquery/stats")
+async def bigquery_stats():
+    """
+    Estatísticas da tabela leads_capi no BigQuery
+
+    Returns:
+        Estatísticas da tabela (total de registros, fbp/fbc, última atualização)
+    """
+    try:
+        result = get_bigquery_stats()
+        return result
+    except Exception as e:
+        logger.error(f"❌ Erro ao buscar stats do BigQuery: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

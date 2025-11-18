@@ -235,19 +235,31 @@ function execute3HourUpdate() {
   try {
     Logger.log('⚡ Executando atualização 3h - ' + new Date().toISOString());
 
-    // Calcular janela de 3 horas
+    // Calcular janela baseada no horário do trigger (não em now)
+    // Triggers: 00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00, 21:00
     const now = new Date();
-    const threeHoursAgo = new Date(now.getTime() - (3 * 60 * 60 * 1000));
+    const currentHour = now.getHours();
 
-    Logger.log(`📅 Janela: ${threeHoursAgo.toLocaleString()} → ${now.toLocaleString()}`);
+    // Arredondar para o horário do trigger mais próximo (múltiplo de 3)
+    const triggerHour = Math.floor(currentHour / 3) * 3;
 
-    // Etapa 1: Gerar predições (últimas 3h)
+    // Criar timestamps exatos para o bloco de 3h
+    const endTime = new Date(now);
+    endTime.setHours(triggerHour, 0, 0, 0);
+
+    const startTime = new Date(endTime);
+    startTime.setHours(triggerHour - 3, 0, 0, 0);
+
+    Logger.log(`📅 Janela FIXA: ${startTime.toLocaleString()} → ${endTime.toLocaleString()}`);
+    Logger.log(`   (Trigger hora: ${triggerHour}:00, Executado às: ${currentHour}:${now.getMinutes()})`);
+
+    // Etapa 1: Gerar predições (bloco de 3h fixo)
     Logger.log('🔮 Gerando predições...');
-    generatePredictionsFor24hBlock(threeHoursAgo, now);
+    generatePredictionsFor24hBlock(startTime, endTime);
 
-    // Etapa 2: Enviar CAPI (últimas 3h)
+    // Etapa 2: Enviar CAPI (bloco de 3h fixo)
     Logger.log('📤 Enviando batch CAPI...');
-    sendCapiBatchForD10Leads(threeHoursAgo, now);
+    sendCapiBatchForD10Leads(startTime, endTime);
 
     Logger.log('✅ Atualização 3h concluída com sucesso');
 
@@ -534,10 +546,11 @@ function generatePredictionsFor24hBlock(startDate, endDate) {
 
 /**
  * Atualiza análises UTM (1D, 3D, 7D) com custos do Meta Ads
+ * OTIMIZADO: Processa apenas últimos 7 dias para evitar erro 413
  */
 function updateUTMAnalysis() {
   try {
-    Logger.log('📊 Atualizando análises UTM...');
+    Logger.log('📊 Atualizando análises UTM (últimos 7 dias)...');
 
     const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('[LF] Pesquisa');
     if (!sheet) throw new Error('Aba "[LF] Pesquisa" não encontrada');
@@ -551,29 +564,72 @@ function updateUTMAnalysis() {
 
     const headers = values[0];
 
-    // Preparar leads para análise
-    const leads = [];
-    for (let i = 1; i < values.length; i++) {
-      const row = values[i];
-      const leadData = {};
+    // ====================================================================
+    // FILTRO TEMPORAL: Apenas últimos 7 dias (evita payload > 32 MB)
+    // ====================================================================
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
 
-      headers.forEach((header, index) => {
-        leadData[header] = row[index];
-      });
+    Logger.log(`📅 Filtrando leads desde: ${sevenDaysAgo.toLocaleString()}`);
 
-      // Formato esperado pela API: {data: {...}}
-      leads.push({
-        data: leadData
-      });
+    // Encontrar índice da coluna "Data"
+    const dataColumnIndex = headers.indexOf('Data');
+    if (dataColumnIndex === -1) {
+      throw new Error('Coluna "Data" não encontrada na planilha');
     }
 
+    // Preparar leads para análise (APENAS ÚLTIMOS 7 DIAS)
+    const leads = [];
+    let totalLeads = 0;
+    let filteredLeads = 0;
+
+    for (let i = 1; i < values.length; i++) {
+      totalLeads++;
+      const row = values[i];
+
+      // Obter data do lead
+      const leadDate = new Date(row[dataColumnIndex]);
+
+      // Filtrar apenas últimos 7 dias
+      if (leadDate >= sevenDaysAgo) {
+        filteredLeads++;
+        const leadData = {};
+
+        headers.forEach((header, index) => {
+          leadData[header] = row[index];
+        });
+
+        // Formato esperado pela API: {data: {...}}
+        leads.push({
+          data: leadData
+        });
+      }
+    }
+
+    Logger.log(`📋 Total de leads na planilha: ${totalLeads}`);
+    Logger.log(`📋 Leads dos últimos 7 dias: ${filteredLeads}`);
     Logger.log(`📋 Enviando ${leads.length} leads para análise...`);
+
+    if (leads.length === 0) {
+      Logger.log('⚠️ Nenhum lead nos últimos 7 dias para análise');
+      return;
+    }
 
     // Chamar API de análise UTM
     const payload = JSON.stringify({
       leads: leads,
       account_id: META_ACCOUNT_ID
     });
+
+    // Monitoramento: Logar tamanho do payload
+    const payloadSizeMB = (payload.length / 1024 / 1024).toFixed(2);
+    Logger.log(`📦 Tamanho do payload: ${payloadSizeMB} MB`);
+
+    // Alerta se payload estiver muito grande
+    if (payload.length / 1024 / 1024 > 25) {
+      Logger.log(`⚠️ ATENÇÃO: Payload > 25 MB (${payloadSizeMB} MB). Próximo ao limite de 32 MB!`);
+    }
 
     const options = {
       method: 'post',

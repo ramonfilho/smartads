@@ -5,6 +5,7 @@ Gerencia conexão com Cloud SQL e operações CRUD
 
 import os
 from sqlalchemy import create_engine, Column, Integer, String, Text, TIMESTAMP, func
+from sqlalchemy.engine import URL
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from typing import Optional, List, Dict
@@ -27,7 +28,9 @@ class LeadCAPI(Base):
 
     # Identificação
     email = Column(String(255), nullable=False, index=True)
-    name = Column(String(255))
+    name = Column(String(255))  # Nome completo (mantido para compatibilidade)
+    first_name = Column(String(255))  # Primeiro nome (para CAPI)
+    last_name = Column(String(255))   # Sobrenome (para CAPI)
     phone = Column(String(50))
 
     # Dados CAPI
@@ -60,6 +63,8 @@ class LeadCAPI(Base):
             'id': self.id,
             'email': self.email,
             'name': self.name,
+            'first_name': self.first_name,
+            'last_name': self.last_name,
             'phone': self.phone,
             'fbp': self.fbp,
             'fbc': self.fbc,
@@ -87,14 +92,33 @@ def get_database_url() -> str:
 
     Ordem de prioridade:
     1. DATABASE_URL (env var completa)
-    2. Componentes individuais (DB_HOST, DB_NAME, etc)
-    3. Fallback para SQLite local (desenvolvimento)
+    2. CLOUD_SQL_CONNECTION_NAME (Cloud Run via Unix socket)
+    3. Componentes individuais (DB_HOST, DB_NAME, etc)
+    4. Fallback para SQLite local (desenvolvimento)
     """
     # Opção 1: URL completa
     if os.getenv('DATABASE_URL'):
         return os.getenv('DATABASE_URL')
 
-    # Opção 2: Componentes individuais (Cloud SQL)
+    # Opção 2: Cloud SQL via Unix socket (Cloud Run)
+    # Usa pg8000 driver que suporta Unix sockets
+    instance_connection = os.getenv('CLOUD_SQL_CONNECTION_NAME')
+    if instance_connection:
+        db_name = os.getenv('DB_NAME', 'smart_ads')
+        db_user = os.getenv('DB_USER', 'postgres')
+        db_password = os.getenv('DB_PASSWORD', '')
+        unix_socket_path = f"/cloudsql/{instance_connection}"
+        logger.info(f"Conectando ao Cloud SQL via Unix socket: {instance_connection}")
+        # Usar URL.create() para formato correto com pg8000
+        return URL.create(
+            drivername="postgresql+pg8000",
+            username=db_user,
+            password=db_password,
+            database=db_name,
+            query={"unix_sock": f"{unix_socket_path}/.s.PGSQL.5432"}
+        )
+
+    # Opção 3: Componentes individuais (Cloud SQL via IP)
     db_host = os.getenv('DB_HOST')
     db_port = os.getenv('DB_PORT', '5432')
     db_name = os.getenv('DB_NAME', 'smart_ads')
@@ -104,8 +128,9 @@ def get_database_url() -> str:
     if db_host and db_password:
         return f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
 
-    # Opção 3: Fallback SQLite (desenvolvimento/testes)
-    logger.warning("Usando SQLite (desenvolvimento) - Configure PostgreSQL para produção")
+    # Opção 4: Fallback SQLite (desenvolvimento/testes)
+    logger.warning("⚠️ Usando SQLite (desenvolvimento) - Configure PostgreSQL para produção!")
+    logger.warning("⚠️ DADOS SERÃO PERDIDOS A CADA DEPLOY! Configure CLOUD_SQL_CONNECTION_NAME.")
     return "sqlite:////tmp/smart_ads_dev.db"
 
 def get_engine():
@@ -113,7 +138,10 @@ def get_engine():
     database_url = get_database_url()
 
     # SQLite precisa de configuração especial
-    if database_url.startswith('sqlite'):
+    # database_url pode ser string ou objeto URL
+    url_str = str(database_url) if not isinstance(database_url, str) else database_url
+
+    if url_str.startswith('sqlite'):
         return create_engine(
             database_url,
             connect_args={"check_same_thread": False},

@@ -16,11 +16,38 @@ function generateEventID() {
 }
 
 /**
+ * Separa nome completo em primeiro nome e sobrenome
+ */
+function splitName(fullName) {
+  if (!fullName || typeof fullName !== 'string') {
+    return { firstName: null, lastName: null };
+  }
+
+  const trimmedName = fullName.trim();
+  const spaceIndex = trimmedName.indexOf(' ');
+
+  if (spaceIndex === -1) {
+    // Sem espaço = só primeiro nome
+    return { firstName: trimmedName, lastName: null };
+  }
+
+  return {
+    firstName: trimmedName.substring(0, spaceIndex),
+    lastName: trimmedName.substring(spaceIndex + 1).trim()
+  };
+}
+
+/**
  * Envia dados CAPI para nossa API
  */
 async function sendToCapiAPI(name, email, phone, hasComputer, utm, fbp, fbc, eventID, userAgent, eventSourceUrl) {
+  // Separar nome em primeiro nome e sobrenome
+  const { firstName, lastName } = splitName(name);
+
   const payload = {
-    name: name,
+    name: name,  // Nome completo (mantido para compatibilidade)
+    first_name: firstName,  // Primeiro nome (para CAPI)
+    last_name: lastName,    // Sobrenome (para CAPI)
     email: email,
     phone: phone,
     tem_comp: hasComputer,
