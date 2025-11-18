@@ -23,6 +23,7 @@ ENV/
 # Arquivos CSV em experiments (adicionado)
 experiments/**/*.csv
 *.csv
+*.xlsx
 data_dev/
 
 # Distribution / packaging
