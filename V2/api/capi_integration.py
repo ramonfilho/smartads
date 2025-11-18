@@ -114,7 +114,7 @@ def get_state_from_phone(phone: str) -> Optional[str]:
 
     return None
 
-def normalize_gender(gender_str: str) -> Optional[Gender]:
+def normalize_gender(gender_str) -> Optional[Gender]:
     """
     Normaliza o gênero para o formato Meta CAPI (enum Gender)
 
@@ -127,12 +127,20 @@ def normalize_gender(gender_str: str) -> Optional[Gender]:
     if not gender_str:
         return None
 
-    gender_lower = str(gender_str).lower().strip()
+    # Converter para string e validar
+    try:
+        gender_lower = str(gender_str).lower().strip()
 
-    if gender_lower in ['masculino', 'homem', 'male', 'm']:
-        return Gender.MALE
-    elif gender_lower in ['feminino', 'mulher', 'female', 'f']:
-        return Gender.FEMALE
+        # Ignorar valores numéricos ou muito curtos/longos
+        if gender_lower.isdigit() or len(gender_lower) < 1 or len(gender_lower) > 20:
+            return None
+
+        if gender_lower in ['masculino', 'homem', 'male', 'm']:
+            return Gender.MALE
+        elif gender_lower in ['feminino', 'mulher', 'female', 'f']:
+            return Gender.FEMALE
+    except Exception:
+        pass
 
     return None
 
@@ -140,15 +148,20 @@ def normalize_gender(gender_str: str) -> Optional[Gender]:
 if ACCESS_TOKEN:
     FacebookAdsApi.init(access_token=ACCESS_TOKEN)
 
-def hash_data(data: str) -> str:
+def hash_data(data) -> Optional[str]:
     """
     Hash SHA256 de dados pessoais (formato Meta CAPI)
     Remove espaços, lowercase, depois hash
     """
-    if not data:
+    if data is None or data == '':
         return None
-    normalized = str(data).lower().strip()
-    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+    try:
+        normalized = str(data).lower().strip()
+        if not normalized:
+            return None
+        return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+    except Exception:
+        return None
 
 # =============================================================================
 # ENVIO DE EVENTOS

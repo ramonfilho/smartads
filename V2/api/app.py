@@ -638,23 +638,33 @@ async def process_daily_batch_capi(
 
             capi_data = capi_map.get(email)
 
-            # Extrair first_name e last_name do campo name se não estiverem preenchidos
+            # Extrair first_name e last_name - prioridade: pesquisa (100% preenchido)
             first_name = None
             last_name = None
-            if capi_data:
+
+            # 1. Tentar da pesquisa (campo 'Nome Completo')
+            nome_completo = lead.get('Nome Completo', '')
+            if nome_completo and str(nome_completo).strip():
+                name_parts = str(nome_completo).strip().split(' ', 1)
+                first_name = name_parts[0]
+                last_name = name_parts[1] if len(name_parts) > 1 else None
+            # 2. Fallback: banco CAPI
+            elif capi_data:
                 if capi_data.first_name:
                     first_name = capi_data.first_name
                     last_name = capi_data.last_name
                 elif capi_data.name:
-                    # Fallback: extrair do nome completo
                     name_parts = capi_data.name.strip().split(' ', 1)
                     first_name = name_parts[0]
                     last_name = name_parts[1] if len(name_parts) > 1 else None
 
             # Montar dados para CAPI
+            # Phone: tentar 'phone' (do Apps Script) ou 'Telefone' (da pesquisa)
+            phone = lead.get('phone') or lead.get('Telefone')
+
             lead_capi = {
                 'email': email,
-                'phone': lead.get('phone'),
+                'phone': phone,
                 'first_name': first_name,
                 'last_name': last_name,
                 'lead_score': lead['lead_score'],

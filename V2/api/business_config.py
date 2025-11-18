@@ -52,10 +52,6 @@ PRODUCT_VALUE = 2000.00
 #     "D10": 0.061889,  # 6.19% (era 2.13% observado, +4.06pp)
 # }
 
-# TAXAS OBSERVADAS - Modelo RandomForest (Run: b4bda5b375b24c219a4c04ff6e0f396d)
-# Data: 2025-11-10 | AUC: 0.6979 | Monotonia: 77.8% | Split: Stratified (Union-Find)
-# Hiperparâmetros: n_est=300, depth=8, split=2, leaf=1, feat=sqrt
-# IMPORTANTE: Estas taxas foram CORRIGIDAS por recall (55.7%) - fator 1.795x
 CONVERSION_RATES_OBSERVADAS = {
     "D1": 0.002137,   # 0.21% | 7 conversões / 3,276 leads
     "D2": 0.002748,   # 0.27% | 9 conversões / 3,275 leads
