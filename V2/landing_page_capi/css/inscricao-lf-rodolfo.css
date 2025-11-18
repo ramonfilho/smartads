@@ -1,0 +1,255 @@
+.w-layout-blockcontainer {
+  max-width: 940px;
+  margin-left: auto;
+  margin-right: auto;
+  display: block;
+}
+
+.w-form-formradioinput--inputType-custom {
+  border: 1px solid #ccc;
+  border-radius: 50%;
+  width: 12px;
+  height: 12px;
+}
+
+.w-form-formradioinput--inputType-custom.w--redirected-focus {
+  box-shadow: 0 0 3px 1px #3898ec;
+}
+
+.w-form-formradioinput--inputType-custom.w--redirected-checked {
+  border-width: 4px;
+  border-color: #3898ec;
+}
+
+@media screen and (max-width: 991px) {
+  .w-layout-blockcontainer {
+    max-width: 728px;
+  }
+}
+
+@media screen and (max-width: 767px) {
+  .w-layout-blockcontainer {
+    max-width: none;
+  }
+}
+
+.body {
+  background-color: #000;
+}
+
+.headline {
+  color: #fff;
+  text-align: center;
+  font-family: Exo, sans-serif;
+  font-size: 29px;
+  line-height: 1.2em;
+}
+
+.headline.left {
+  text-align: left;
+  line-height: 1.5em;
+}
+
+.text-span {
+  color: #0f3;
+}
+
+.section {
+  background-image: linear-gradient(#fff0 49%, #000), url('../images/head-v4-2.webp');
+  background-position: 0 0, 50% 0;
+  background-size: auto, auto;
+  padding: 60px;
+}
+
+.paragraph {
+  color: #fff;
+  text-align: center;
+  font-family: Exo, sans-serif;
+  font-size: 16px;
+  line-height: 1.2em;
+}
+
+.paragraph.left {
+  text-align: left;
+  margin-bottom: 0;
+  font-size: 16px;
+}
+
+.radio-button-field {
+  color: #fff;
+  font-size: 16px;
+}
+
+.bottom {
+  color: #000;
+  text-align: center;
+  background-color: #0f2;
+  background-image: radial-gradient(circle farthest-side at 50% 0, #1f0, #0cbb00);
+  border: 2px solid #11fa00;
+  border-radius: 90px;
+  width: 100%;
+  margin-top: 15px;
+  padding-top: 15px;
+  padding-bottom: 15px;
+  font-family: Exo, sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.bottom.fix-w {
+  max-width: 310px;
+  margin-left: auto;
+  margin-right: auto;
+  font-size: 20px;
+  display: block;
+}
+
+.image {
+  text-align: center;
+  width: 60%;
+  margin: 0 auto -57px;
+  display: block;
+}
+
+.dados {
+  grid-column-gap: 15px;
+  grid-row-gap: 15px;
+  flex-flow: wrap;
+  justify-content: center;
+  align-items: center;
+  display: flex;
+}
+
+.dados-item {
+  grid-column-gap: 5px;
+  grid-row-gap: 5px;
+  justify-content: flex-start;
+  align-items: center;
+  display: flex;
+}
+
+.icon {
+  filter: invert();
+  width: 30px;
+}
+
+.section-2 {
+  background-image: url('../images/head-DS-DESK-12.webp');
+  background-position: 50% 0;
+  background-size: auto;
+  padding: 60px;
+}
+
+.text-span-2 {
+  color: #1f0;
+  font-size: 45px;
+}
+
+.div-block {
+  background-color: #00000085;
+  border-radius: 5px;
+  padding: 15px;
+}
+
+.section-3 {
+  background-image: url('../images/bg-2-10-2.webp');
+  background-position: 50%;
+  background-size: cover;
+  padding: 30px;
+}
+
+.container {
+  padding: 30px 15px;
+}
+
+.section-4 {
+  background-color: #1b1d2e;
+}
+
+.section-10 {
+  background-color: #161826;
+}
+
+.container-15 {
+  padding: 60px 30px;
+}
+
+.text-block-4 {
+  color: #adadad;
+  text-align: center;
+  width: 582px;
+  margin-left: auto;
+  margin-right: auto;
+  font-weight: 400;
+}
+
+.link {
+  color: #acacac;
+}
+
+.text-field {
+  color: #000;
+  border: 0 solid #000;
+  border-radius: 5px;
+  height: 56px;
+  padding-top: 15px;
+  padding-bottom: 15px;
+  font-size: 16px;
+}
+
+.data-text {
+  color: #fff;
+  text-align: center;
+  font-family: Exo, sans-serif;
+  font-size: 16px;
+  line-height: 1.2em;
+}
+
+.data-text.left {
+  text-align: left;
+  margin-bottom: 0;
+  font-size: 12px;
+}
+
+@media screen and (max-width: 479px) {
+  .headline {
+    font-size: 27px;
+  }
+
+  .headline.left {
+    line-height: 1.3em;
+  }
+
+  .section {
+    background-position: 100%;
+    padding-left: 15px;
+    padding-right: 15px;
+  }
+
+  .image {
+    width: 100%;
+    margin-bottom: -35px;
+  }
+
+  .section-2 {
+    background-position: 0 0;
+    background-repeat: no-repeat;
+    background-size: 140%;
+    padding-left: 15px;
+    padding-right: 15px;
+  }
+
+  .text-span-2 {
+    font-size: 35px;
+  }
+
+  .text-block-4 {
+    width: 100%;
+    font-size: 13px;
+    line-height: 18px;
+  }
+
+  .form {
+    margin-top: 30px;
+  }
+}
