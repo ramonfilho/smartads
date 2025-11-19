@@ -479,32 +479,47 @@
 
             console.log('📊 CAPI - FBP:', fbp || '❌ ausente', '| FBC:', fbc || '⚠️ ausente');
 
-            // Enviar para webhook CAPI (não bloqueia o fluxo)
-            fetch('https://smart-ads-api-12955519745.us-central1.run.app/webhook/lead_capture', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    name: fullname,
-                    first_name: firstName,
-                    last_name: lastName,
-                    email: email,
-                    phone: phone,
-                    tem_comp: hasComputer,
-                    fbp: fbp,
-                    fbc: fbc,
-                    event_id: eventID,
-                    user_agent: navigator.userAgent,
-                    event_source_url: window.location.href,
-                    utm_source: utmParams.utm_source || null,
-                    utm_medium: utmParams.utm_medium || null,
-                    utm_campaign: utmParams.utm_campaign || null,
-                    utm_term: utmParams.utm_term || null,
-                    utm_content: utmParams.utm_content || null
+            // Enviar para webhook CAPI usando sendBeacon (garante envio durante redirect)
+            const capiPayload = {
+                name: fullname,
+                first_name: firstName,
+                last_name: lastName,
+                email: email,
+                phone: phone,
+                tem_comp: hasComputer,
+                fbp: fbp,
+                fbc: fbc,
+                event_id: eventID,
+                user_agent: navigator.userAgent,
+                event_source_url: window.location.href,
+                utm_source: utmParams.utm_source || null,
+                utm_medium: utmParams.utm_medium || null,
+                utm_campaign: utmParams.utm_campaign || null,
+                utm_term: utmParams.utm_term || null,
+                utm_content: utmParams.utm_content || null
+            };
+
+            const blob = new Blob([JSON.stringify(capiPayload)], { type: 'application/json' });
+            const beaconSuccess = navigator.sendBeacon(
+                'https://smart-ads-api-12955519745.us-central1.run.app/webhook/lead_capture',
+                blob
+            );
+
+            if (beaconSuccess) {
+                console.log('✅ CAPI enviado via sendBeacon');
+            } else {
+                // Fallback para fetch se sendBeacon falhar
+                console.warn('⚠️ sendBeacon falhou, tentando fetch...');
+                fetch('https://smart-ads-api-12955519745.us-central1.run.app/webhook/lead_capture', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(capiPayload),
+                    keepalive: true
                 })
-            })
-            .then(r => r.json())
-            .then(data => console.log('✅ CAPI enviado:', data))
-            .catch(err => console.error('❌ Erro CAPI:', err));
+                .then(r => r.json())
+                .then(data => console.log('✅ CAPI enviado via fetch:', data))
+                .catch(err => console.error('❌ Erro CAPI:', err));
+            }
             // ========================================================================
 
             // Criar FormData para envio
@@ -584,9 +599,6 @@
     }
 });
 </script>
-
-<!-- Código CAPI Atualizado com first_name/last_name -->
-<script src="codigo_formulario_completo_com_capi.js"></script>
 
 </body>
 </html>
