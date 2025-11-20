@@ -1514,8 +1514,8 @@ function processLeadsInDateRange() {
       const leadDate = new Date(row[dataColIndex]);
       const hasScore = scoreColIndex !== -1 && row[scoreColIndex];
 
-      // Lead está no intervalo E não tem score
-      if (leadDate >= startDate && leadDate <= endDate && !hasScore) {
+      // Lead está no intervalo (COM OU SEM SCORE - vamos reenviar tudo)
+      if (leadDate >= startDate && leadDate <= endDate) {
         const leadData = {};
         headers.forEach((header, index) => {
           leadData[header] = row[index];
@@ -1593,6 +1593,95 @@ function testConnection() {
       `Não foi possível conectar à API:\n${error.message}`,
       SpreadsheetApp.getUi().ButtonSet.OK
     );
+  }
+}
+
+// =============================================================================
+// FUNÇÃO TEMPORÁRIA: REPROCESSAR LEADS COM FALHA DE ENVIO CAPI
+// =============================================================================
+
+/**
+ * Processa leads sem score em um intervalo específico de datas
+ * TEMPORÁRIA - Usar para reenviar eventos que falharam devido ao bug do phone
+ *
+ * INSTRUÇÕES:
+ * 1. Edite startDate e endDate abaixo para o período desejado
+ * 2. Execute a função manualmente no Apps Script
+ * 3. Verifique os logs para confirmar o envio
+ * 4. REMOVA esta função após uso
+ */
+function processLeadsInDateRange() {
+  try {
+    // ⚙️ CONFIGURAR DATAS AQUI:
+    // Período 1: 19/11 00:00 até 19/11 23:59
+    const startDate = new Date('2025-11-19T00:00:00');
+    const endDate = new Date('2025-11-19T23:59:59');
+
+    Logger.log(`🔄 Processando leads sem score de ${startDate.toLocaleString()} até ${endDate.toLocaleString()}`);
+
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('[LF] Pesquisa');
+    if (!sheet) throw new Error('Aba "[LF] Pesquisa" não encontrada');
+
+    const values = sheet.getDataRange().getValues();
+    if (values.length <= 1) {
+      Logger.log('⚠️ Nenhum dado na planilha');
+      return;
+    }
+
+    const headers = values[0];
+    const dataColIndex = headers.indexOf('Data');
+    const scoreColIndex = headers.indexOf('lead_score');
+
+    if (dataColIndex === -1) {
+      throw new Error('Coluna "Data" não encontrada');
+    }
+
+    // Coletar leads sem score no intervalo
+    const pendingLeads = [];
+
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i];
+      const leadDate = new Date(row[dataColIndex]);
+      const hasScore = scoreColIndex !== -1 && row[scoreColIndex];
+
+      // Lead está no intervalo (COM OU SEM SCORE - vamos reenviar tudo)
+      if (leadDate >= startDate && leadDate <= endDate) {
+        const leadData = {};
+        headers.forEach((header, index) => {
+          leadData[header] = row[index];
+        });
+
+        const emailValue = row[headers.indexOf('E-mail')];
+        const email = emailValue ? String(emailValue) : null;
+
+        pendingLeads.push({
+          data: leadData,
+          email: email,
+          row_id: (i + 1).toString()
+        });
+      }
+    }
+
+    if (pendingLeads.length === 0) {
+      Logger.log('✅ Nenhum lead sem score no intervalo');
+      return;
+    }
+
+    Logger.log(`📊 ${pendingLeads.length} leads sem score encontrados no intervalo`);
+
+    // Gerar predições
+    Logger.log('🔮 Gerando predições...');
+    generatePredictionsForPendingLeads(pendingLeads);
+
+    // Enviar CAPI
+    Logger.log('📤 Enviando batch CAPI...');
+    sendCapiBatchForPendingLeads(pendingLeads);
+
+    Logger.log('✅ Leads do intervalo processados com sucesso!');
+
+  } catch (error) {
+    Logger.log(`❌ Erro: ${error.message}`);
+    Logger.log(error.stack);
   }
 }
 

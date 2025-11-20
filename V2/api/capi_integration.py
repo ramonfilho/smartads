@@ -100,8 +100,11 @@ def get_state_from_phone(phone: str) -> Optional[str]:
     if not phone:
         return None
 
+    # Garantir que phone é string (Apps Script pode enviar como int)
+    phone_str = str(phone)
+
     # Remove tudo que não é número
-    digits = ''.join(filter(str.isdigit, phone))
+    digits = ''.join(filter(str.isdigit, phone_str))
 
     # Se começar com 55 (código Brasil), remove
     if digits.startswith('55') and len(digits) > 10:
@@ -264,16 +267,17 @@ def send_lead_qualified_with_value(
         valor_projetado = PRODUCT_VALUE * taxa_conversao
 
         # Preparar custom_properties com dados ML
+        # IMPORTANTE: Converter valores para string para compatibilidade com Meta API
         custom_props = {
-            'lead_score': lead_score,
-            'decil': decil,
-            'taxa_conversao': taxa_conversao
+            'lead_score': str(lead_score),
+            'decil': decil,  # já é string
+            'taxa_conversao': str(taxa_conversao)
         }
 
         # Adicionar dados da pesquisa se disponíveis (enriquecem targeting)
         if survey_data:
-            # Filtrar valores None/vazios
-            survey_clean = {k: v for k, v in survey_data.items() if v is not None and str(v).strip() != ''}
+            # Filtrar valores None/vazios e converter tudo para string
+            survey_clean = {k: str(v) for k, v in survey_data.items() if v is not None and str(v).strip() != ''}
             custom_props.update(survey_clean)
 
         custom_data = CustomData(
@@ -319,7 +323,9 @@ def send_lead_qualified_with_value(
         }
 
     except Exception as e:
+        import traceback
         logger.error(f"❌ Erro ao enviar LeadQualified com valor: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return {
             "status": "error",
             "event_id": event_id,
@@ -432,15 +438,17 @@ def send_lead_qualified_high_quality(
 
         # CustomData (SEM valor - Meta otimiza para volume)
         # Preparar custom_properties
+        # IMPORTANTE: Converter valores para string para compatibilidade com Meta API
         custom_props = {
-            'lead_score': lead_score,
-            'decil': decil,
+            'lead_score': str(lead_score),
+            'decil': decil,  # já é string
             'estrategia': 'high_quality_only'
         }
 
         # Adicionar dados da pesquisa se disponíveis
         if survey_data:
-            survey_clean = {k: v for k, v in survey_data.items() if v is not None and str(v).strip() != ''}
+            # Filtrar valores None/vazios e converter tudo para string
+            survey_clean = {k: str(v) for k, v in survey_data.items() if v is not None and str(v).strip() != ''}
             custom_props.update(survey_clean)
 
         custom_data = CustomData(
@@ -485,7 +493,9 @@ def send_lead_qualified_high_quality(
         }
 
     except Exception as e:
+        import traceback
         logger.error(f"❌ Erro ao enviar LeadQualifiedHighQuality: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return {
             "status": "error",
             "event_id": event_id,
@@ -708,13 +718,17 @@ def send_batch_events(leads: List[Dict]) -> Dict:
     }
 
     for lead in leads:
+        # DEBUG: Log do tipo de lead_score para identificar problema "'int' object is not iterable"
+        lead_score_value = lead['lead_score']
+        logger.info(f"DEBUG: lead_score type={type(lead_score_value)}, value={lead_score_value}")
+
         # Usar send_both_lead_events para enviar ambas as estratégias
         result = send_both_lead_events(
             email=lead['email'],
             phone=lead.get('phone'),
             first_name=lead.get('first_name'),
             last_name=lead.get('last_name'),
-            lead_score=lead['lead_score'],
+            lead_score=lead_score_value,
             decil=lead['decil'],
             event_id=lead['event_id'],
             fbp=lead.get('fbp'),

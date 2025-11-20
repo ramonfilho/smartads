@@ -662,12 +662,38 @@ async def process_daily_batch_capi(
             # Phone: tentar 'phone' (do Apps Script) ou 'Telefone' (da pesquisa)
             phone = lead.get('phone') or lead.get('Telefone')
 
+            # Dados da pesquisa (enriquecem targeting da Meta)
+            # IMPORTANTE: Converter TODOS os valores para string (Apps Script envia valores numéricos)
+            # Fix para "'int' object is not iterable" - Meta SDK não aceita valores numéricos em custom_data
+            survey_data_raw = {
+                'genero': lead.get('O seu gênero:'),
+                'estado': lead.get('Qual estado você mora?'),
+                'idade': lead.get('Qual a sua idade?'),
+                'ocupacao': lead.get('O que você faz atualmente?'),
+                'faixa_salarial': lead.get('Atualmente, qual a sua faixa salarial?'),
+                'tem_cartao': lead.get('Você possui cartão de crédito?'),
+                'ja_estudou_prog': lead.get('Já estudou programação?'),
+                'faculdade': lead.get('Você já fez/faz/pretende fazer faculdade?'),
+                'investiu_curso': lead.get('Já investiu em algum curso online para aprender uma nova forma de ganhar dinheiro?'),
+                'interesse_prog': lead.get('O que mais te chama atenção na profissão de Programador?'),
+                'quer_ver_evento': lead.get('O que mais você quer ver no evento?'),
+                'tem_computador': lead.get('Tem computador/notebook?'),
+                'cidade': lead.get('cidade'),
+                'cep': lead.get('cep')
+            }
+
+            # Converter todos os valores para string
+            survey_data = {k: str(v) if v is not None else None for k, v in survey_data_raw.items()}
+
+            # Garantir que lead_score é float (Apps Script pode enviar como número ou string)
+            lead_score_value = float(lead['lead_score'])
+
             lead_capi = {
                 'email': email,
                 'phone': phone,
                 'first_name': first_name,
                 'last_name': last_name,
-                'lead_score': lead['lead_score'],
+                'lead_score': lead_score_value,  # Garantido como float
                 'decil': decil,
                 'event_id': capi_data.event_id if capi_data else f"lead_{int(time.time())}_{str(email)[:8]}",
                 'fbp': capi_data.fbp if capi_data else None,
@@ -676,24 +702,7 @@ async def process_daily_batch_capi(
                 'client_ip': capi_data.client_ip if capi_data else None,
                 'event_source_url': capi_data.event_source_url if capi_data else None,
                 'event_timestamp': _safe_parse_timestamp(lead.get('data')),
-
-                # NOVO: Dados da pesquisa (enriquecem targeting da Meta)
-                'survey_data': {
-                    'genero': lead.get('O seu gênero:'),
-                    'estado': lead.get('Qual estado você mora?'),
-                    'idade': lead.get('Qual a sua idade?'),
-                    'ocupacao': lead.get('O que você faz atualmente?'),
-                    'faixa_salarial': lead.get('Atualmente, qual a sua faixa salarial?'),
-                    'tem_cartao': lead.get('Você possui cartão de crédito?'),
-                    'ja_estudou_prog': lead.get('Já estudou programação?'),
-                    'faculdade': lead.get('Você já fez/faz/pretende fazer faculdade?'),
-                    'investiu_curso': lead.get('Já investiu em algum curso online para aprender uma nova forma de ganhar dinheiro?'),
-                    'interesse_prog': lead.get('O que mais te chama atenção na profissão de Programador?'),
-                    'quer_ver_evento': lead.get('O que mais você quer ver no evento?'),
-                    'tem_computador': lead.get('Tem computador/notebook?'),
-                    'cidade': lead.get('cidade'),
-                    'cep': lead.get('cep')
-                }
+                'survey_data': survey_data
             }
 
             enriched_leads.append(lead_capi)
