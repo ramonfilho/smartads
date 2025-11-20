@@ -992,47 +992,35 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
             total_ads = sum(sum(len(a['ads']) for a in c['adsets'].values()) for c in hierarchy['campaigns'].values())
             logger.info(f"   {period_key}: {total_campaigns} campaigns, {total_adsets} adsets, {total_ads} ads | R$ {total_spend:.2f}")
 
-        # 4. CALCULAR DECIS UMA VEZ NOS LEADS 21D (BASE DE REFERÊNCIA)
-        logger.info("📊 Calculando decis nos leads 21D (base de referência estatística)...")
+        # 4. CALCULAR DECIS USANDO THRESHOLDS FIXOS DO MODELO
+        logger.info("📊 Calculando decis usando thresholds fixos do modelo...")
 
-        # Filtrar leads para 21D (3 semanas - janela de referência)
-        cutoff_21d_start = cutoff_end - pd.Timedelta(days=21)
-        if 'Data' in result_df.columns:
-            dates = pd.to_datetime(result_df['Data'])
-            if dates.dt.tz is not None:
-                dates = dates.dt.tz_localize(None)
+        from src.model.decil_thresholds import atribuir_decis_batch
 
-            result_df_21d = result_df[(dates >= cutoff_21d_start) & (dates < cutoff_end)].copy()
-            logger.info(f"   Leads 21D: {len(result_df_21d)} de {len(result_df)} totais")
-        else:
-            result_df_21d = result_df.copy()
-            logger.warning(f"   Coluna 'Data' não encontrada, usando todos os {len(result_df)} leads")
+        # Carregar thresholds do modelo ativo
+        thresholds = pipeline.predictor.metadata.get('decil_thresholds', {}).get('thresholds')
+        threshold_name = pipeline.predictor.metadata.get('decil_thresholds', {}).get('name', 'unknown')
+
+        if not thresholds:
+            logger.error("❌ Thresholds não encontrados no modelo!")
+            raise HTTPException(status_code=500, detail="Thresholds do modelo não configurados")
+
+        logger.info(f"   ✅ Thresholds carregados: {threshold_name}")
 
         # Garantir que lead_score é numérico
-        result_df_21d['lead_score'] = pd.to_numeric(result_df_21d['lead_score'], errors='coerce')
+        result_df['lead_score'] = pd.to_numeric(result_df['lead_score'], errors='coerce')
 
         # Remover linhas com lead_score inválido
-        result_df_21d = result_df_21d[result_df_21d['lead_score'].notna()].copy()
+        result_df = result_df[result_df['lead_score'].notna()].copy()
 
-        if len(result_df_21d) >= 10:
-            try:
-                result_df_21d['decil'] = pd.qcut(
-                    result_df_21d['lead_score'],
-                    q=10,
-                    labels=[f'D{i}' for i in range(1, 11)],
-                    duplicates='drop'
-                )
-                logger.info(f"✅ Decis calculados para {len(result_df_21d)} leads 21D (base de referência)")
-            except Exception as e:
-                logger.warning(f"⚠️ Erro ao calcular decis: {e}, usando faixas fixas")
-                result_df_21d['decil'] = result_df_21d['lead_score'].apply(
-                    lambda x: f"D{min(10, max(1, int(float(x) * 10) + 1))}" if x > 0 else "D1"
-                )
-        else:
-            logger.warning(f"⚠️ Menos de 10 leads em 21D, usando faixas fixas")
-            result_df_21d['decil'] = result_df_21d['lead_score'].apply(
-                lambda x: f"D{min(10, max(1, int(float(x) * 10) + 1))}" if x > 0 else "D1"
-            )
+        # Atribuir decis usando thresholds fixos
+        result_df['decil'] = atribuir_decis_batch(
+            result_df['lead_score'].values,
+            thresholds
+        )
+
+        logger.info(f"✅ Decis calculados para {len(result_df)} leads (thresholds fixos)")
+        logger.info(f"   📊 Distribuição: {result_df['decil'].value_counts().sort_index().to_dict()}")
 
         # 5. GERAR ANÁLISE UTM POR PERÍODO E DIMENSÃO
         logger.info("📈 Gerando análise UTM...")
@@ -1055,29 +1043,34 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
             # Usar janela pré-calculada
             cutoff_start = period_windows[period_key]
 
-            # Filtrar do dataset 21D (que já tem decis calculados)
-            if 'Data' in result_df_21d.columns:
-                dates_21d = pd.to_datetime(result_df_21d['Data'])
-                if dates_21d.dt.tz is not None:
-                    dates_21d = dates_21d.dt.tz_localize(None)
+            # Filtrar do dataset (que já tem decis calculados via thresholds)
+            if 'Data' in result_df.columns:
+                dates_df = pd.to_datetime(result_df['Data'], errors='coerce')
+                if dates_df.dt.tz is not None:
+                    dates_df = dates_df.dt.tz_localize(None)
 
                 # Filtrar: Data >= cutoff_start AND Data < cutoff_end
-                # IMPORTANTE: Decis já foram calculados no dataset 21D e são mantidos
-                period_df = result_df_21d[(dates_21d >= cutoff_start) & (dates_21d < cutoff_end)].copy()
-                logger.info(f"   Leads no período {period_key}: {len(period_df)} (decis de base 21D)")
+                valid_dates_mask = dates_df.notna()
+                period_df = result_df[valid_dates_mask & (dates_df >= cutoff_start) & (dates_df < cutoff_end)].copy()
+                logger.info(f"   Leads no período {period_key}: {len(period_df)}")
             else:
-                period_df = result_df_21d.copy()
-                logger.warning(f"   Coluna 'Data' não encontrada, usando todos os leads 21D")
+                period_df = result_df.copy()
+                logger.warning(f"   Coluna 'Data' não encontrada, usando todos os leads")
 
             # Capturar metadados: timestamps reais dos leads dentro da janela
             if 'Data' in period_df.columns and len(period_df) > 0:
-                period_dates = pd.to_datetime(period_df['Data'])
+                period_dates = pd.to_datetime(period_df['Data'], errors='coerce')
                 if period_dates.dt.tz is not None:
                     period_dates = period_dates.dt.tz_localize(None)
 
-                # Timestamps reais dos leads (não a janela)
-                period_start = period_dates.min().isoformat()
-                period_end = period_dates.max().isoformat()
+                # Filtrar apenas datas válidas para min/max
+                valid_period_dates = period_dates[period_dates.notna()]
+                if len(valid_period_dates) > 0:
+                    period_start = valid_period_dates.min().isoformat()
+                    period_end = valid_period_dates.max().isoformat()
+                else:
+                    period_start = cutoff_start.isoformat()
+                    period_end = cutoff_end.isoformat()
             else:
                 period_start = cutoff_start.isoformat()
                 period_end = cutoff_end.isoformat()
@@ -1093,13 +1086,13 @@ async def analyze_utms_with_costs(request: UTMAnalysisRequest):
 
             logger.info(f"   📊 Metadados: {period_start} até {period_end} | Total: {total_leads} | Meta: {meta_leads} | Google: {google_leads}")
 
-            # Validar que temos leads e decis (já calculados em 21D)
+            # Validar que temos leads e decis
             if len(period_df) == 0:
                 logger.warning(f"   ⚠️ Nenhum lead no período {period_key}")
                 continue
 
             if 'decil' not in period_df.columns:
-                logger.error(f"   ❌ ERRO: Coluna 'decil' não encontrada após filtro (bug!)")
+                logger.error(f"   ❌ ERRO: Coluna 'decil' não encontrada após filtro")
                 # Fallback emergencial
                 period_df['decil'] = 'D5'
 

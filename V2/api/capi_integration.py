@@ -372,17 +372,17 @@ def send_lead_qualified_high_quality(
         event_timestamp: Timestamp UNIX do lead original (não atual!)
 
     Returns:
-        Dict com resultado do envio (ou skipped se não for D8-D10)
+        Dict com resultado do envio (ou skipped se não for D9-D10)
     """
-    # Filtro: só envia D8, D9, D10
-    if decil not in ['D8', 'D9', 'D10']:
-        logger.debug(f"⏭️  Lead {decil} ignorado (estratégia D8-D10 only)")
+    # Filtro: só envia D9, D10
+    if decil not in ['D9', 'D10']:
+        logger.debug(f"⏭️  Lead {decil} ignorado (estratégia D9-D10 only)")
         return {
             "status": "skipped",
             "event_id": event_id,
             "email": email,
             "decil": decil,
-            "reason": "Decil abaixo de D8 (filtrado)"
+            "reason": "Decil abaixo de D9 (filtrado)"
         }
 
     if not ACCESS_TOKEN:
