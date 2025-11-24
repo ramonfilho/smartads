@@ -1474,214 +1474,106 @@ function createPollingTrigger() {
 }
 
 // =============================================================================
-// FUNÇÃO TEMPORÁRIA - REMOVER APÓS USO
+// ENVIO MANUAL PARA CAPI
 // =============================================================================
 
 /**
- * Processa leads sem score em um intervalo específico de datas
- * TEMPORÁRIA - Remover após executar
+ * Envia TODOS os leads após 21/11 18:57:01 para CAPI
+ * Apenas leads COM score válido são enviados
  */
-function processLeadsInDateRange() {
+function sendAllLeadsAfterDateToCAPI() {
   try {
-    // Intervalo específico (19/11/2025 12:00:53 até 12:56:44)
-    const startDate = new Date('2025-11-19T12:00:53');
-    const endDate = new Date('2025-11-19T12:56:44');
-
-    Logger.log(`🔧 Processando leads sem score de ${startDate.toLocaleString()} até ${endDate.toLocaleString()}`);
+    Logger.log('🚀 Enviando leads para CAPI após 21/11 18:57:01...');
 
     const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('[LF] Pesquisa');
-    if (!sheet) throw new Error('Aba "[LF] Pesquisa" não encontrada');
+    if (!sheet) {
+      throw new Error('Aba "[LF] Pesquisa" não encontrada');
+    }
 
     const values = sheet.getDataRange().getValues();
-    if (values.length <= 1) {
-      Logger.log('⚠️ Nenhum dado na planilha');
-      return;
-    }
-
     const headers = values[0];
-    const dataColIndex = headers.indexOf('Data');
-    const scoreColIndex = headers.indexOf('lead_score');
-
-    if (dataColIndex === -1) {
-      throw new Error('Coluna "Data" não encontrada');
+    
+    const emailIndex = headers.indexOf('E-mail');
+    const phoneIndex = headers.indexOf('Telefone');
+    const dataIndex = headers.indexOf('Data');
+    const scoreIndex = 39; // Coluna de score
+    
+    if (emailIndex === -1 || phoneIndex === -1 || dataIndex === -1) {
+      throw new Error('Colunas necessárias não encontradas');
     }
-
-    // Coletar leads sem score no intervalo
-    const pendingLeads = [];
-
+    
+    const lastSuccessfulSend = new Date('2025-11-21T18:57:01');
+    const leads = [];
+    let skippedNoScore = 0;
+    let totalAfterDate = 0;
+    
     for (let i = 1; i < values.length; i++) {
       const row = values[i];
-      const leadDate = new Date(row[dataColIndex]);
-      const hasScore = scoreColIndex !== -1 && row[scoreColIndex];
-
-      // Lead está no intervalo (COM OU SEM SCORE - vamos reenviar tudo)
-      if (leadDate >= startDate && leadDate <= endDate) {
-        const leadData = {};
+      const leadDate = new Date(row[dataIndex]);
+      
+      if (leadDate > lastSuccessfulSend) {
+        totalAfterDate++;
+        const score = row[scoreIndex];
+        
+        // Validar que score existe e é válido
+        if (!score || score === '' || score === null || score === undefined) {
+          skippedNoScore++;
+          Logger.log(`⚠️ Lead ${row[emailIndex]} pulado: sem score`);
+          continue;
+        }
+        
+        const leadData = {
+          email: row[emailIndex],
+          phone: row[phoneIndex],
+          data: Utilities.formatDate(leadDate, Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ss"),
+          lead_score: parseFloat(score)
+        };
+        
+        // Adicionar outros campos
         headers.forEach((header, index) => {
-          leadData[header] = row[index];
+          if (header && header !== '' && header !== 'Data' && header !== 'E-mail' && header !== 'Telefone') {
+            leadData[header] = row[index];
+          }
         });
-
-        const emailValue = row[headers.indexOf('E-mail')];
-        const email = emailValue ? String(emailValue) : null;
-
-        pendingLeads.push({
-          data: leadData,
-          email: email,
-          row_id: (i + 1).toString()
-        });
+        
+        leads.push(leadData);
       }
     }
-
-    if (pendingLeads.length === 0) {
-      Logger.log('✅ Nenhum lead sem score no intervalo');
+    
+    Logger.log(`📊 Total após 21/11 18:57:01: ${totalAfterDate}`);
+    Logger.log(`   ✅ Com score: ${leads.length}`);
+    Logger.log(`   ⚠️ Sem score (pulados): ${skippedNoScore}`);
+    
+    if (leads.length === 0) {
+      Logger.log('✅ Nenhum lead com score para enviar');
       return;
     }
-
-    Logger.log(`📊 ${pendingLeads.length} leads sem score encontrados no intervalo`);
-
-    // Gerar predições
-    Logger.log('🔮 Gerando predições...');
-    generatePredictionsForPendingLeads(pendingLeads);
-
-    // Enviar CAPI
-    Logger.log('📤 Enviando batch CAPI...');
-    sendCapiBatchForPendingLeads(pendingLeads);
-
-    Logger.log('✅ Leads do intervalo processados com sucesso!');
-
+    
+    // Enviar para API
+    Logger.log(`📤 Enviando ${leads.length} leads para CAPI...`);
+    
+    const response = UrlFetchApp.fetch(`${API_URL}/capi/process_daily_batch`, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ leads: leads }),
+      muteHttpExceptions: true
+    });
+    
+    const responseCode = response.getResponseCode();
+    const responseBody = response.getContentText();
+    
+    Logger.log(`📡 Resposta API: ${responseCode}`);
+    
+    if (responseCode === 200) {
+      const result = JSON.parse(responseBody);
+      Logger.log(`✅ Sucesso: ${result.success}/${result.total} eventos enviados`);
+      Logger.log(`   Leads com dados CAPI: ${result.leads_with_capi_data}`);
+    } else {
+      Logger.log(`❌ Erro: ${responseBody}`);
+    }
+    
   } catch (error) {
     Logger.log(`❌ Erro: ${error.message}`);
     Logger.log(error.stack);
   }
 }
-
-// =============================================================================
-// FUNÇÕES DE DEBUG
-// =============================================================================
-
-/**
- * Testa conexão com a API
- */
-function testConnection() {
-  try {
-    Logger.log('🔍 Testando conexão com API...');
-
-    const response = UrlFetchApp.fetch(`${API_URL}/health`);
-    const result = JSON.parse(response.getContentText());
-
-    Logger.log('✅ Conexão bem-sucedida!');
-    Logger.log(`Status: ${result.status}`);
-    Logger.log(`Pipeline: ${result.pipeline_status}`);
-    Logger.log(`Modelo: ${result.model_loaded}`);
-    Logger.log(`Versão: ${result.version}`);
-
-    SpreadsheetApp.getUi().alert(
-      'Conexão OK',
-      `API está funcionando!\n\n` +
-      `Status: ${result.status}\n` +
-      `Pipeline: ${result.pipeline_status}\n` +
-      `Modelo Carregado: ${result.model_loaded}\n` +
-      `Versão: ${result.version}`,
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
-
-  } catch (error) {
-    Logger.log(`❌ Erro ao testar conexão: ${error.message}`);
-
-    SpreadsheetApp.getUi().alert(
-      'Erro de Conexão',
-      `Não foi possível conectar à API:\n${error.message}`,
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
-  }
-}
-
-// =============================================================================
-// FUNÇÃO TEMPORÁRIA: REPROCESSAR LEADS COM FALHA DE ENVIO CAPI
-// =============================================================================
-
-/**
- * Processa leads sem score em um intervalo específico de datas
- * TEMPORÁRIA - Usar para reenviar eventos que falharam devido ao bug do phone
- *
- * INSTRUÇÕES:
- * 1. Edite startDate e endDate abaixo para o período desejado
- * 2. Execute a função manualmente no Apps Script
- * 3. Verifique os logs para confirmar o envio
- * 4. REMOVA esta função após uso
- */
-function processLeadsInDateRange() {
-  try {
-    // ⚙️ CONFIGURAR DATAS AQUI:
-    // Período 1: 19/11 00:00 até 19/11 23:59
-    const startDate = new Date('2025-11-19T00:00:00');
-    const endDate = new Date('2025-11-19T23:59:59');
-
-    Logger.log(`🔄 Processando leads sem score de ${startDate.toLocaleString()} até ${endDate.toLocaleString()}`);
-
-    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('[LF] Pesquisa');
-    if (!sheet) throw new Error('Aba "[LF] Pesquisa" não encontrada');
-
-    const values = sheet.getDataRange().getValues();
-    if (values.length <= 1) {
-      Logger.log('⚠️ Nenhum dado na planilha');
-      return;
-    }
-
-    const headers = values[0];
-    const dataColIndex = headers.indexOf('Data');
-    const scoreColIndex = headers.indexOf('lead_score');
-
-    if (dataColIndex === -1) {
-      throw new Error('Coluna "Data" não encontrada');
-    }
-
-    // Coletar leads sem score no intervalo
-    const pendingLeads = [];
-
-    for (let i = 1; i < values.length; i++) {
-      const row = values[i];
-      const leadDate = new Date(row[dataColIndex]);
-      const hasScore = scoreColIndex !== -1 && row[scoreColIndex];
-
-      // Lead está no intervalo (COM OU SEM SCORE - vamos reenviar tudo)
-      if (leadDate >= startDate && leadDate <= endDate) {
-        const leadData = {};
-        headers.forEach((header, index) => {
-          leadData[header] = row[index];
-        });
-
-        const emailValue = row[headers.indexOf('E-mail')];
-        const email = emailValue ? String(emailValue) : null;
-
-        pendingLeads.push({
-          data: leadData,
-          email: email,
-          row_id: (i + 1).toString()
-        });
-      }
-    }
-
-    if (pendingLeads.length === 0) {
-      Logger.log('✅ Nenhum lead sem score no intervalo');
-      return;
-    }
-
-    Logger.log(`📊 ${pendingLeads.length} leads sem score encontrados no intervalo`);
-
-    // Gerar predições
-    Logger.log('🔮 Gerando predições...');
-    generatePredictionsForPendingLeads(pendingLeads);
-
-    // Enviar CAPI
-    Logger.log('📤 Enviando batch CAPI...');
-    sendCapiBatchForPendingLeads(pendingLeads);
-
-    Logger.log('✅ Leads do intervalo processados com sucesso!');
-
-  } catch (error) {
-    Logger.log(`❌ Erro: ${error.message}`);
-    Logger.log(error.stack);
-  }
-}
-

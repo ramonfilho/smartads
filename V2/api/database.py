@@ -53,6 +53,9 @@ class LeadCAPI(Base):
     # Outros
     tem_comp = Column(String(50))
 
+    # Controle CAPI
+    capi_sent_at = Column(TIMESTAMP, nullable=True, index=True)  # Quando foi enviado para CAPI
+
     # Timestamps
     created_at = Column(TIMESTAMP, server_default=func.now())
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
@@ -78,6 +81,7 @@ class LeadCAPI(Base):
             'utm_term': self.utm_term,
             'utm_content': self.utm_content,
             'tem_comp': self.tem_comp,
+            'capi_sent_at': self.capi_sent_at.isoformat() if self.capi_sent_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
@@ -223,3 +227,34 @@ def count_leads_with_fbp(db: Session) -> int:
 def count_leads_with_fbc(db: Session) -> int:
     """Conta leads com FBC preenchido"""
     return db.query(LeadCAPI).filter(LeadCAPI.fbc.isnot(None)).count()
+
+def mark_lead_capi_sent(db: Session, email: str) -> bool:
+    """Marca lead como enviado para CAPI"""
+    try:
+        lead = get_lead_by_email(db, email)
+        if lead:
+            lead.capi_sent_at = func.now()
+            db.commit()
+            logger.info(f"✅ Lead {email} marcado como enviado para CAPI")
+            return True
+        logger.warning(f"⚠️ Lead {email} não encontrado no banco")
+        return False
+    except Exception as e:
+        logger.error(f"❌ Erro ao marcar CAPI sent para {email}: {e}")
+        db.rollback()
+        return False
+
+def get_leads_not_sent_to_capi(db: Session, emails: List[str]) -> List[LeadCAPI]:
+    """Busca leads que ainda NÃO foram enviados para CAPI"""
+    return db.query(LeadCAPI).filter(
+        LeadCAPI.email.in_(emails),
+        LeadCAPI.capi_sent_at.is_(None)
+    ).all()
+
+def get_leads_already_sent_to_capi(db: Session, emails: List[str]) -> List[str]:
+    """Retorna lista de emails que já foram enviados para CAPI"""
+    leads = db.query(LeadCAPI.email).filter(
+        LeadCAPI.email.in_(emails),
+        LeadCAPI.capi_sent_at.isnot(None)
+    ).all()
+    return [lead[0] for lead in leads]

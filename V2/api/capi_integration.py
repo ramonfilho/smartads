@@ -286,6 +286,13 @@ def send_lead_qualified_with_value(
             custom_properties=custom_props
         )
 
+        # DEBUG: Log custom_properties e VALUE para verificar o que está sendo enviado
+        logger.info(f"🔍 DEBUG LeadQualified para {email}:")
+        logger.info(f"   VALUE enviado: R$ {valor_projetado:.2f} (decil: {decil}, taxa: {taxa_conversao})")
+        logger.info(f"   Total de custom_properties: {len(custom_props)}")
+        logger.info(f"   Keys: {list(custom_props.keys())}")
+        logger.info(f"   Sample: {dict(list(custom_props.items())[:5])}")
+
         # Event
         event = Event(
             event_name='LeadQualified',
@@ -308,8 +315,41 @@ def send_lead_qualified_with_value(
 
         event_request = EventRequest(**event_request_params)
 
+        # DEBUG: Log do payload JSON EXATO que será enviado para Meta API
+        import json
+        try:
+            # Usar o método export_value() do SDK para ver o JSON exato
+            if hasattr(custom_data, 'export_value'):
+                serialized = custom_data.export_value()
+                logger.info(f"🔍 DEBUG JSON EXATO enviado para Meta API (custom_data):")
+                logger.info(json.dumps(serialized, indent=2, ensure_ascii=False))
+            else:
+                # Fallback: extrair manualmente
+                payload_debug = {
+                    'value': custom_data.value if hasattr(custom_data, 'value') else None,
+                    'currency': custom_data.currency if hasattr(custom_data, 'currency') else None,
+                    'custom_properties': custom_data.custom_properties if hasattr(custom_data, 'custom_properties') else None
+                }
+                logger.info(f"🔍 DEBUG Payload custom_data enviado para Meta:")
+                logger.info(json.dumps(payload_debug, indent=2, ensure_ascii=False))
+        except Exception as debug_err:
+            logger.warning(f"⚠️  Erro ao extrair payload debug: {debug_err}")
+
         # Enviar
         response = event_request.execute()
+
+        # DEBUG: Log da resposta da Meta para confirmar recebimento
+        import json
+        try:
+            # A resposta da Meta contém informações sobre eventos recebidos e processados
+            logger.info(f"🔍 DEBUG Resposta da Meta API:")
+            logger.info(f"   Response type: {type(response)}")
+            logger.info(f"   Response: {response}")
+            # Se for um objeto com atributos, tentar extrair
+            if hasattr(response, '__dict__'):
+                logger.info(f"   Response dict: {json.dumps(response.__dict__, default=str, indent=2)}")
+        except Exception as resp_err:
+            logger.warning(f"⚠️  Erro ao logar resposta: {resp_err}")
 
         logger.info(f"✅ LeadQualified enviado: {email} (decil: {decil}, valor proj: R$ {valor_projetado:.2f})")
 
@@ -351,18 +391,18 @@ def send_lead_qualified_high_quality(
     survey_data: Optional[Dict] = None
 ) -> Dict:
     """
-    ESTRATÉGIA 2: Envia APENAS D8, D9 e D10 SEM VALOR
+    ESTRATÉGIA 2: Envia APENAS D9 e D10 SEM VALOR
 
     Comportamento:
-    - Filtra: só envia se decil in ['D8', 'D9', 'D10']
+    - Filtra: só envia se decil in ['D9', 'D10']
     - SEM valor monetário (Meta otimiza para volume de conversões)
-    - Meta aprende com perfil de alta qualidade
+    - Meta aprende com perfil de alta qualidade (top 20% dos leads)
     - Volume menor mas mais focado
 
     Quando usar (Gestor de Tráfego):
     - Criar campanha separada otimizando para "LeadQualifiedHighQuality"
     - Usar Cost Cap ou Lowest Cost (não Target ROAS)
-    - Foco em volume de leads qualificados
+    - Foco em volume de leads qualificados (top 20%)
 
     Args:
         email: Email do lead
@@ -525,7 +565,7 @@ def send_both_lead_events(
 
     Esta função envia:
     1. LeadQualified (com valor, D1-D10)
-    2. LeadQualifiedHighQuality (sem valor, D8-D10 only)
+    2. LeadQualifiedHighQuality (sem valor, D9-D10 only)
 
     O gestor de tráfego cria 2 campanhas:
     - Campanha A (50% budget): Otimiza para "LeadQualified"
@@ -561,7 +601,7 @@ def send_both_lead_events(
         survey_data=survey_data
     )
 
-    # Enviar evento 2: SEM VALOR (D8-D10 only)
+    # Enviar evento 2: SEM VALOR (D9-D10 only)
     result_high_quality = send_lead_qualified_high_quality(
         email=email,
         phone=phone,
@@ -685,17 +725,18 @@ def send_purchase_event(
             "message": str(e)
         }
 
-def send_batch_events(leads: List[Dict]) -> Dict:
+def send_batch_events(leads: List[Dict], db=None) -> Dict:
     """
     Envia múltiplos eventos CAPI em batch (AMBAS AS ESTRATÉGIAS)
     Usado pelo processamento diário
 
     Para cada lead, envia:
     - LeadQualified (com valor, todos os decis)
-    - LeadQualifiedHighQuality (sem valor, D8-D10 only)
+    - LeadQualifiedHighQuality (sem valor, D9-D10 only)
 
     Args:
         leads: Lista de dicts com dados dos leads
+        db: SQLAlchemy session para registrar envios (opcional)
 
     Returns:
         Dict com estatísticas do envio
@@ -743,6 +784,14 @@ def send_batch_events(leads: List[Dict]) -> Dict:
 
         if result['status'] == 'success':
             results['success'] += 1
+
+            # Registrar envio no banco (se db session disponível)
+            if db:
+                try:
+                    from api.database import mark_lead_capi_sent
+                    mark_lead_capi_sent(db, lead['email'])
+                except Exception as mark_error:
+                    logger.warning(f"⚠️ Não foi possível marcar CAPI sent para {lead['email']}: {mark_error}")
         else:
             results['errors'] += 1
 

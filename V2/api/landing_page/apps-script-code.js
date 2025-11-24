@@ -1321,12 +1321,52 @@ function testConnection() {
 }
 
 // =============================================================================
+// CAPI: CONSULTA DE LOGS
+// =============================================================================
+
+/**
+ * Consulta quais leads já foram enviados para CAPI
+ * @param {Array<string>} emails - Lista de emails para verificar
+ * @returns {Array<string>} Lista de emails já enviados
+ */
+function getLeadsAlreadySentToCAPI(emails) {
+  try {
+    Logger.log(`🔍 Consultando ${emails.length} emails nos logs CAPI...`);
+
+    const payload = JSON.stringify({ emails: emails });
+    const options = {
+      method: 'post',
+      contentType: 'application/json',
+      payload: payload,
+      muteHttpExceptions: true
+    };
+
+    const response = UrlFetchApp.fetch(`${API_URL}/capi/check_sent`, options);
+    const responseCode = response.getResponseCode();
+
+    if (responseCode !== 200) {
+      Logger.log(`⚠️ Erro ao consultar logs: ${responseCode}`);
+      Logger.log(`Response: ${response.getContentText()}`);
+      return [];  // Em caso de erro, não filtrar (enviar todos)
+    }
+
+    const result = JSON.parse(response.getContentText());
+    Logger.log(`✅ ${result.sent_count}/${emails.length} já foram enviados`);
+    return result.sent_emails || [];
+
+  } catch (error) {
+    Logger.log(`❌ Erro ao consultar logs CAPI: ${error.message}`);
+    return [];  // Em caso de erro, não filtrar (enviar todos)
+  }
+}
+
+// =============================================================================
 // CAPI: ENVIO DE BATCH PARA TODOS OS LEADS (D1-D10)
 // =============================================================================
 
 /**
  * Envia TODOS os leads do período para API processar batch CAPI
- * A API decide quais eventos enviar (LeadQualified para todos, LeadQualifiedHighQuality para D8-D10)
+ * A API decide quais eventos enviar (LeadQualified para todos, LeadQualifiedHighQuality para D9-D10)
  * Chamado diariamente após classificação ML
  */
 function sendCapiBatchForD10Leads(startDate, endDate) {
@@ -1387,7 +1427,31 @@ function sendCapiBatchForD10Leads(startDate, endDate) {
       return;
     }
 
-    Logger.log(`📊 ${allLeads.length} leads encontrados (D1-D10), enviando para API CAPI...`);
+    Logger.log(`📊 ${allLeads.length} leads encontrados (D1-D10)`);
+
+    // NOVO: Consultar logs para filtrar leads já enviados
+    Logger.log(`🔍 Verificando leads já enviados para CAPI...`);
+    const allEmails = allLeads.map(lead => lead.email);
+    const sentEmails = getLeadsAlreadySentToCAPI(allEmails);
+
+    if (sentEmails.length > 0) {
+      Logger.log(`⏭️ ${sentEmails.length} leads já foram enviados, filtrando...`);
+      const sentEmailsSet = new Set(sentEmails);
+      const leadsToSend = allLeads.filter(lead => !sentEmailsSet.has(lead.email));
+
+      Logger.log(`📊 ${allLeads.length} leads → ${leadsToSend.length} novos para enviar`);
+
+      if (leadsToSend.length === 0) {
+        Logger.log('✅ Todos os leads já foram enviados anteriormente');
+        return;
+      }
+
+      // Atualizar allLeads para enviar apenas novos
+      allLeads.length = 0;
+      allLeads.push(...leadsToSend);
+    }
+
+    Logger.log(`📤 Enviando ${allLeads.length} leads para API CAPI...`);
 
     // Enviar para API
     const API_URL = 'https://smart-ads-api-12955519745.us-central1.run.app';

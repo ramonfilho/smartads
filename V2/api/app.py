@@ -526,6 +526,10 @@ class CapiBatchRequest(BaseModel):
     """Request para processamento batch CAPI"""
     leads: List[Dict[str, Any]] = Field(..., description="TODOS os leads do dia anterior (D1-D10)")
 
+class CapiCheckSentRequest(BaseModel):
+    """Request para verificar quais leads já foram enviados"""
+    emails: List[str] = Field(..., description="Lista de emails para verificar")
+
 @app.post("/capi/process_daily_batch")
 async def process_daily_batch_capi(
     request: CapiBatchRequest,
@@ -535,7 +539,7 @@ async def process_daily_batch_capi(
     Processa batch de CAPI com thresholds fixos
     Envia 2 eventos para cada lead:
     - LeadQualified (com valor): TODOS os leads (D1-D10)
-    - LeadQualifiedHighQuality (sem valor): Apenas D8-D10
+    - LeadQualifiedHighQuality (sem valor): Apenas D9-D10
 
     Chamado pelo Apps Script a cada 3 horas após classificação ML
     """
@@ -562,23 +566,71 @@ async def process_daily_batch_capi(
         # ====================================================================
         # ETAPA 2: CALCULAR DECIS USANDO THRESHOLDS FIXOS
         # ====================================================================
-        # Criar DataFrame com lead_scores
-        leads_df = pd.DataFrame([
-            {
-                'email': lead['email'],
-                'lead_score': float(lead['lead_score']) if lead['lead_score'] not in [None, '', 'null'] else 0.0
-            }
-            for lead in request.leads if 'email' in lead and 'lead_score' in lead
-        ])
+        # Criar DataFrame com lead_scores - APENAS leads com score válido
+        # CORREÇÃO: Filtrar leads SEM score para evitar erro "list indices must be integers"
+        valid_leads = []
+        invalid_count = 0
+
+        for lead in request.leads:
+            if 'email' not in lead or 'lead_score' not in lead:
+                continue
+
+            score_val = lead['lead_score']
+
+            # Validar que score não é vazio/inválido
+            if score_val in [None, '', 'null', 'NaN'] or str(score_val).strip() == '':
+                invalid_count += 1
+                continue
+
+            try:
+                score_float = float(score_val)
+                # Validar range (0 < score <= 1)
+                if 0 < score_float <= 1:
+                    valid_leads.append({
+                        'email': lead['email'],
+                        'lead_score': score_float
+                    })
+                else:
+                    invalid_count += 1
+            except (ValueError, TypeError):
+                invalid_count += 1
+                continue
+
+        if invalid_count > 0:
+            logger.warning(f"⚠️ {invalid_count} leads com lead_score inválido/vazio ignorados")
+
+        leads_df = pd.DataFrame(valid_leads)
 
         if len(leads_df) == 0:
-            logger.warning("⚠️ Nenhum lead com email e lead_score encontrado")
+            logger.warning("⚠️ Nenhum lead com lead_score válido encontrado")
+            logger.warning("💡 Sugestão: Gere os scores primeiro usando /predict/batch")
             return {
                 "status": "error",
-                "message": "Nenhum lead válido encontrado",
-                "total": 0,
+                "message": "Nenhum lead com lead_score válido encontrado. Gere os scores primeiro usando /predict/batch antes de enviar para CAPI.",
+                "total": len(request.leads),
+                "valid_leads": 0,
+                "invalid_leads": invalid_count,
                 "success": 0,
                 "errors": 0
+            }
+
+        # Garantir que lead_score é numérico (conversão final)
+        leads_df['lead_score'] = pd.to_numeric(leads_df['lead_score'], errors='coerce')
+
+        # Remover qualquer NaN que possa ter sido gerado
+        nan_count = leads_df['lead_score'].isna().sum()
+        if nan_count > 0:
+            logger.warning(f"⚠️ {nan_count} scores NaN detectados e removidos")
+            leads_df = leads_df[leads_df['lead_score'].notna()].copy()
+
+        if len(leads_df) == 0:
+            logger.error("❌ Todos os scores são inválidos após conversão numérica")
+            return {
+                "status": "error",
+                "message": "Todos os scores são inválidos",
+                "total": len(request.leads),
+                "success": 0,
+                "errors": len(request.leads)
             }
 
         # Análise de scores
@@ -719,8 +771,8 @@ async def process_daily_batch_capi(
         logger.info(f"      - Com FBC: {leads_with_fbc}/{len(enriched_leads)} ({leads_with_fbc/len(enriched_leads)*100:.1f}%)")
         logger.info(f"      - Com AMBOS: {leads_with_both}/{len(enriched_leads)} ({leads_with_both/len(enriched_leads)*100:.1f}%)")
 
-        # Enviar batch
-        results = send_batch_events(enriched_leads)
+        # Enviar batch (com db session para registrar envios)
+        results = send_batch_events(enriched_leads, db=db)
 
         logger.info(f"✅ Batch CAPI processado: {results['success']}/{results['total']} enviados")
 
@@ -742,6 +794,46 @@ async def process_daily_batch_capi(
         logger.error(f"❌ Erro no batch CAPI: {str(e)}")
         logger.error(f"Stack trace: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Erro no batch CAPI: {str(e)}")
+
+@app.post("/capi/check_sent")
+async def check_capi_sent(
+    request: CapiCheckSentRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Verifica quais leads da lista já foram enviados para CAPI
+
+    Args:
+        request: Lista de emails para verificar
+
+    Returns:
+        {
+            "total_checked": int,
+            "sent_count": int,
+            "not_sent_count": int,
+            "sent_emails": List[str]
+        }
+    """
+    try:
+        from api.database import get_leads_already_sent_to_capi
+
+        logger.info(f"🔍 Verificando {len(request.emails)} emails nos logs CAPI")
+
+        # Buscar leads já enviados
+        sent_emails = get_leads_already_sent_to_capi(db, request.emails)
+
+        logger.info(f"✅ {len(sent_emails)}/{len(request.emails)} já foram enviados para CAPI")
+
+        return {
+            "total_checked": len(request.emails),
+            "sent_count": len(sent_emails),
+            "not_sent_count": len(request.emails) - len(sent_emails),
+            "sent_emails": sent_emails
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Erro ao verificar logs CAPI: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro ao verificar logs: {str(e)}")
 
 # === ANÁLISE UTM COM CUSTOS ===
 
@@ -1706,6 +1798,57 @@ async def bigquery_stats():
     except Exception as e:
         logger.error(f"❌ Erro ao buscar stats do BigQuery: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/admin/migrate_capi_sent_at")
+async def migrate_capi_sent_at(db: Session = Depends(get_db)):
+    """Endpoint temporário para executar migração da coluna capi_sent_at"""
+    try:
+        from sqlalchemy import text
+
+        logger.info("📝 Adicionando coluna capi_sent_at...")
+        db.execute(text("""
+            ALTER TABLE leads_capi
+            ADD COLUMN IF NOT EXISTS capi_sent_at TIMESTAMP NULL
+        """))
+        db.commit()
+        logger.info("✅ Coluna adicionada!")
+
+        logger.info("📝 Criando índice idx_capi_sent_at...")
+        db.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_capi_sent_at
+            ON leads_capi(capi_sent_at)
+        """))
+        db.commit()
+        logger.info("✅ Índice criado!")
+
+        logger.info("🔍 Verificando estrutura...")
+        result = db.execute(text("""
+            SELECT column_name, data_type, is_nullable
+            FROM information_schema.columns
+            WHERE table_name = 'leads_capi' AND column_name = 'capi_sent_at'
+        """))
+
+        row = result.fetchone()
+        if row:
+            return {
+                "status": "success",
+                "message": "Migração executada com sucesso",
+                "column": {
+                    "name": row[0],
+                    "type": row[1],
+                    "nullable": row[2]
+                }
+            }
+        else:
+            return {
+                "status": "error",
+                "message": "Coluna não encontrada após migração"
+            }
+
+    except Exception as e:
+        logger.error(f"❌ Erro na migração: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erro na migração: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
