@@ -400,6 +400,18 @@ async def webhook_lead_capture(
     Chamado pelo formulário frontend após envio do lead
     """
     try:
+        # Verificar se é página de parabéns - IGNORAR para evitar duplicatas
+        # Página de Parabéns captura dados incompletos (sem first_name/last_name)
+        # Lead já foi capturado corretamente na LP (inscricao)
+        event_url = lead_data.event_source_url or ''
+        if 'parabens' in event_url.lower():
+            logger.info(f"⏭️ Ignorando captura da página de Parabéns: {lead_data.email}")
+            return {
+                "status": "success",
+                "message": "Captura já realizada na LP",
+                "skipped": True
+            }
+
         # Capturar IP do cliente (real, não do proxy Cloud Run)
         client_ip = request.headers.get('X-Forwarded-For', request.client.host).split(',')[0].strip()
 
@@ -1849,6 +1861,56 @@ async def migrate_capi_sent_at(db: Session = Depends(get_db)):
         logger.error(f"❌ Erro na migração: {e}")
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Erro na migração: {str(e)}")
+
+
+@app.post("/admin/cleanup_duplicates")
+async def cleanup_duplicates(ids_to_delete: List[int], db: Session = Depends(get_db)):
+    """
+    Deleta registros duplicados da página Parabéns
+
+    SEGURANÇA:
+    - Requer lista explícita de IDs
+    - Executa em transação (rollback automático em caso de erro)
+    - Retorna estatísticas da deleção
+    """
+    try:
+        from sqlalchemy import text
+
+        if not ids_to_delete:
+            raise HTTPException(status_code=400, detail="Lista de IDs vazia")
+
+        if len(ids_to_delete) > 5000:
+            raise HTTPException(status_code=400, detail="Limite de 5000 IDs por execução")
+
+        logger.info(f"🗑️ Iniciando deleção de {len(ids_to_delete)} registros duplicados...")
+
+        # Executar deleção em batches de 100
+        batch_size = 100
+        total_deleted = 0
+
+        for i in range(0, len(ids_to_delete), batch_size):
+            batch = ids_to_delete[i:i+batch_size]
+            ids_str = ','.join(map(str, batch))
+
+            result = db.execute(text(f"DELETE FROM leads_capi WHERE id IN ({ids_str})"))
+            deleted = result.rowcount
+            total_deleted += deleted
+            logger.info(f"✅ Batch {i//batch_size + 1}: {deleted} registros deletados")
+
+        db.commit()
+        logger.info(f"✅ SUCESSO! Total deletado: {total_deleted} registros")
+
+        return {
+            "status": "success",
+            "total_deleted": total_deleted,
+            "expected": len(ids_to_delete),
+            "message": f"Deletados {total_deleted} registros duplicados"
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Erro na deleção: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erro na deleção: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

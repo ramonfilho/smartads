@@ -19,266 +19,24 @@ const META_ACCOUNT_ID = 'act_188005769808959';  // Los Angeles Producciones LTDA
 // MENU
 // =============================================================================
 
-function onOpen() {
+function aoAbrir() {
   const ui = SpreadsheetApp.getUi();
   ui.createMenu('Smart Ads')
-    .addItem('Ativar ML', 'activateML')
-    .addItem('Ativar Polling 5min', 'createPollingTrigger')
+    .addItem('Ativar Polling 5min', 'agendarGatilho5Min')
     .addSeparator()
     .addItem('Testar Conexão', 'testConnection')
     .addToUi();
 }
 
 // =============================================================================
-// FUNÇÃO PRINCIPAL: ATIVAR ML
-// =============================================================================
-
-/**
- * Ativa sistema ML:
- * 1. Processa leads pendentes (sem score)
- * 2. Cria triggers (1h + diário)
- * 3. Executa primeira atualização UTM
- */
-function activateML() {
-  try {
-    Logger.log('🚀 Ativando Smart Ads ML...');
-
-    const ui = SpreadsheetApp.getUi();
-
-    // Etapa 1: Processar leads pendentes (sem score)
-    Logger.log('📊 Processando leads pendentes...');
-    const pendingLeads = getLeadsPendingProcessing();
-
-    if (pendingLeads.leads.length > 0) {
-      Logger.log(`⚠️ Encontrados ${pendingLeads.leads.length} leads pendentes`);
-
-      // Gerar predições
-      generatePredictionsForPendingLeads(pendingLeads.leads);
-
-      // Enviar CAPI
-      sendCapiBatchForPendingLeads(pendingLeads.leads);
-
-      Logger.log('✅ Todos os leads pendentes foram processados');
-    } else {
-      Logger.log('✅ Nenhum lead pendente para processar');
-    }
-
-    // Etapa 2: Criar triggers (1h + diário às 00:00)
-    Logger.log('⏰ Configurando triggers...');
-    removeDailyTrigger();  // Remove triggers antigos se existirem
-    createDailyTrigger();
-
-    // Etapa 3: Executar primeira atualização com UTM OTIMIZADO (últimos 7 dias apenas)
-    Logger.log('🔄 Executando primeira atualização...');
-
-    // ========== INÍCIO DO UTM ANALYSIS OTIMIZADO (INLINE) ==========
-    try {
-      Logger.log('📊 Atualizando análises UTM (otimizado - últimos 7 dias)...');
-
-      const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('[LF] Pesquisa');
-      if (!sheet) throw new Error('Aba "[LF] Pesquisa" não encontrada');
-
-      // Ler dados da planilha
-      const values = sheet.getDataRange().getValues();
-      if (values.length <= 1) {
-        Logger.log('⚠️ Nenhum dado na planilha');
-      } else {
-        const headers = values[0];
-
-        // Calcular data de corte (7 dias atrás)
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-        sevenDaysAgo.setHours(0, 0, 0, 0);
-
-        Logger.log(`📅 Filtrando leads desde: ${sevenDaysAgo.toLocaleString()}`);
-
-        // Encontrar índice da coluna "Data"
-        const dataColumnIndex = headers.indexOf('Data');
-        if (dataColumnIndex === -1) {
-          throw new Error('Coluna "Data" não encontrada na planilha');
-        }
-
-        // Preparar leads para análise (apenas últimos 7 dias)
-        const leads = [];
-        let totalLeads = 0;
-        let filteredLeads = 0;
-
-        for (let i = 1; i < values.length; i++) {
-          totalLeads++;
-          const row = values[i];
-
-          // Obter data do lead
-          const leadDate = new Date(row[dataColumnIndex]);
-
-          // Filtrar apenas últimos 7 dias
-          if (leadDate >= sevenDaysAgo) {
-            filteredLeads++;
-            const leadData = {};
-
-            headers.forEach((header, index) => {
-              leadData[header] = row[index];
-            });
-
-            // Formato esperado pela API: {data: {...}}
-            leads.push({
-              data: leadData
-            });
-          }
-        }
-
-        Logger.log(`📋 Total de leads na planilha: ${totalLeads}`);
-        Logger.log(`📋 Leads dos últimos 7 dias: ${filteredLeads}`);
-        Logger.log(`📋 Enviando ${leads.length} leads para análise...`);
-
-        if (leads.length === 0) {
-          Logger.log('⚠️ Nenhum lead nos últimos 7 dias para análise');
-        } else {
-          // Chamar API de análise UTM
-          const payload = JSON.stringify({
-            leads: leads,
-            account_id: META_ACCOUNT_ID
-          });
-
-          const options = {
-            method: 'post',
-            contentType: 'application/json',
-            payload: payload,
-            muteHttpExceptions: true
-          };
-
-          const response = UrlFetchApp.fetch(`${API_URL}/analyze_utms_with_costs`, options);
-          const responseCode = response.getResponseCode();
-
-          if (responseCode !== 200) {
-            throw new Error(`API retornou erro: ${responseCode} - ${response.getContentText()}`);
-          }
-
-          const result = JSON.parse(response.getContentText());
-
-          Logger.log(`✅ Análise recebida: ${result.processing_time_seconds}s`);
-          Logger.log(`   Períodos: ${Object.keys(result.periods).join(', ')}`);
-
-          // Criar abas para períodos 1D, 3D, 7D (sem Total)
-          const periods = ['1D', '3D', '7D'];
-
-          // IMPORTANTE: Processar cada aba separadamente com tratamento de erro individual
-          // Se uma aba falhar, as outras ainda serão criadas
-          for (const period of periods) {
-            if (result.periods[period]) {
-              try {
-                Logger.log(`📝 Processando aba ${period}...`);
-                writeAnalysisSheet(period, result.periods[period], result.config);
-                Logger.log(`✅ Aba ${period} criada com sucesso`);
-              } catch (periodError) {
-                Logger.log(`❌ Erro ao criar aba ${period}: ${periodError.message}`);
-                // Não throw - continuar processando outras abas
-              }
-            }
-          }
-
-          Logger.log('✅ Análises UTM atualizadas');
-        }
-      }
-    } catch (error) {
-      Logger.log(`❌ Erro ao atualizar análises UTM: ${error.message}`);
-      throw error;
-    }
-    // ========== FIM DO UTM ANALYSIS OTIMIZADO (INLINE) ==========
-
-    updateModelInfoIfChanged();
-
-    Logger.log('✅ Smart Ads ML ativado com sucesso!');
-
-    ui.alert(
-      'ML Ativado',
-      'Smart Ads ML foi ativado com sucesso!\n\n' +
-      '✅ Leads pendentes: Processados\n' +
-      '✅ Execução a cada 1h: Configurada (CAPI)\n' +
-      '✅ Relatórios diários às 00:00: Configurados\n' +
-      '✅ Análises UTM: Atualizadas (últimos 7 dias)\n\n' +
-      'O sistema irá:\n' +
-      '- Enviar CAPI a cada 1 hora\n' +
-      '- Atualizar relatórios UTM às 00:00',
-      ui.ButtonSet.OK
-    );
-
-  } catch (error) {
-    Logger.log(`❌ Erro ao ativar ML: ${error.message}`);
-    Logger.log(error.stack);
-
-    SpreadsheetApp.getUi().alert(
-      'Erro ao Ativar ML',
-      `Não foi possível ativar o sistema:\n${error.message}`,
-      SpreadsheetApp.getUi().ButtonSet.OK
-    );
-  }
-}
-
-// =============================================================================
-// EXECUÇÃO DIÁRIA AUTOMÁTICA (Trigger 00:00)
-// =============================================================================
-
-/**
- * Executado diariamente à meia-noite via trigger
- * 1. Gera predições do dia anterior (ontem 00:00 → hoje 00:00)
- * 2. Atualiza análises UTM (1D, 3D, 7D)
- * 3. Atualiza "Info do Modelo" se metadados mudaram
- */
-// =============================================================================
 // FUNÇÕES PRINCIPAIS - NOVA ARQUITETURA (CAPI 1H + RELATÓRIOS DIÁRIOS)
 // =============================================================================
-
-/**
- * Execução a cada 1 hora (00:00, 01:00, 02:00, ..., 23:00)
- * RÁPIDA: ~15-25s
- *
- * Gera predições e envia CAPI para leads da última hora
- * Mantém o algoritmo do Meta sempre atualizado com sinais frescos
- */
-function execute1HourUpdate() {
-  try {
-    Logger.log('⚡ Executando atualização 1h - ' + new Date().toISOString());
-
-    // Buscar leads pendentes (sem score, após o último processado)
-    const pendingLeads = getLeadsPendingProcessing();
-
-    if (pendingLeads.leads.length === 0) {
-      Logger.log('✅ Nenhum lead pendente para processar');
-      return;
-    }
-
-    Logger.log(`📊 ${pendingLeads.leads.length} leads pendentes encontrados`);
-    Logger.log(`   Após: ${pendingLeads.lastProcessedDate ? pendingLeads.lastProcessedDate.toLocaleString() : 'nenhum anterior'}`);
-
-    // Etapa 1: Gerar predições para leads pendentes
-    Logger.log('🔮 Gerando predições...');
-    generatePredictionsForPendingLeads(pendingLeads.leads);
-
-    // Etapa 2: Enviar CAPI para leads processados
-    Logger.log('📤 Enviando batch CAPI...');
-    sendCapiBatchForPendingLeads(pendingLeads.leads);
-
-    Logger.log('✅ Atualização 1h concluída com sucesso');
-
-  } catch (error) {
-    Logger.log(`❌ Erro na atualização 1h: ${error.message}`);
-    Logger.log(error.stack);
-
-    // Enviar email de erro crítico
-    const email = Session.getEffectiveUser().getEmail();
-    MailApp.sendEmail({
-      to: email,
-      subject: '❌ Erro Smart Ads ML - Atualização 1h',
-      body: `Erro na execução 1h de ${new Date().toLocaleString()}:\n\n${error.message}\n\n${error.stack}`
-    });
-  }
-}
 
 /**
  * Busca leads pendentes de processamento (sem score, após o último processado)
  * Retorna: { leads: [...], lastProcessedDate: Date }
  */
-function getLeadsPendingProcessing() {
+function buscarLeadsPendentes() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('[LF] Pesquisa');
   if (!sheet) throw new Error('Aba "[LF] Pesquisa" não encontrada');
 
@@ -300,6 +58,12 @@ function getLeadsPendingProcessing() {
 
   for (let i = values.length - 1; i >= 1; i--) {
     const row = values[i];
+
+    // Ignorar cabeçalhos duplicados
+    if (row[dataColIndex] === 'Data' && row[headers.indexOf('E-mail')] === 'E-mail') {
+      continue;
+    }
+
     const hasScore = scoreColIndex !== -1 && row[scoreColIndex];
 
     if (hasScore) {
@@ -313,6 +77,13 @@ function getLeadsPendingProcessing() {
 
   for (let i = 1; i < values.length; i++) {
     const row = values[i];
+
+    // Ignorar cabeçalhos duplicados
+    if (row[dataColIndex] === 'Data' && row[headers.indexOf('E-mail')] === 'E-mail') {
+      Logger.log(`⚠️ Cabeçalho duplicado detectado na linha ${i + 1}, ignorando...`);
+      continue;
+    }
+
     const leadDate = new Date(row[dataColIndex]);
     const hasScore = scoreColIndex !== -1 && row[scoreColIndex];
 
@@ -343,7 +114,7 @@ function getLeadsPendingProcessing() {
 /**
  * Gera predições para leads pendentes
  */
-function generatePredictionsForPendingLeads(leads) {
+function gerarPredicoesLeadsPendentes(leads) {
   if (leads.length === 0) {
     Logger.log('✅ Nenhum lead para gerar predições');
     return;
@@ -418,7 +189,7 @@ function generatePredictionsForPendingLeads(leads) {
 /**
  * Envia CAPI para leads pendentes (após receber score)
  */
-function sendCapiBatchForPendingLeads(leads) {
+function enviarLoteCapiLeadsPendentes(leads) {
   if (leads.length === 0) {
     Logger.log('✅ Nenhum lead para enviar CAPI');
     return;
@@ -506,17 +277,17 @@ function sendCapiBatchForPendingLeads(leads) {
  * Atualiza relatórios UTM (análise completa de TODOS os dados históricos)
  * e informações do modelo ativo
  */
-function executeDailyReports() {
+function executarRelatoriosDiarios() {
   try {
     Logger.log('🌙 Executando relatórios diários - ' + new Date().toISOString());
 
     // Etapa 1: Atualizar análises UTM (PESADO - 3-5 min)
     Logger.log('📊 Atualizando análises UTM completas...');
-    updateUTMAnalysis();
+    atualizarAnaliseUTM();
 
     // Etapa 2: Atualizar Info do Modelo (se mudou)
     Logger.log('ℹ️ Verificando info do modelo...');
-    updateModelInfoIfChanged();
+    atualizarInfoModeloSeAlterado();
 
     Logger.log('✅ Relatórios diários concluídos com sucesso');
 
@@ -542,7 +313,7 @@ function executeDailyReports() {
  * Atualiza análises UTM (1D, 3D, 7D) com custos do Meta Ads
  * OTIMIZADO: Processa apenas últimos 7 dias para evitar erro 413
  */
-function updateUTMAnalysis() {
+function atualizarAnaliseUTM() {
   try {
     Logger.log('📊 Atualizando análises UTM (últimos 7 dias)...');
 
@@ -653,7 +424,7 @@ function updateUTMAnalysis() {
       if (result.periods[period]) {
         try {
           Logger.log(`📝 Processando aba ${period}...`);
-          writeAnalysisSheet(period, result.periods[period], result.config);
+          escreverAbaAnalise(period, result.periods[period], result.config);
           Logger.log(`✅ Aba ${period} criada com sucesso`);
         } catch (periodError) {
           Logger.log(`❌ Erro ao criar aba ${period}: ${periodError.message}`);
@@ -673,7 +444,7 @@ function updateUTMAnalysis() {
 /**
  * Atualiza aba "Info do Modelo" apenas se metadados mudaram
  */
-function updateModelInfoIfChanged() {
+function atualizarInfoModeloSeAlterado() {
   try {
     Logger.log('📊 Verificando atualização da Info do Modelo...');
 
@@ -699,7 +470,7 @@ function updateModelInfoIfChanged() {
     if (!infoSheet) {
       // Aba não existe, criar
       Logger.log('📋 Aba "Info do Modelo" não existe, criando...');
-      writeModelInfoSheet(modelInfo);
+      escreverAbaInfoModelo(modelInfo);
 
       // Salvar metadados na aba (hidden row)
       infoSheet = ss.getSheetByName('Info do Modelo');
@@ -722,7 +493,7 @@ function updateModelInfoIfChanged() {
 
     // Metadados mudaram, recriar aba
     Logger.log(`🔄 Metadados mudaram: ${savedModelName} → ${currentModelName}`);
-    writeModelInfoSheet(modelInfo);
+    escreverAbaInfoModelo(modelInfo);
 
     // Atualizar metadados salvos
     infoSheet = ss.getSheetByName('Info do Modelo');
@@ -742,59 +513,30 @@ function updateModelInfoIfChanged() {
 // =============================================================================
 
 /**
- * Cria NOVA ARQUITETURA de triggers:
- * - 1 trigger para execute1HourUpdate() a cada hora
- * - 1 trigger para executeDailyReports() às 00:00
+ * Remove apenas triggers obsoletos da arquitetura antiga
+ * Preserva: executeDailyReports (relatórios às 00:00)
  */
-function createDailyTrigger() {
-  // Remover triggers antigos primeiro
-  removeDailyTrigger();
-
-  Logger.log('🔧 Criando NOVA arquitetura de triggers (1h)...');
-
-  // 1️⃣ TRIGGER A CADA 1H: execute1HourUpdate()
-  ScriptApp.newTrigger('execute1HourUpdate')
-    .timeBased()
-    .everyHours(1)
-    .create();
-
-  Logger.log(`✅ Trigger criado: execute1HourUpdate() a cada 1 hora`);
-
-  // 2️⃣ TRIGGER DIÁRIO: executeDailyReports() às 00:00
-  ScriptApp.newTrigger('executeDailyReports')
-    .timeBased()
-    .atHour(0)
-    .everyDays(1)
-    .create();
-
-  Logger.log(`✅ Trigger diário criado para 00:00 → executeDailyReports()`);
-
-  Logger.log('✅ Nova arquitetura configurada: 1 trigger de 1h + 1 trigger diário');
-}
-
-/**
- * Remove TODOS os triggers antigos (legacy + novos)
- */
-function removeDailyTrigger() {
+function removerGatilhosObsoletos() {
   const triggers = ScriptApp.getProjectTriggers();
   let removedCount = 0;
 
   for (const trigger of triggers) {
     const funcName = trigger.getHandlerFunction();
 
-    // Remover triggers legados E novos
+    // Remover APENAS triggers obsoletos (arquitetura antiga)
     if (funcName === 'executeDailyMLUpdate' ||
         funcName === 'execute3HourUpdate' ||
-        funcName === 'execute1HourUpdate' ||
-        funcName === 'executeDailyReports') {
+        funcName === 'execute1HourUpdate') {
       ScriptApp.deleteTrigger(trigger);
       removedCount++;
-      Logger.log(`🗑️ Trigger removido: ${funcName}`);
+      Logger.log(`🗑️ Trigger obsoleto removido: ${funcName}`);
     }
   }
 
   if (removedCount > 0) {
-    Logger.log(`✅ ${removedCount} trigger(s) removido(s)`);
+    Logger.log(`✅ ${removedCount} trigger(s) obsoleto(s) removido(s)`);
+  } else {
+    Logger.log('✅ Nenhum trigger obsoleto encontrado');
   }
 }
 
@@ -805,7 +547,7 @@ function removeDailyTrigger() {
 /**
  * Escreve aba de análise UTM para um período
  */
-function writeAnalysisSheet(period, periodData, config) {
+function escreverAbaAnalise(period, periodData, config) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheetName = `Análise UTM - ${period}`;
 
@@ -1097,7 +839,7 @@ function writeAnalysisSheet(period, periodData, config) {
 /**
  * Escreve aba "Info do Modelo" com metadados e feature importances
  */
-function writeModelInfoSheet(modelInfo) {
+function escreverAbaInfoModelo(modelInfo) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheetName = 'Info do Modelo';
 
@@ -1279,7 +1021,7 @@ function writeModelInfoSheet(modelInfo) {
  *
  * Usa lock para evitar execuções simultâneas
  */
-function executePolling5Min() {
+function executarPolling5Min() {
   // Obter lock para evitar execuções simultâneas
   const lock = LockService.getScriptLock();
 
@@ -1294,7 +1036,7 @@ function executePolling5Min() {
     Logger.log('🔄 Polling 5min - ' + new Date().toISOString());
 
     // Buscar leads pendentes (sem score, após o último processado)
-    const pendingLeads = getLeadsPendingProcessing();
+    const pendingLeads = buscarLeadsPendentes();
 
     if (pendingLeads.leads.length === 0) {
       Logger.log('✅ Nenhum lead pendente');
@@ -1305,11 +1047,11 @@ function executePolling5Min() {
 
     // Etapa 1: Gerar predições para leads pendentes
     Logger.log('🔮 Gerando predições...');
-    generatePredictionsForPendingLeads(pendingLeads.leads);
+    gerarPredicoesLeadsPendentes(pendingLeads.leads);
 
     // Etapa 2: Enviar CAPI para leads processados
     Logger.log('📤 Enviando batch CAPI...');
-    sendCapiBatchForPendingLeads(pendingLeads.leads);
+    enviarLoteCapiLeadsPendentes(pendingLeads.leads);
 
     Logger.log('✅ Polling 5min concluído com sucesso');
 
@@ -1323,128 +1065,22 @@ function executePolling5Min() {
 }
 
 /**
- * Gera predição para um único lead
- */
-function generateSinglePrediction(lead, sheet, headers) {
-  try {
-    const payload = JSON.stringify({ leads: [lead] });
-
-    const options = {
-      method: 'post',
-      contentType: 'application/json',
-      payload: payload,
-      muteHttpExceptions: true
-    };
-
-    const response = UrlFetchApp.fetch(`${API_URL}/predict/batch`, options);
-    const responseCode = response.getResponseCode();
-
-    if (responseCode !== 200) {
-      return {
-        success: false,
-        error: `API retornou ${responseCode}: ${response.getContentText()}`
-      };
-    }
-
-    const result = JSON.parse(response.getContentText());
-
-    if (!result.predictions || result.predictions.length === 0) {
-      return {
-        success: false,
-        error: 'Nenhuma predição retornada'
-      };
-    }
-
-    const prediction = result.predictions[0];
-
-    // Escrever na planilha
-    let scoreColIndex = headers.indexOf('lead_score');
-    if (scoreColIndex === -1) {
-      // Adicionar coluna se não existe
-      sheet.getRange(1, headers.length + 1).setValue('lead_score');
-      scoreColIndex = headers.length;
-    }
-
-    const scoreCol = scoreColIndex + 1;
-    const rowNum = parseInt(lead.row_id);
-    sheet.getRange(rowNum, scoreCol).setValue(prediction.lead_score);
-    SpreadsheetApp.flush();
-
-    return {
-      success: true,
-      lead_score: prediction.lead_score
-    };
-
-  } catch (error) {
-    return {
-      success: false,
-      error: error.message
-    };
-  }
-}
-
-/**
- * Envia CAPI para um único lead
- */
-function sendSingleLeadCapi(lead, headers) {
-  try {
-    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('[LF] Pesquisa');
-    const values = sheet.getDataRange().getValues();
-    const rowNum = parseInt(lead.row_id);
-    const row = values[rowNum - 1];
-
-    const phoneColIndex = headers.indexOf('Telefone');
-
-    const leadData = {
-      email: lead.email,
-      phone: row[phoneColIndex],
-      lead_score: lead.data['lead_score'],
-      data: Utilities.formatDate(new Date(lead.data['Data']), Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ss")
-    };
-
-    // Adicionar todos os campos da pesquisa
-    headers.forEach((header, index) => {
-      if (header !== 'email' && header !== 'phone' && header !== 'lead_score' && header !== 'decil' && header !== 'data') {
-        leadData[header] = row[index];
-      }
-    });
-
-    const payload = {
-      leads: [leadData]
-    };
-
-    const options = {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    };
-
-    const response = UrlFetchApp.fetch(`${API_URL}/capi/process_daily_batch`, options);
-    const responseCode = response.getResponseCode();
-
-    if (responseCode === 200) {
-      const result = JSON.parse(response.getContentText());
-      Logger.log(`✅ CAPI enviado: ${result.success}/${result.total} eventos`);
-    } else {
-      Logger.log(`⚠️ Erro CAPI: ${responseCode} - ${response.getContentText()}`);
-    }
-
-  } catch (error) {
-    Logger.log(`❌ Erro ao enviar CAPI: ${error.message}`);
-  }
-}
-
-/**
- * Cria trigger de polling a cada 5 minutos
+ * Cria triggers de polling (5min) e relatórios diários (00:00)
  * Deve ser executado manualmente uma vez
  */
-function createPollingTrigger() {
-  // Remover triggers existentes de polling/onChange
+function agendarGatilho5Min() {
+  // Remover triggers existentes (antigos e novos)
   const triggers = ScriptApp.getProjectTriggers();
   for (const trigger of triggers) {
     const funcName = trigger.getHandlerFunction();
-    if (funcName === 'executePolling5Min' ||
+    // Remover triggers antigos E novos (para recriar)
+    if (funcName === 'executarPolling5Min' ||
+        funcName === 'executePolling5Min' ||
+        funcName === 'executarRelatoriosDiarios' ||
+        funcName === 'executeDailyReports' ||
+        funcName === 'execute1HourUpdate' ||
+        funcName === 'executeDailyMLUpdate' ||
+        funcName === 'execute3HourUpdate' ||
         funcName === 'onSheetChange' ||
         funcName === 'onFormSubmit') {
       ScriptApp.deleteTrigger(trigger);
@@ -1452,128 +1088,35 @@ function createPollingTrigger() {
     }
   }
 
-  // Criar novo trigger de polling a cada 5 minutos
-  ScriptApp.newTrigger('executePolling5Min')
+  // 1️⃣ Criar trigger de polling a cada 5 minutos
+  ScriptApp.newTrigger('executarPolling5Min')
     .timeBased()
     .everyMinutes(5)
     .create();
 
-  Logger.log('✅ Trigger polling 5min criado com sucesso');
+  Logger.log('✅ Trigger polling 5min criado: executarPolling5Min()');
+
+  // 2️⃣ Criar trigger diário às 00:00 para relatórios
+  ScriptApp.newTrigger('executarRelatoriosDiarios')
+    .timeBased()
+    .atHour(0)
+    .everyDays(1)
+    .create();
+
+  Logger.log('✅ Trigger diário criado: executarRelatoriosDiarios() às 00:00');
 
   SpreadsheetApp.getUi().alert(
-    'Polling Ativado',
-    'O polling de 5 minutos foi ativado!\n\n' +
-    'A cada 5 minutos, o sistema irá:\n' +
-    '1. Verificar leads sem score\n' +
-    '2. Gerar predições ML\n' +
-    '3. Enviar eventos CAPI\n\n' +
-    'Delay máximo: 5 minutos\n' +
-    'O batch de 1h continua como safety net.',
+    'Gatilhos Ativados',
+    'Sistema configurado com sucesso!\n\n' +
+    '✅ Polling 5min: executarPolling5Min()\n' +
+    '   → Verifica leads sem score\n' +
+    '   → Gera predições ML\n' +
+    '   → Envia eventos CAPI\n\n' +
+    '✅ Relatórios Diários: executarRelatoriosDiarios()\n' +
+    '   → Executa às 00:00\n' +
+    '   → Atualiza análises UTM (1D, 3D, 7D)\n' +
+    '   → Atualiza Info do Modelo',
     SpreadsheetApp.getUi().ButtonSet.OK
   );
 }
 
-// =============================================================================
-// ENVIO MANUAL PARA CAPI
-// =============================================================================
-
-/**
- * Envia TODOS os leads após 21/11 18:57:01 para CAPI
- * Apenas leads COM score válido são enviados
- */
-function sendAllLeadsAfterDateToCAPI() {
-  try {
-    Logger.log('🚀 Enviando leads para CAPI após 21/11 18:57:01...');
-
-    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('[LF] Pesquisa');
-    if (!sheet) {
-      throw new Error('Aba "[LF] Pesquisa" não encontrada');
-    }
-
-    const values = sheet.getDataRange().getValues();
-    const headers = values[0];
-    
-    const emailIndex = headers.indexOf('E-mail');
-    const phoneIndex = headers.indexOf('Telefone');
-    const dataIndex = headers.indexOf('Data');
-    const scoreIndex = 39; // Coluna de score
-    
-    if (emailIndex === -1 || phoneIndex === -1 || dataIndex === -1) {
-      throw new Error('Colunas necessárias não encontradas');
-    }
-    
-    const lastSuccessfulSend = new Date('2025-11-21T18:57:01');
-    const leads = [];
-    let skippedNoScore = 0;
-    let totalAfterDate = 0;
-    
-    for (let i = 1; i < values.length; i++) {
-      const row = values[i];
-      const leadDate = new Date(row[dataIndex]);
-      
-      if (leadDate > lastSuccessfulSend) {
-        totalAfterDate++;
-        const score = row[scoreIndex];
-        
-        // Validar que score existe e é válido
-        if (!score || score === '' || score === null || score === undefined) {
-          skippedNoScore++;
-          Logger.log(`⚠️ Lead ${row[emailIndex]} pulado: sem score`);
-          continue;
-        }
-        
-        const leadData = {
-          email: row[emailIndex],
-          phone: row[phoneIndex],
-          data: Utilities.formatDate(leadDate, Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ss"),
-          lead_score: parseFloat(score)
-        };
-        
-        // Adicionar outros campos
-        headers.forEach((header, index) => {
-          if (header && header !== '' && header !== 'Data' && header !== 'E-mail' && header !== 'Telefone') {
-            leadData[header] = row[index];
-          }
-        });
-        
-        leads.push(leadData);
-      }
-    }
-    
-    Logger.log(`📊 Total após 21/11 18:57:01: ${totalAfterDate}`);
-    Logger.log(`   ✅ Com score: ${leads.length}`);
-    Logger.log(`   ⚠️ Sem score (pulados): ${skippedNoScore}`);
-    
-    if (leads.length === 0) {
-      Logger.log('✅ Nenhum lead com score para enviar');
-      return;
-    }
-    
-    // Enviar para API
-    Logger.log(`📤 Enviando ${leads.length} leads para CAPI...`);
-    
-    const response = UrlFetchApp.fetch(`${API_URL}/capi/process_daily_batch`, {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify({ leads: leads }),
-      muteHttpExceptions: true
-    });
-    
-    const responseCode = response.getResponseCode();
-    const responseBody = response.getContentText();
-    
-    Logger.log(`📡 Resposta API: ${responseCode}`);
-    
-    if (responseCode === 200) {
-      const result = JSON.parse(responseBody);
-      Logger.log(`✅ Sucesso: ${result.success}/${result.total} eventos enviados`);
-      Logger.log(`   Leads com dados CAPI: ${result.leads_with_capi_data}`);
-    } else {
-      Logger.log(`❌ Erro: ${responseBody}`);
-    }
-    
-  } catch (error) {
-    Logger.log(`❌ Erro: ${error.message}`);
-    Logger.log(error.stack);
-  }
-}

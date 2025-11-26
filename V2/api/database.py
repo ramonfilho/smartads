@@ -229,16 +229,22 @@ def count_leads_with_fbc(db: Session) -> int:
     return db.query(LeadCAPI).filter(LeadCAPI.fbc.isnot(None)).count()
 
 def mark_lead_capi_sent(db: Session, email: str) -> bool:
-    """Marca lead como enviado para CAPI"""
+    """Marca TODOS os registros do lead como enviado para CAPI"""
     try:
-        lead = get_lead_by_email(db, email)
-        if lead:
+        # Buscar TODOS os registros com esse email (pode haver duplicatas)
+        leads = db.query(LeadCAPI).filter(LeadCAPI.email == email).all()
+
+        if not leads:
+            logger.warning(f"⚠️ Lead {email} não encontrado no banco")
+            return False
+
+        # Marcar todos os registros
+        for lead in leads:
             lead.capi_sent_at = func.now()
-            db.commit()
-            logger.info(f"✅ Lead {email} marcado como enviado para CAPI")
-            return True
-        logger.warning(f"⚠️ Lead {email} não encontrado no banco")
-        return False
+
+        db.commit()
+        logger.info(f"✅ {len(leads)} registro(s) de {email} marcados como enviado para CAPI")
+        return True
     except Exception as e:
         logger.error(f"❌ Erro ao marcar CAPI sent para {email}: {e}")
         db.rollback()
