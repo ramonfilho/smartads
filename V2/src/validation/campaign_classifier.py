@@ -1,0 +1,216 @@
+"""
+Módulo para classificação de campanhas em COM_ML vs SEM_ML.
+
+Identifica campanhas de captação que usaram ML vs outras abordagens.
+
+Lógica de classificação:
+1. Filtro base: Deve conter "DEVLF | CAP | FRIO" (campanhas de captação)
+2. COM_ML: Contém "MACHINE LEARNING"
+3. SEM_ML: Outros padrões (ESCALA SCORE, FAIXA A, etc.)
+4. EXCLUIR: Não contém filtro base (não é campanha de captação)
+"""
+
+import pandas as pd
+import numpy as np
+from typing import Optional
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def is_captacao_campaign(campaign_name: str) -> bool:
+    """
+    Verifica se é campanha de captação para lançamento.
+
+    Args:
+        campaign_name: Nome da campanha
+
+    Returns:
+        True se contém "DEVLF | CAP | FRIO"
+
+    Examples:
+        >>> is_captacao_campaign("DEVLF | CAP | FRIO | FASE 04 | ADV | MACHINE LEARNING")
+        True
+        >>> is_captacao_campaign("DEVLF | AQUECIMENTO | FASE 01")
+        False
+    """
+    if not campaign_name or pd.isna(campaign_name):
+        return False
+
+    campaign_lower = str(campaign_name).lower()
+    return 'devlf | cap | frio' in campaign_lower
+
+
+def classify_campaign(campaign_name: str) -> str:
+    """
+    Classifica campanha de captação em COM_ML, SEM_ML ou EXCLUIR.
+
+    Lógica:
+    1. Se não contém "DEVLF | CAP | FRIO" → 'EXCLUIR' (não é de captação)
+    2. Se contém "MACHINE LEARNING" → 'COM_ML'
+    3. Senão (ex: "ESCALA SCORE", "FAIXA A") → 'SEM_ML'
+
+    Args:
+        campaign_name: Nome da campanha
+
+    Returns:
+        'COM_ML', 'SEM_ML' ou 'EXCLUIR'
+
+    Examples:
+        >>> classify_campaign("DEVLF | CAP | FRIO | FASE 04 | ADV | MACHINE LEARNING | PG2")
+        'COM_ML'
+        >>> classify_campaign("DEVLF | CAP | FRIO | FASE 04 | ADV | ESCALA SCORE | PG2")
+        'SEM_ML'
+        >>> classify_campaign("DEVLF | AQUECIMENTO | FASE 01 | ...")
+        'EXCLUIR'
+        >>> classify_campaign(None)
+        'EXCLUIR'
+    """
+    if not campaign_name or pd.isna(campaign_name):
+        return 'EXCLUIR'
+
+    campaign_lower = str(campaign_name).lower()
+
+    # 1. Verificar se é campanha de captação
+    if 'devlf | cap | frio' not in campaign_lower:
+        return 'EXCLUIR'
+
+    # 2. Classificar COM_ML vs SEM_ML
+    if 'machine learning' in campaign_lower:
+        return 'COM_ML'
+    else:
+        return 'SEM_ML'
+
+
+def add_ml_classification(df: pd.DataFrame, campaign_col: str = 'campaign') -> pd.DataFrame:
+    """
+    Adiciona coluna 'ml_type' ao DataFrame e filtra campanhas excluídas.
+
+    Args:
+        df: DataFrame com dados de leads
+        campaign_col: Nome da coluna que contém o nome da campanha
+
+    Returns:
+        DataFrame filtrado com nova coluna 'ml_type'
+        (apenas campanhas COM_ML e SEM_ML, EXCLUIR removido)
+
+    Examples:
+        >>> df = pd.DataFrame({
+        ...     'campaign': [
+        ...         'DEVLF | CAP | FRIO | MACHINE LEARNING',
+        ...         'DEVLF | CAP | FRIO | ESCALA SCORE',
+        ...         'DEVLF | AQUECIMENTO | ...'
+        ...     ]
+        ... })
+        >>> result = add_ml_classification(df)
+        >>> len(result)  # Apenas 2 (EXCLUIR removido)
+        2
+        >>> list(result['ml_type'])
+        ['COM_ML', 'SEM_ML']
+    """
+    if campaign_col not in df.columns:
+        raise ValueError(f"Coluna '{campaign_col}' não encontrada no DataFrame")
+
+    logger.info("🏷️ Classificando campanhas...")
+
+    # Adicionar coluna ml_type
+    df['ml_type'] = df[campaign_col].apply(classify_campaign)
+
+    # Contar por tipo antes de filtrar
+    type_counts = df['ml_type'].value_counts()
+    logger.info(f"   Total por tipo:")
+    for ml_type, count in type_counts.items():
+        logger.info(f"     {ml_type}: {count} leads")
+
+    # Filtrar apenas campanhas de captação (COM_ML ou SEM_ML)
+    before_count = len(df)
+    df_filtered = df[df['ml_type'] != 'EXCLUIR'].copy()
+    after_count = len(df_filtered)
+
+    excluded_count = before_count - after_count
+    if excluded_count > 0:
+        logger.info(f"   ⚠️ {excluded_count} leads de campanhas não-captação foram excluídos")
+
+    # Calcular percentuais
+    if after_count > 0:
+        com_ml = len(df_filtered[df_filtered['ml_type'] == 'COM_ML'])
+        sem_ml = len(df_filtered[df_filtered['ml_type'] == 'SEM_ML'])
+
+        com_ml_pct = (com_ml / after_count) * 100
+        sem_ml_pct = (sem_ml / after_count) * 100
+
+        logger.info(f"   ✅ COM ML: {com_ml} leads ({com_ml_pct:.1f}%)")
+        logger.info(f"   ✅ SEM ML: {sem_ml} leads ({sem_ml_pct:.1f}%)")
+    else:
+        logger.warning("   ⚠️ Nenhuma campanha de captação encontrada!")
+
+    return df_filtered
+
+
+def get_classification_stats(df: pd.DataFrame) -> dict:
+    """
+    Retorna estatísticas sobre a classificação de campanhas.
+
+    Args:
+        df: DataFrame com coluna 'ml_type'
+
+    Returns:
+        Dicionário com estatísticas
+
+    Examples:
+        >>> df = pd.DataFrame({'ml_type': ['COM_ML', 'COM_ML', 'SEM_ML']})
+        >>> stats = get_classification_stats(df)
+        >>> stats['total']
+        3
+        >>> stats['com_ml_count']
+        2
+        >>> stats['com_ml_percentage']
+        66.67
+    """
+    if 'ml_type' not in df.columns:
+        raise ValueError("DataFrame deve conter coluna 'ml_type'")
+
+    total = len(df)
+    com_ml = len(df[df['ml_type'] == 'COM_ML'])
+    sem_ml = len(df[df['ml_type'] == 'SEM_ML'])
+
+    return {
+        'total': total,
+        'com_ml_count': com_ml,
+        'sem_ml_count': sem_ml,
+        'com_ml_percentage': round((com_ml / total * 100) if total > 0 else 0, 2),
+        'sem_ml_percentage': round((sem_ml / total * 100) if total > 0 else 0, 2),
+    }
+
+
+def list_unique_campaigns(df: pd.DataFrame, ml_type: Optional[str] = None) -> list:
+    """
+    Lista campanhas únicas, opcionalmente filtradas por tipo.
+
+    Args:
+        df: DataFrame com colunas 'campaign' e 'ml_type'
+        ml_type: Filtrar por tipo ('COM_ML', 'SEM_ML'), ou None para todos
+
+    Returns:
+        Lista de nomes de campanhas únicas
+
+    Examples:
+        >>> df = pd.DataFrame({
+        ...     'campaign': ['CAMP A', 'CAMP A', 'CAMP B'],
+        ...     'ml_type': ['COM_ML', 'COM_ML', 'SEM_ML']
+        ... })
+        >>> list_unique_campaigns(df, 'COM_ML')
+        ['CAMP A']
+    """
+    if 'campaign' not in df.columns:
+        raise ValueError("DataFrame deve conter coluna 'campaign'")
+
+    if ml_type:
+        if 'ml_type' not in df.columns:
+            raise ValueError("DataFrame deve conter coluna 'ml_type' quando ml_type é especificado")
+        df_filtered = df[df['ml_type'] == ml_type]
+    else:
+        df_filtered = df
+
+    campaigns = df_filtered['campaign'].dropna().unique().tolist()
+    return sorted(campaigns)

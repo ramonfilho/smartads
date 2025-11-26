@@ -1,0 +1,56 @@
+# Configuração do Sistema de Validação de Performance ML
+# Arquivo: configs/validation_config.yaml
+
+# Token de acesso da Meta Ads API
+meta_access_token: "EAAV..."  # TODO: Substituir pelo token real
+
+# Configurações globais
+product_value: 2000.00  # Valor do produto em R$
+max_match_days: 30      # Janela máxima para matching leads-vendas
+
+# Padrões de campanha
+campaign_filters:
+  base_pattern: "DEVLF | CAP | FRIO"  # Filtro base (campanhas de captação)
+  ml_pattern: "MACHINE LEARNING"       # Padrão para COM ML
+  non_ml_patterns:                     # Padrões para SEM ML
+    - "ESCALA SCORE"
+    - "FAIXA A"
+    - "FAIXA B"
+    - "FAIXA C"
+    - "FAIXA D"
+
+# Caminhos dos arquivos (únicos, contêm todo o período)
+paths:
+  leads: "validation/leads"      # CSV do Google Sheets
+  vendas: "validation/vendas"    # Excel Guru + TMB
+
+# Períodos de análise (para filtrar dados por data)
+periodos:
+  periodo_1:
+    name: "Lançamento 11/11"
+    start_date: "2025-11-11"
+    end_date: "2025-12-01"
+
+  periodo_2:
+    name: "Lançamento 18/11"
+    start_date: "2025-11-18"
+    end_date: "2025-12-08"
+
+  periodo_3:
+    name: "Lançamento 25/11"
+    start_date: "2025-11-25"
+    end_date: "2025-12-15"
+
+# Taxas de conversão esperadas (do modelo treinado)
+# Fonte: V2/api/business_config.py - CONVERSION_RATES
+expected_conversion_rates:
+  D1: 0.003836   # 0.38%
+  D2: 0.004933   # 0.49%
+  D3: 0.006421   # 0.64%
+  D4: 0.008366   # 0.84%
+  D5: 0.010896   # 1.09%
+  D6: 0.014197   # 1.42%
+  D7: 0.018499   # 1.85%
+  D8: 0.024105   # 2.41%
+  D9: 0.031412   # 3.14%
+  D10: 0.034551  # 3.46%
