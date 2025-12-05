@@ -60,6 +60,7 @@ class BatchPredictionRequest(BaseModel):
 class PredictionResult(BaseModel):
     """Resultado de uma predição"""
     lead_score: float
+    decil: str  # D1-D10
     email: Optional[str] = None
     row_id: Optional[str] = None
 
@@ -264,10 +265,32 @@ async def predict_batch_json(request: BatchPredictionRequest):
         if result_df is None or len(result_df) == 0:
             raise HTTPException(status_code=500, detail="Pipeline retornou resultado vazio")
 
+        # Calcular decis usando thresholds fixos
+        logger.info("🎯 Calculando decis...")
+        from src.model.decil_thresholds import atribuir_decis_batch
+
+        # Carregar thresholds do modelo ativo
+        thresholds = pipeline.predictor.metadata.get('decil_thresholds', {}).get('thresholds')
+
+        if not thresholds:
+            logger.error("❌ Thresholds não encontrados no metadata do modelo!")
+            raise HTTPException(
+                status_code=500,
+                detail="Thresholds não configurados no modelo."
+            )
+
+        # Calcular decis
+        scores = result_df['lead_score'].values
+        decis = atribuir_decis_batch(scores, thresholds)
+        result_df['decil'] = decis
+
+        logger.info(f"✅ Decis calculados: {pd.Series(decis).value_counts().sort_index().to_dict()}")
+
         # Processar resultados
         predictions = []
         for i, (_, row) in enumerate(result_df.iterrows()):
             lead_score = float(row['lead_score'])
+            decil = row['decil']
 
             # Recuperar metadados do lead original
             original_lead = request.leads[i] if i < len(request.leads) else None
@@ -276,6 +299,7 @@ async def predict_batch_json(request: BatchPredictionRequest):
 
             predictions.append(PredictionResult(
                 lead_score=lead_score,
+                decil=decil,
                 email=email,
                 row_id=row_id
             ))
@@ -360,6 +384,77 @@ async def predict_batch_csv(file: UploadFile = File(...)):
     finally:
         if temp_file and os.path.exists(temp_file):
             os.remove(temp_file)
+
+# === ENDPOINT PARA CÁLCULO DE DECIS (BACKFILL) ===
+
+class DecilCalculationRequest(BaseModel):
+    """Request para calcular decis de scores existentes"""
+    scores: List[float]
+
+class DecilCalculationResult(BaseModel):
+    """Resultado de um cálculo de decil"""
+    score: float
+    decil: str
+
+class DecilCalculationResponse(BaseModel):
+    """Response para cálculo de decis"""
+    total_scores: int
+    results: List[DecilCalculationResult]
+    timestamp: str
+
+@app.post("/calculate_decils", response_model=DecilCalculationResponse)
+async def calculate_decils(request: DecilCalculationRequest):
+    """
+    Calcula decis para scores já existentes (útil para backfill).
+
+    Args:
+        request: Lista de lead_scores
+
+    Returns:
+        Lista de scores + decis calculados
+    """
+    global pipeline
+
+    if pipeline is None:
+        if not initialize_pipeline():
+            raise HTTPException(status_code=500, detail="Pipeline não inicializado")
+
+    try:
+        logger.info(f"🎯 Calculando decis para {len(request.scores)} scores...")
+
+        # Carregar thresholds do modelo ativo
+        from src.model.decil_thresholds import atribuir_decis_batch
+
+        thresholds = pipeline.predictor.metadata.get('decil_thresholds', {}).get('thresholds')
+
+        if not thresholds:
+            logger.error("❌ Thresholds não encontrados no metadata do modelo!")
+            raise HTTPException(
+                status_code=500,
+                detail="Thresholds não configurados no modelo."
+            )
+
+        # Calcular decis
+        scores = np.array(request.scores)
+        decis = atribuir_decis_batch(scores, thresholds)
+
+        # Montar resposta
+        results = [
+            DecilCalculationResult(score=float(score), decil=decil)
+            for score, decil in zip(scores, decis)
+        ]
+
+        logger.info(f"✅ Decis calculados: {pd.Series(decis).value_counts().sort_index().to_dict()}")
+
+        return DecilCalculationResponse(
+            total_scores=len(results),
+            results=results,
+            timestamp=datetime.now().isoformat()
+        )
+
+    except Exception as e:
+        logger.error(f"❌ Erro ao calcular decis: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro ao calcular decis: {str(e)}")
 
 # === WEBHOOK PARA CAPTURA DE LEADS (CAPI) ===
 

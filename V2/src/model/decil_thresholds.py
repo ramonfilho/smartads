@@ -100,6 +100,20 @@ def _validar_thresholds(thresholds: dict):
                          f"{decil_atual}_max={max_atual:.4f} > {decil_prox}_min={min_prox:.4f}")
 
 
+def formatar_decil(decil: str) -> str:
+    """
+    Formata decil com zero à esquerda (D1 -> D01, D2 -> D02, ..., D10 -> D10).
+
+    Args:
+        decil: Decil no formato D1-D10
+
+    Returns:
+        Decil formatado (D01-D10)
+    """
+    num = int(decil.replace('D', ''))
+    return f'D{num:02d}'
+
+
 def atribuir_decil_por_threshold(score: float, thresholds: dict) -> str:
     """
     Atribui decil baseado em thresholds fixos.
@@ -109,7 +123,7 @@ def atribuir_decil_por_threshold(score: float, thresholds: dict) -> str:
         thresholds: Dict com thresholds por decil
 
     Returns:
-        Label do decil (D1-D10)
+        Label do decil formatado (D01-D10)
     """
     # Ordenar decis por threshold_min
     decis_ordenados = sorted(
@@ -120,15 +134,15 @@ def atribuir_decil_por_threshold(score: float, thresholds: dict) -> str:
     # Buscar decil apropriado
     for decil, limits in decis_ordenados:
         if limits['threshold_min'] <= score <= limits['threshold_max']:
-            return decil
+            return formatar_decil(decil)
 
     # Fallback: se score > max(D10), retornar D10
     if score > thresholds['D10']['threshold_max']:
-        return 'D10'
+        return formatar_decil('D10')
 
     # Fallback: se score < min(D1), retornar D1
     if score < thresholds['D1']['threshold_min']:
-        return 'D1'
+        return formatar_decil('D1')
 
     # Caso extremo: buscar decil mais próximo
     logger.warning(f"⚠️  Score {score:.4f} não encontrado em nenhum threshold, usando decil mais próximo")
@@ -139,7 +153,7 @@ def atribuir_decil_por_threshold(score: float, thresholds: dict) -> str:
         distancias.append((decil, abs(score - mid_point)))
 
     decil_mais_proximo = min(distancias, key=lambda x: x[1])[0]
-    return decil_mais_proximo
+    return formatar_decil(decil_mais_proximo)
 
 
 def atribuir_decis_batch(scores: np.ndarray, thresholds: dict) -> list:
@@ -151,7 +165,7 @@ def atribuir_decis_batch(scores: np.ndarray, thresholds: dict) -> list:
         thresholds: Dict com thresholds por decil
 
     Returns:
-        Lista de labels de decis (D1-D10)
+        Lista de labels de decis formatados (D01-D10)
     """
     return [atribuir_decil_por_threshold(score, thresholds) for score in scores]
 

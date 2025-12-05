@@ -41,6 +41,7 @@ class LeadDataLoader:
 
     def __init__(self):
         self.required_columns = ['Data', 'E-mail', 'Campaign']
+        self._thresholds_cache = None  # Cache dos thresholds do modelo
 
     def load_leads_csv(self, csv_path: str) -> pd.DataFrame:
         """
@@ -101,12 +102,15 @@ class LeadDataLoader:
         # Lead Score e Decil
         df_norm['lead_score'] = df.get('lead_score', np.nan)
 
-        # Extrair decil se houver coluna 'Faixa' ou criar a partir do score
-        if 'Faixa' in df.columns and df['Faixa'].notna().any():
-            df_norm['decile'] = df['Faixa']
-        elif 'lead_score' in df.columns and df['lead_score'].notna().any():
-            # Atribuir decil baseado nos thresholds do modelo
+        # Extrair decil: PRIORIZAR lead_score (ML) sobre Faixa (legacy)
+        if 'lead_score' in df.columns and df['lead_score'].notna().any():
+            # PRIORITY 1: ML model scores (53.3% coverage)
             df_norm['decile'] = df['lead_score'].apply(self._assign_decile_from_score)
+            logger.info(f"   ✅ Decis atribuídos via lead_score: {df_norm['decile'].notna().sum()}/{len(df_norm)}")
+        elif 'Faixa' in df.columns and df['Faixa'].notna().any():
+            # FALLBACK: Legacy classification (4.3% coverage)
+            df_norm['decile'] = df['Faixa']
+            logger.info(f"   ⚠️ Decis atribuídos via Faixa (legacy): {df_norm['decile'].notna().sum()}/{len(df_norm)}")
         else:
             df_norm['decile'] = None
             logger.warning("⚠️ Nenhuma coluna de score/decil encontrada")
@@ -123,41 +127,75 @@ class LeadDataLoader:
 
         return df_norm
 
-    def _assign_decile_from_score(self, score: float) -> Optional[str]:
+    def _get_thresholds(self) -> dict:
         """
-        Atribui decil baseado no score usando thresholds fixos do modelo.
+        Carrega thresholds do JSON do modelo (lazy loading com cache).
 
-        Thresholds definidos em:
+        Returns:
+            Dict com thresholds por decil no formato:
+            {'D1': {'threshold_min': ..., 'threshold_max': ...}, ...}
+        """
+        if self._thresholds_cache is None:
+            import json
+
+            # Caminho para o JSON canônico do modelo ativo
+            metadata_path = Path(__file__).parent.parent.parent / \
+                "files" / "20251111_212345" / \
+                "model_metadata_v1_devclub_rf_temporal_single.json"
+
+            if not metadata_path.exists():
+                raise FileNotFoundError(
+                    f"Arquivo de metadata do modelo não encontrado: {metadata_path}"
+                )
+
+            with open(metadata_path, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+
+            self._thresholds_cache = metadata['decil_thresholds']['thresholds']
+            logger.debug(f"✅ Thresholds carregados do modelo: {len(self._thresholds_cache)} decis")
+
+        return self._thresholds_cache
+
+    def _assign_decile_from_score(self, score) -> Optional[str]:
+        """
+        Atribui decil baseado no score usando módulo decil_thresholds.
+
+        Usa thresholds do JSON canônico do modelo ativo:
         V2/files/20251111_212345/model_metadata_v1_devclub_rf_temporal_single.json
+
+        Args:
+            score: Lead score (0-1), pode ser string com vírgula
+
+        Returns:
+            Label do decil (D1-D10) ou None se score inválido
         """
         if pd.isna(score):
             return None
 
-        # Thresholds dos decis (min, max)
-        thresholds = {
-            'D1': (0.0338, 0.1280),
-            'D2': (0.1280, 0.1591),
-            'D3': (0.1591, 0.1868),
-            'D4': (0.1868, 0.2165),
-            'D5': (0.2165, 0.2475),
-            'D6': (0.2475, 0.2847),
-            'D7': (0.2847, 0.3295),
-            'D8': (0.3295, 0.3787),
-            'D9': (0.3787, 0.4575),
-            'D10': (0.4576, 0.7944),
-        }
+        # Convert string to float (handle comma decimal separator)
+        if isinstance(score, str):
+            try:
+                # Replace comma with dot: "0,1572" → "0.1572"
+                score_float = float(score.replace(',', '.'))
+            except (ValueError, AttributeError):
+                logger.warning(f"⚠️ Score inválido (não numérico): {score}")
+                return None
+        else:
+            score_float = float(score)
 
-        for decile, (min_val, max_val) in thresholds.items():
-            if min_val <= score <= max_val:
-                return decile
+        # Validate range
+        if not (0 <= score_float <= 1):
+            logger.warning(f"⚠️ Score fora do range [0,1]: {score_float}")
+            return None
 
-        # Se score está fora dos thresholds, atribuir extremos
-        if score < 0.0338:
-            return 'D1'
-        elif score > 0.7944:
-            return 'D10'
+        # Importar função do módulo existente
+        from src.model.decil_thresholds import atribuir_decil_por_threshold
 
-        return None
+        # Carregar thresholds (com cache)
+        thresholds = self._get_thresholds()
+
+        # Atribuir decil usando função do módulo
+        return atribuir_decil_por_threshold(score_float, thresholds)
 
 
 class SalesDataLoader:
@@ -342,7 +380,7 @@ class SalesDataLoader:
 
         # Data da venda (tentar múltiplas colunas)
         date_col = None
-        for col in ['Data Pedido', 'Data do Pedido', 'Data']:
+        for col in ['Data Efetivado', 'Data Pedido', 'Data do Pedido', 'Data']:
             if col in df_combined.columns:
                 date_col = col
                 break

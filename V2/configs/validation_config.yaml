@@ -21,36 +21,110 @@ campaign_filters:
 
 # Caminhos dos arquivos (únicos, contêm todo o período)
 paths:
-  leads: "validation/leads"      # CSV do Google Sheets
-  vendas: "validation/vendas"    # Excel Guru + TMB
+  leads: "files/validation/leads"      # CSV do Google Sheets
+  vendas: "files/validation/vendas"    # Excel Guru + TMB
 
-# Períodos de análise (para filtrar dados por data)
+# ============================================================================
+# LÓGICA DE PERÍODOS DE ANÁLISE
+# ============================================================================
+#
+# Cada análise possui 3 períodos distintos:
+#
+# SEMANA 1 - CAPTAÇÃO DE LEADS (7 dias):
+#   - Início: Terça-feira
+#   - Fim: Segunda-feira (7 dias depois)
+#   - Objetivo: Período de geração de leads pelas campanhas
+#
+# SEMANA 2 - ANÁLISE DE CPL (6 dias):
+#   - Início: Terça-feira (dia seguinte ao fim da captação)
+#   - Fim: Domingo (6 dias depois)
+#   - Objetivo: Análise de custo por lead antes da abertura do carrinho
+#   - Nota: Este período é opcional para análises específicas de CPL
+#
+# SEMANA 3 - VENDAS (7 dias):
+#   - Início: Segunda-feira (abertura do carrinho)
+#   - Fim: Domingo (fechamento do carrinho - 7 dias depois)
+#   - Objetivo: Período de matching leads → vendas
+#
+# EXEMPLO:
+#   Captação: 28/10 (Ter) a 03/11 (Seg) = 7 dias
+#   CPL:      04/11 (Ter) a 09/11 (Dom) = 6 dias
+#   Vendas:   10/11 (Seg) a 16/11 (Dom) = 7 dias
+#
+# IMPORTANTE: Sempre usar --sales-start-date e --sales-end-date para
+# especificar o período de vendas separadamente do período de captação!
+# ============================================================================
+
 periodos:
   periodo_1:
     name: "Lançamento 11/11"
+    # Captação de leads
     start_date: "2025-11-11"
     end_date: "2025-12-01"
+    # Vendas (matching) - 7 dias após o fim da captação
+    sales_start_date: "2025-12-02"
+    sales_end_date: "2025-12-08"
 
   periodo_2:
     name: "Lançamento 18/11"
     start_date: "2025-11-18"
     end_date: "2025-12-08"
+    sales_start_date: "2025-12-09"
+    sales_end_date: "2025-12-15"
 
   periodo_3:
     name: "Lançamento 25/11"
     start_date: "2025-11-25"
     end_date: "2025-12-15"
+    sales_start_date: "2025-12-16"
+    sales_end_date: "2025-12-22"
 
-# Taxas de conversão esperadas (do modelo treinado)
-# Fonte: V2/api/business_config.py - CONVERSION_RATES
+  # Exemplo do período problemático (28/10 a 03/11)
+  periodo_exemplo_28_10:
+    name: "Exemplo 28/10"
+    # Captação: Terça 28/10 a Segunda 03/11 (7 dias)
+    start_date: "2025-10-28"
+    end_date: "2025-11-03"
+    # CPL: Terça 04/11 a Domingo 09/11 (6 dias)
+    cpl_start_date: "2025-11-04"
+    cpl_end_date: "2025-11-09"
+    # Vendas: Segunda 10/11 a Domingo 16/11 (7 dias)
+    sales_start_date: "2025-11-10"
+    sales_end_date: "2025-11-16"
+
+# ============================================================================
+# TAXAS DE CONVERSÃO ESPERADAS (CORRIGIDAS POR RECALL)
+# ============================================================================
+#
+# Fonte: V2/api/business_config.py - CONVERSION_RATES (linhas 71-82)
+# Última atualização: 2025-11-10
+#
+# METODOLOGIA:
+#   - Taxas observadas no test set: Conversões reais durante treinamento
+#   - Recall de matching: 55.7% (769 conversões observadas / 1,380 vendas reais)
+#   - Fator de correção: 1.795x (1 / 0.557)
+#   - Taxa corrigida = Taxa observada × 1.795
+#
+# POR QUE CORRIGIR POR RECALL?
+#   O sistema de matching lead→venda é imperfeito devido a:
+#   - Emails diferentes entre pesquisa e compra
+#   - Telefones inválidos/incomparáveis
+#   - Dados ausentes
+#
+#   Logo, as taxas corrigidas refletem a performance ESPERADA considerando
+#   as limitações do matching em produção.
+#
+# NOTA: Quebras de monotonia (D3 < D2, D5 < D4) são do dataset real.
+# ============================================================================
+
 expected_conversion_rates:
-  D1: 0.003836   # 0.38%
-  D2: 0.004933   # 0.49%
-  D3: 0.006421   # 0.64%
-  D4: 0.008366   # 0.84%
-  D5: 0.010896   # 1.09%
-  D6: 0.014197   # 1.42%
-  D7: 0.018499   # 1.85%
-  D8: 0.024105   # 2.41%
-  D9: 0.031412   # 3.14%
-  D10: 0.034551  # 3.46%
+  D1: 0.003836   # 0.38% | Corrigido de 0.21% (×1.795)
+  D2: 0.004933   # 0.49% | Corrigido de 0.27% (×1.795)
+  D3: 0.003838   # 0.38% | Corrigido de 0.21% (×1.795) - quebra monotonia vs D2
+  D4: 0.010415   # 1.04% | Corrigido de 0.58% (×1.795)
+  D5: 0.005480   # 0.55% | Corrigido de 0.31% (×1.795) - quebra monotonia vs D4
+  D6: 0.012064   # 1.21% | Corrigido de 0.67% (×1.795)
+  D7: 0.012059   # 1.21% | Corrigido de 0.67% (×1.795)
+  D8: 0.018636   # 1.86% | Corrigido de 1.04% (×1.795)
+  D9: 0.025207   # 2.52% | Corrigido de 1.40% (×1.795)
+  D10: 0.034551  # 3.45% | Corrigido de 1.92% (×1.795)

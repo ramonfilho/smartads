@@ -19,13 +19,24 @@ const META_ACCOUNT_ID = 'act_188005769808959';  // Los Angeles Producciones LTDA
 // MENU
 // =============================================================================
 
-function aoAbrir() {
+/**
+ * Função executada automaticamente quando a planilha é aberta
+ * Trigger padrão do Google Sheets
+ */
+function onOpen() {
   const ui = SpreadsheetApp.getUi();
   ui.createMenu('Smart Ads')
     .addItem('Ativar Polling 5min', 'agendarGatilho5Min')
     .addSeparator()
     .addItem('Testar Conexão', 'testConnection')
     .addToUi();
+}
+
+/**
+ * Alias para compatibilidade
+ */
+function aoAbrir() {
+  onOpen();
 }
 
 // =============================================================================
@@ -170,20 +181,34 @@ function gerarPredicoesLeadsPendentes(leads) {
   // Escrever predições na planilha
   Logger.log(`💾 Escrevendo ${allPredictions.length} predições na planilha...`);
 
+  // Verificar/criar coluna lead_score
   if (scoreColIndex === -1) {
-    // Adicionar coluna se não existe
     sheet.getRange(1, headers.length + 1).setValue('lead_score');
   }
 
   const scoreCol = scoreColIndex !== -1 ? scoreColIndex + 1 : headers.length + 1;
 
+  // Verificar/criar coluna decil (ao lado de lead_score)
+  const decilColIndex = headers.indexOf('decil');
+  let decilCol;
+
+  if (decilColIndex === -1) {
+    // Coluna decil não existe, criar ao lado de lead_score
+    decilCol = scoreCol + 1;
+    sheet.getRange(1, decilCol).setValue('decil');
+  } else {
+    decilCol = decilColIndex + 1;
+  }
+
+  // Escrever score e decil
   for (const pred of allPredictions) {
     const rowNum = parseInt(pred.row_id);
     sheet.getRange(rowNum, scoreCol).setValue(pred.lead_score);
+    sheet.getRange(rowNum, decilCol).setValue(pred.decil);
   }
 
   SpreadsheetApp.flush();
-  Logger.log(`✅ Predições escritas com sucesso`);
+  Logger.log(`✅ Predições (score + decil) escritas com sucesso`);
 }
 
 /**
@@ -1119,4 +1144,3 @@ function agendarGatilho5Min() {
     SpreadsheetApp.getUi().ButtonSet.OK
   );
 }
-

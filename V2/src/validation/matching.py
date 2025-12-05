@@ -20,21 +20,21 @@ logger = logging.getLogger(__name__)
 def match_leads_to_sales(
     leads_df: pd.DataFrame,
     sales_df: pd.DataFrame,
-    max_days_window: int = 30
+    use_temporal_validation: bool = False
 ) -> pd.DataFrame:
     """
-    Vincula leads com vendas usando email/telefone e validação temporal.
+    Vincula leads com vendas usando email/telefone.
 
     Lógica de matching:
     1. Match por email (normalizado)
     2. Match por telefone (se email não bateu)
     3. Venda deve ocorrer APÓS captura do lead
-    4. Venda deve estar dentro da janela temporal (max_days_window)
+    4. [Opcional] Validação temporal pode ser desabilitada para análise de resultados
 
     Args:
         leads_df: DataFrame de leads (data_loader.LeadDataLoader)
         sales_df: DataFrame de vendas (data_loader.SalesDataLoader)
-        max_days_window: Janela máxima em dias entre captura e venda
+        use_temporal_validation: Se True, aplica janela de 30 dias. Se False, sem restrição temporal.
 
     Returns:
         DataFrame de leads com colunas adicionadas:
@@ -44,7 +44,8 @@ def match_leads_to_sales(
         - sale_origin: str ('guru', 'tmb', ou None)
         - match_method: str ('email', 'telefone', ou None)
     """
-    logger.info(f"🔗 Iniciando matching (janela: {max_days_window} dias)")
+    mode = "com validação temporal (30 dias)" if use_temporal_validation else "sem validação temporal"
+    logger.info(f"🔗 Iniciando matching ({mode})")
     logger.info(f"   Leads: {len(leads_df)}")
     logger.info(f"   Vendas: {len(sales_df)}")
 
@@ -103,7 +104,7 @@ def match_leads_to_sales(
         matched = False
         if pd.notna(lead_email) and lead_email in sales_by_email:
             for sale in sales_by_email[lead_email]:
-                if _is_valid_match(lead_date, sale['sale_date'], max_days_window):
+                if not use_temporal_validation or _is_valid_match(lead_date, sale['sale_date']):
                     leads.at[idx, 'converted'] = True
                     leads.at[idx, 'sale_value'] = sale['sale_value']
                     leads.at[idx, 'sale_date'] = sale['sale_date']
@@ -116,7 +117,7 @@ def match_leads_to_sales(
         # Se não bateu por email, tentar por telefone
         if not matched and pd.notna(lead_phone) and lead_phone in sales_by_phone:
             for sale in sales_by_phone[lead_phone]:
-                if _is_valid_match(lead_date, sale['sale_date'], max_days_window):
+                if not use_temporal_validation or _is_valid_match(lead_date, sale['sale_date']):
                     leads.at[idx, 'converted'] = True
                     leads.at[idx, 'sale_value'] = sale['sale_value']
                     leads.at[idx, 'sale_date'] = sale['sale_date']
@@ -138,18 +139,16 @@ def match_leads_to_sales(
     return leads
 
 
-def _is_valid_match(lead_date: pd.Timestamp, sale_date: pd.Timestamp, max_days: int) -> bool:
+def _is_valid_match(lead_date: pd.Timestamp, sale_date: pd.Timestamp) -> bool:
     """
-    Valida se uma venda é válida para um lead.
+    Valida se uma venda é válida para um lead (apenas temporal básico).
 
-    Critérios:
-    1. Venda deve ocorrer APÓS a captura do lead
-    2. Venda deve estar dentro da janela temporal
+    Critério:
+    1. Venda deve ocorrer APÓS a captura do lead (ou no mesmo dia)
 
     Args:
         lead_date: Data de captura do lead
         sale_date: Data da venda
-        max_days: Janela máxima em dias
 
     Returns:
         True se é um match válido
@@ -157,29 +156,24 @@ def _is_valid_match(lead_date: pd.Timestamp, sale_date: pd.Timestamp, max_days: 
     if pd.isna(lead_date) or pd.isna(sale_date):
         return False
 
-    # Venda deve ser depois do lead
-    if sale_date < lead_date:
-        return False
-
-    # Venda deve estar dentro da janela
-    days_diff = (sale_date - lead_date).days
-    if days_diff > max_days:
-        return False
-
-    return True
+    # Venda deve ser no mesmo dia ou depois do lead
+    return sale_date >= lead_date
 
 
-def get_matching_stats(matched_df: pd.DataFrame) -> Dict:
+def get_matching_stats(matched_df: pd.DataFrame, total_sales: int = None) -> Dict:
     """
     Calcula estatísticas sobre o matching realizado.
 
     Args:
         matched_df: DataFrame com resultados do matching
+        total_sales: Total de vendas reais (do período), não apenas as identificadas
 
     Returns:
         Dicionário com estatísticas:
         - total_leads: Total de leads
-        - total_conversions: Total de conversões
+        - total_sales: Total de vendas reais (do período)
+        - total_conversions: Total de conversões identificadas (matched)
+        - tracking_rate: Taxa de trackeamento (conversões identificadas / vendas reais * 100)
         - conversion_rate: Taxa de conversão (%)
         - matched_by_email: Conversões via email
         - matched_by_phone: Conversões via telefone
@@ -195,6 +189,7 @@ def get_matching_stats(matched_df: pd.DataFrame) -> Dict:
     total_conversions = len(converted)
 
     conversion_rate = (total_conversions / total_leads * 100) if total_leads > 0 else 0
+    tracking_rate = (total_conversions / total_sales * 100) if (total_sales and total_sales > 0) else 100.0
 
     matched_by_email = len(converted[converted['match_method'] == 'email'])
     matched_by_phone = len(converted[converted['match_method'] == 'telefone'])
@@ -210,7 +205,9 @@ def get_matching_stats(matched_df: pd.DataFrame) -> Dict:
 
     return {
         'total_leads': total_leads,
+        'total_sales': total_sales if total_sales else total_conversions,
         'total_conversions': total_conversions,
+        'tracking_rate': round(tracking_rate, 2),
         'conversion_rate': round(conversion_rate, 2),
         'matched_by_email': matched_by_email,
         'matched_by_phone': matched_by_phone,
@@ -284,12 +281,17 @@ def filter_by_period(
     start = pd.to_datetime(start_date)
     end = pd.to_datetime(end_date)
 
-    logger.info(f"📅 Filtrando por período: {start_date} a {end_date}")
+    # Ajustar end para incluir o dia inteiro (até 23:59:59.999)
+    # Quando passamos '2025-11-03', pd.to_datetime converte para '2025-11-03 00:00:00'
+    # Precisamos incluir TODO o dia 03/11, então usamos < próximo dia
+    end_inclusive = end + pd.Timedelta(days=1)
+
+    logger.info(f"📅 Filtrando por período: {start_date} a {end_date} (dia inteiro)")
 
     before = len(df)
     df_filtered = df[
         (df[date_col] >= start) &
-        (df[date_col] <= end)
+        (df[date_col] < end_inclusive)  # < próximo dia para incluir todo o end_date
     ].copy()
     after = len(df_filtered)
 
