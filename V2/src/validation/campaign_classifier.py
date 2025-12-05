@@ -76,7 +76,7 @@ def classify_campaign(campaign_name: str) -> str:
         return 'EXCLUIR'
 
     # 2. Classificar COM_ML vs SEM_ML
-    if 'machine learning' in campaign_lower:
+    if 'machine learning' in campaign_lower or '| ml |' in campaign_lower:
         return 'COM_ML'
     else:
         return 'SEM_ML'
@@ -214,3 +214,140 @@ def list_unique_campaigns(df: pd.DataFrame, ml_type: Optional[str] = None) -> li
 
     campaigns = df_filtered['campaign'].dropna().unique().tolist()
     return sorted(campaigns)
+
+
+# =============================================================================
+# CLASSIFICAÇÃO CAPI (COM vs SEM EVENTOS CUSTOMIZADOS)
+# =============================================================================
+
+def classify_campaign_capi(optimization_goal: str) -> str:
+    """
+    Classifica campanha baseado no optimization_goal (eventos CAPI).
+
+    Lógica:
+    - COM_CAPI: optimization_goal é 'LeadQualified' ou 'LeadQualifiedHighQuality'
+    - SEM_CAPI: qualquer outro optimization_goal (LEAD, OFFSITE_CONVERSIONS, etc.)
+
+    Args:
+        optimization_goal: String com optimization_goal do adset
+
+    Returns:
+        'COM_CAPI' ou 'SEM_CAPI'
+
+    Examples:
+        >>> classify_campaign_capi('LeadQualified')
+        'COM_CAPI'
+        >>> classify_campaign_capi('LeadQualifiedHighQuality')
+        'COM_CAPI'
+        >>> classify_campaign_capi('LEAD')
+        'SEM_CAPI'
+        >>> classify_campaign_capi(None)
+        'SEM_CAPI'
+    """
+    if not optimization_goal or pd.isna(optimization_goal):
+        return 'SEM_CAPI'
+
+    optimization_goal_str = str(optimization_goal)
+
+    # Eventos CAPI customizados
+    if optimization_goal_str in ['LeadQualified', 'LeadQualifiedHighQuality']:
+        return 'COM_CAPI'
+    else:
+        return 'SEM_CAPI'
+
+
+def add_capi_classification(df: pd.DataFrame, optimization_goal_col: str = 'optimization_goal') -> pd.DataFrame:
+    """
+    Adiciona coluna 'capi_type' ao DataFrame baseado no optimization_goal.
+
+    IMPORTANTE: Esta classificação é INDEPENDENTE da classificação ML (ml_type).
+    Uma campanha pode ser:
+    - COM_ML + COM_CAPI: Usa dashboard E eventos CAPI
+    - COM_ML + SEM_CAPI: Usa dashboard mas sem eventos CAPI
+    - SEM_ML + COM_CAPI: Não usa dashboard mas usa eventos CAPI
+    - SEM_ML + SEM_CAPI: Não usa dashboard nem eventos CAPI
+
+    Args:
+        df: DataFrame com dados de leads
+        optimization_goal_col: Nome da coluna que contém optimization_goal
+
+    Returns:
+        DataFrame com nova coluna 'capi_type'
+
+    Examples:
+        >>> df = pd.DataFrame({
+        ...     'campaign': ['CAMP A', 'CAMP B'],
+        ...     'optimization_goal': ['LeadQualified', 'LEAD']
+        ... })
+        >>> result = add_capi_classification(df)
+        >>> list(result['capi_type'])
+        ['COM_CAPI', 'SEM_CAPI']
+    """
+    if optimization_goal_col not in df.columns:
+        logger.warning(f"⚠️ Coluna '{optimization_goal_col}' não encontrada no DataFrame")
+        logger.warning(f"   Todas as campanhas serão classificadas como SEM_CAPI")
+        df['capi_type'] = 'SEM_CAPI'
+        return df
+
+    logger.info("🎯 Classificando campanhas por CAPI...")
+
+    # Adicionar coluna capi_type
+    df['capi_type'] = df[optimization_goal_col].apply(classify_campaign_capi)
+
+    # Contar por tipo
+    type_counts = df['capi_type'].value_counts()
+    logger.info(f"   Total por tipo CAPI:")
+    for capi_type, count in type_counts.items():
+        logger.info(f"     {capi_type}: {count} leads")
+
+    # Calcular percentuais
+    total_count = len(df)
+    if total_count > 0:
+        com_capi = len(df[df['capi_type'] == 'COM_CAPI'])
+        sem_capi = len(df[df['capi_type'] == 'SEM_CAPI'])
+
+        com_capi_pct = (com_capi / total_count) * 100
+        sem_capi_pct = (sem_capi / total_count) * 100
+
+        logger.info(f"   ✅ COM CAPI: {com_capi} leads ({com_capi_pct:.1f}%)")
+        logger.info(f"   ✅ SEM CAPI: {sem_capi} leads ({sem_capi_pct:.1f}%)")
+    else:
+        logger.warning("   ⚠️ Nenhuma campanha encontrada!")
+
+    return df
+
+
+def get_capi_classification_stats(df: pd.DataFrame) -> dict:
+    """
+    Retorna estatísticas sobre a classificação CAPI de campanhas.
+
+    Args:
+        df: DataFrame com coluna 'capi_type'
+
+    Returns:
+        Dicionário com estatísticas
+
+    Examples:
+        >>> df = pd.DataFrame({'capi_type': ['COM_CAPI', 'COM_CAPI', 'SEM_CAPI']})
+        >>> stats = get_capi_classification_stats(df)
+        >>> stats['total']
+        3
+        >>> stats['com_capi_count']
+        2
+        >>> stats['com_capi_percentage']
+        66.67
+    """
+    if 'capi_type' not in df.columns:
+        raise ValueError("DataFrame deve conter coluna 'capi_type'")
+
+    total = len(df)
+    com_capi = len(df[df['capi_type'] == 'COM_CAPI'])
+    sem_capi = len(df[df['capi_type'] == 'SEM_CAPI'])
+
+    return {
+        'total': total,
+        'com_capi_count': com_capi,
+        'sem_capi_count': sem_capi,
+        'com_capi_percentage': round((com_capi / total * 100) if total > 0 else 0, 2),
+        'sem_capi_percentage': round((sem_capi / total * 100) if total > 0 else 0, 2),
+    }

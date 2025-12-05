@@ -86,25 +86,27 @@ class MetaAdsIntegration:
 
     def get_campaign_budget_info(self, campaign_id: str) -> Dict:
         """
-        Busca informações de orçamento de uma campanha específica
+        Busca informações de orçamento e otimização de uma campanha específica
 
         Args:
             campaign_id: ID da campanha
 
         Returns:
-            Dict com informações de budget:
+            Dict com informações de budget e otimização:
             {
                 'has_campaign_budget': bool,  # True se CBO, False se ABO
                 'daily_budget': float ou None,
                 'lifetime_budget': float ou None,
-                'bid_strategy': str
+                'bid_strategy': str,
+                'objective': str,  # Ex: OUTCOME_LEADS, OUTCOME_TRAFFIC
+                'status': str  # ACTIVE, PAUSED, etc
             }
         """
         url = f"{self.base_url}/{campaign_id}"
 
         params = {
             'access_token': self.access_token,
-            'fields': 'daily_budget,lifetime_budget,bid_strategy'
+            'fields': 'daily_budget,lifetime_budget,bid_strategy,objective,status'
         }
 
         try:
@@ -119,7 +121,9 @@ class MetaAdsIntegration:
                 'has_campaign_budget': has_campaign_budget,
                 'daily_budget': data.get('daily_budget'),
                 'lifetime_budget': data.get('lifetime_budget'),
-                'bid_strategy': data.get('bid_strategy')
+                'bid_strategy': data.get('bid_strategy'),
+                'objective': data.get('objective'),
+                'status': data.get('status')
             }
 
         except requests.exceptions.RequestException as e:
@@ -129,29 +133,61 @@ class MetaAdsIntegration:
                 'has_campaign_budget': True,
                 'daily_budget': None,
                 'lifetime_budget': None,
-                'bid_strategy': None
+                'bid_strategy': None,
+                'objective': None,
+                'status': None
             }
 
-    def get_adset_budget_info(self, adset_id: str) -> Dict:
+    def get_adset_optimization_goal(self, adset_id: str) -> str:
         """
-        Busca informações de orçamento de um adset específico
+        Busca apenas o optimization_goal de um adset (mais rápido que buscar tudo)
 
         Args:
             adset_id: ID do adset
 
         Returns:
-            Dict com informações de budget:
+            String com optimization_goal (ex: 'LEAD', 'LeadQualified')
+            ou None se não encontrado
+        """
+        url = f"{self.base_url}/{adset_id}"
+
+        params = {
+            'access_token': self.access_token,
+            'fields': 'optimization_goal'
+        }
+
+        try:
+            response = requests.get(url, params=params, timeout=3)
+            response.raise_for_status()
+            data = response.json()
+            return data.get('optimization_goal')
+
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"⚠️  Erro ao buscar optimization_goal do adset {adset_id}: {e}")
+            return None
+
+    def get_adset_budget_info(self, adset_id: str) -> Dict:
+        """
+        Busca informações de orçamento e otimização de um adset específico
+
+        Args:
+            adset_id: ID do adset
+
+        Returns:
+            Dict com informações de budget e otimização:
             {
                 'has_adset_budget': bool,  # True se ABO (adset tem budget próprio), False se CBO (usa budget da campanha)
                 'daily_budget': float ou None,
-                'lifetime_budget': float ou None
+                'lifetime_budget': float ou None,
+                'optimization_goal': str,  # Ex: 'LEAD', 'LeadQualified', 'LeadQualifiedHighQuality'
+                'status': str  # ACTIVE, PAUSED, etc
             }
         """
         url = f"{self.base_url}/{adset_id}"
 
         params = {
             'access_token': self.access_token,
-            'fields': 'daily_budget,lifetime_budget'
+            'fields': 'daily_budget,lifetime_budget,optimization_goal,status'
         }
 
         try:
@@ -166,7 +202,9 @@ class MetaAdsIntegration:
             return {
                 'has_adset_budget': has_adset_budget,
                 'daily_budget': data.get('daily_budget'),
-                'lifetime_budget': data.get('lifetime_budget')
+                'lifetime_budget': data.get('lifetime_budget'),
+                'optimization_goal': data.get('optimization_goal'),
+                'status': data.get('status')
             }
 
         except requests.exceptions.RequestException as e:
@@ -175,7 +213,9 @@ class MetaAdsIntegration:
             return {
                 'has_adset_budget': True,
                 'daily_budget': None,
-                'lifetime_budget': None
+                'lifetime_budget': None,
+                'optimization_goal': None,
+                'status': None
             }
 
     def get_costs_hierarchy(
@@ -292,37 +332,58 @@ class MetaAdsIntegration:
 
         logger.info(f"✅ Hierarquia construída: {len(hierarchy['campaigns'])} campanhas")
 
-        # 3. Buscar informações de budget para cada campaign
+        # 3. Buscar informações de budget e objective para cada campaign
         logger.info("   🔍 Buscando informações de orçamento das campanhas...")
         for campaign_id in hierarchy['campaigns'].keys():
             budget_info = self.get_campaign_budget_info(campaign_id)
             hierarchy['campaigns'][campaign_id]['has_campaign_budget'] = budget_info['has_campaign_budget']
             hierarchy['campaigns'][campaign_id]['daily_budget'] = budget_info['daily_budget']
             hierarchy['campaigns'][campaign_id]['lifetime_budget'] = budget_info['lifetime_budget']
+            hierarchy['campaigns'][campaign_id]['objective'] = budget_info['objective']
+            hierarchy['campaigns'][campaign_id]['status'] = budget_info['status']
 
             budget_type = "CBO (Campaign Budget)" if budget_info['has_campaign_budget'] else "ABO (AdSet Budget)"
             logger.info(f"      {campaign_id}: {budget_type}")
 
-        # 4. Buscar informações de budget para cada adset
-        logger.info("   🔍 Buscando informações de orçamento dos adsets...")
+        # 4. Buscar optimization_goal para cada adset (CAPI detection)
+        logger.info("   🎯 Buscando optimization_goal dos adsets (detecção CAPI)...")
         adset_count = 0
-        abo_count = 0
-        cbo_count = 0
+        capi_adsets = 0
 
         for campaign_id, campaign_data in hierarchy['campaigns'].items():
             for adset_id in campaign_data['adsets'].keys():
                 adset_count += 1
-                budget_info = self.get_adset_budget_info(adset_id)
-                hierarchy['campaigns'][campaign_id]['adsets'][adset_id]['has_adset_budget'] = budget_info['has_adset_budget']
-                hierarchy['campaigns'][campaign_id]['adsets'][adset_id]['daily_budget'] = budget_info['daily_budget']
-                hierarchy['campaigns'][campaign_id]['adsets'][adset_id]['lifetime_budget'] = budget_info['lifetime_budget']
+                optimization_goal = self.get_adset_optimization_goal(adset_id)
+                hierarchy['campaigns'][campaign_id]['adsets'][adset_id]['optimization_goal'] = optimization_goal
 
-                if budget_info['has_adset_budget']:
-                    abo_count += 1
-                else:
-                    cbo_count += 1
+                # Contar adsets usando eventos CAPI customizados
+                if optimization_goal and optimization_goal in ['LeadQualified', 'LeadQualifiedHighQuality']:
+                    capi_adsets += 1
 
-        logger.info(f"      Total: {adset_count} adsets | ABO: {abo_count} | CBO: {cbo_count}")
+        logger.info(f"   ✅ {adset_count} adsets verificados")
+        logger.info(f"   🎯 {capi_adsets} adsets usando eventos CAPI customizados")
+        logger.info(f"   📊 {adset_count - capi_adsets} adsets usando eventos padrão")
+
+        # Código original comentado para referência:
+        # logger.info("   🔍 Buscando informações de orçamento dos adsets...")
+        # adset_count = 0
+        # abo_count = 0
+        # cbo_count = 0
+        #
+        # for campaign_id, campaign_data in hierarchy['campaigns'].items():
+        #     for adset_id in campaign_data['adsets'].keys():
+        #         adset_count += 1
+        #         budget_info = self.get_adset_budget_info(adset_id)
+        #         hierarchy['campaigns'][campaign_id]['adsets'][adset_id]['has_adset_budget'] = budget_info['has_adset_budget']
+        #         hierarchy['campaigns'][campaign_id]['adsets'][adset_id]['daily_budget'] = budget_info['daily_budget']
+        #         hierarchy['campaigns'][campaign_id]['adsets'][adset_id]['lifetime_budget'] = budget_info['lifetime_budget']
+        #
+        #         if budget_info['has_adset_budget']:
+        #             abo_count += 1
+        #         else:
+        #             cbo_count += 1
+        #
+        # logger.info(f"      Total: {adset_count} adsets | ABO: {abo_count} | CBO: {cbo_count}")
 
         # DEBUG: Log hierarquia final
         logger.info("   📋 DEBUG - Hierarquia final (Campaign ID → Spend → Budget Type):")
