@@ -12,7 +12,7 @@ matching consistente.
 
 import pandas as pd
 import numpy as np
-from typing import List, Optional
+from typing import List, Optional, Tuple, Dict
 from pathlib import Path
 import logging
 import re
@@ -271,18 +271,20 @@ class SalesDataLoader:
         # Valor da venda
         df_norm['sale_value'] = pd.to_numeric(df_combined.get('valor venda', 0), errors='coerce')
 
-        # Data da venda (tentar múltiplas colunas)
-        date_col = None
-        for col in ['data aprovacao', 'data pedido', 'data_aprovacao', 'data_pedido']:
-            if col in df_combined.columns:
-                date_col = col
-                break
+        # Data da venda (usar aprovacao com fallback para pedido)
+        # Priorizar 'data aprovacao', mas se for NaN, usar 'data pedido'
+        # IMPORTANTE: dayfirst=True para formato brasileiro (DD/MM/YYYY)
+        date_aprovacao = pd.to_datetime(df_combined.get('data aprovacao', pd.Series([pd.NaT] * len(df_combined))), errors='coerce', dayfirst=True)
+        date_pedido = pd.to_datetime(df_combined.get('data pedido', pd.Series([pd.NaT] * len(df_combined))), errors='coerce', dayfirst=True)
 
-        if date_col:
-            df_norm['sale_date'] = pd.to_datetime(df_combined[date_col], errors='coerce')
-        else:
-            df_norm['sale_date'] = None
-            logger.warning("⚠️ Coluna de data não encontrada em vendas Guru")
+        # Usar data aprovacao, mas preencher NaN com data pedido
+        df_norm['sale_date'] = date_aprovacao.fillna(date_pedido)
+
+        # Log de quantas datas vieram de cada fonte
+        from_aprovacao = (~date_aprovacao.isna()).sum()
+        from_pedido = (date_aprovacao.isna() & ~date_pedido.isna()).sum()
+        total_valid = (~df_norm['sale_date'].isna()).sum()
+        logger.info(f"   📅 Datas de venda: {total_valid} válidas ({from_aprovacao} de aprovacao, {from_pedido} de pedido)")
 
         # UTM Campaign
         df_norm['utm_campaign'] = df_combined.get('utm_campaign', np.nan)
@@ -378,18 +380,19 @@ class SalesDataLoader:
         ticket_col = 'Ticket (R$)' if 'Ticket (R$)' in df_combined.columns else 'Ticket'
         df_norm['sale_value'] = pd.to_numeric(df_combined.get(ticket_col, 0), errors='coerce')
 
-        # Data da venda (tentar múltiplas colunas)
-        date_col = None
-        for col in ['Data Efetivado', 'Data Pedido', 'Data do Pedido', 'Data']:
-            if col in df_combined.columns:
-                date_col = col
-                break
+        # Data da venda (usar Data Efetivado com fallback para Criado Em)
+        # IMPORTANTE: dayfirst=True para formato brasileiro (DD/MM/YYYY)
+        date_efetivado = pd.to_datetime(df_combined.get('Data Efetivado', pd.Series([pd.NaT] * len(df_combined))), errors='coerce', dayfirst=True)
+        date_criado = pd.to_datetime(df_combined.get('Criado Em', pd.Series([pd.NaT] * len(df_combined))), errors='coerce', dayfirst=True)
 
-        if date_col:
-            df_norm['sale_date'] = pd.to_datetime(df_combined[date_col], errors='coerce')
-        else:
-            df_norm['sale_date'] = None
-            logger.warning("⚠️ Coluna de data não encontrada em vendas TMB")
+        # Usar Data Efetivado, mas preencher NaN com Criado Em
+        df_norm['sale_date'] = date_efetivado.fillna(date_criado)
+
+        # Log de quantas datas vieram de cada fonte
+        from_efetivado = (~date_efetivado.isna()).sum()
+        from_criado = (date_efetivado.isna() & ~date_criado.isna()).sum()
+        total_valid = (~df_norm['sale_date'].isna()).sum()
+        logger.info(f"   📅 Datas de venda TMB: {total_valid} válidas ({from_efetivado} de efetivado, {from_criado} de criado em)")
 
         # UTM Campaign
         df_norm['utm_campaign'] = df_combined.get('utm_campaign', np.nan)
@@ -465,3 +468,239 @@ class SalesDataLoader:
         logger.info(f"      TMB: {len(combined[combined['origem'] == 'tmb'])}")
 
         return combined
+
+
+class CAPILeadDataLoader:
+    """
+    Carrega leads do banco CAPI (PostgreSQL) via API.
+
+    Combina leads do banco CAPI com leads da pesquisa do Google Sheets,
+    priorizando a pesquisa (que tem lead_score) mas adicionando leads
+    extras do CAPI que não responderam a pesquisa.
+    """
+
+    def __init__(self, api_url: str = "https://smart-ads-api-12955519745.us-central1.run.app"):
+        self.api_url = api_url
+        self._thresholds_cache = None
+
+    def load_capi_leads(
+        self,
+        start_date: str,
+        end_date: str,
+        emails_filter: Optional[List[str]] = None
+    ) -> pd.DataFrame:
+        """
+        Carrega leads do banco CAPI via API.
+
+        Args:
+            start_date: Data início (YYYY-MM-DD)
+            end_date: Data fim (YYYY-MM-DD)
+            emails_filter: Lista de emails específicos (opcional)
+
+        Returns:
+            DataFrame com leads do CAPI normalizados
+        """
+        import requests
+
+        logger.info(f"📂 Carregando leads do banco CAPI ({start_date} a {end_date})")
+
+        if emails_filter:
+            # Buscar emails específicos
+            url = f"{self.api_url}/webhook/lead_capture/by_emails"
+            payload = {
+                "emails": emails_filter,
+                "start_date": start_date,
+                "end_date": end_date
+            }
+            response = requests.post(url, json=payload, timeout=60)
+        else:
+            # Buscar todos do período (precisaria criar endpoint para isso)
+            # Por enquanto, vamos usar a abordagem de buscar emails específicos
+            raise NotImplementedError("Busca de todos os leads do período ainda não implementada")
+
+        if response.status_code != 200:
+            logger.error(f"❌ Erro ao buscar leads CAPI: {response.status_code}")
+            return pd.DataFrame()
+
+        result = response.json()
+        leads_data = result.get('leads', [])
+
+        if not leads_data:
+            logger.info("   ⚠️ Nenhum lead encontrado no CAPI")
+            return pd.DataFrame()
+
+        # Converter para DataFrame
+        df = pd.DataFrame(leads_data)
+
+        # Normalizar para formato padrão
+        df_norm = pd.DataFrame()
+        df_norm['email'] = df['email'].apply(lambda x: normalizar_email(x) if pd.notna(x) else None)
+        df_norm['nome'] = df.get('name', np.nan)
+        df_norm['telefone'] = df.get('phone', np.nan).apply(
+            lambda x: normalizar_telefone_robusto(str(x)) if pd.notna(x) else None
+        )
+        df_norm['data_captura'] = pd.to_datetime(df['created_at'], errors='coerce')
+        df_norm['campaign'] = df.get('utm_campaign', np.nan)
+        df_norm['source'] = df.get('utm_source', np.nan)
+        df_norm['medium'] = df.get('utm_medium', np.nan)
+        df_norm['term'] = df.get('utm_term', np.nan)
+        df_norm['content'] = df.get('utm_content', np.nan)
+        df_norm['lead_score'] = np.nan  # CAPI não tem score
+        df_norm['decile'] = None  # CAPI não tem decil
+        df_norm['source_type'] = 'capi'  # Marcar origem
+
+        # Remover leads sem email
+        before = len(df_norm)
+        df_norm = df_norm[df_norm['email'].notna()].copy()
+        after = len(df_norm)
+
+        if before != after:
+            logger.info(f"   ⚠️ {before - after} leads removidos (email inválido)")
+
+        logger.info(f"   ✅ {len(df_norm)} leads CAPI carregados")
+        logger.info(f"   UTM válida: {df_norm['campaign'].notna().sum()}/{len(df_norm)} ({df_norm['campaign'].notna().sum()/len(df_norm)*100:.1f}%)")
+
+        return df_norm
+
+    def load_combined_leads(
+        self,
+        csv_path: str,
+        start_date: str,
+        end_date: str
+    ) -> Tuple[pd.DataFrame, Dict]:
+        """
+        Carrega leads combinando Pesquisa (Google Sheets) + CAPI (PostgreSQL).
+
+        Estratégia:
+        1. Carrega leads da pesquisa (tem lead_score e decil)
+        2. Carrega leads do CAPI que NÃO estão na pesquisa
+        3. Combina priorizando pesquisa para emails duplicados
+
+        Args:
+            csv_path: Caminho do CSV da pesquisa
+            start_date: Data início do período (YYYY-MM-DD)
+            end_date: Data fim do período (YYYY-MM-DD)
+
+        Returns:
+            Tuple (DataFrame combinado, Dict com estatísticas das fontes)
+
+            Estatísticas retornadas:
+            - survey_leads: int - Total de leads da pesquisa no período
+            - capi_leads_total: int - Total de leads no banco CAPI no período
+            - capi_leads_extras: int - Leads do CAPI que não estão na pesquisa
+        """
+        logger.info("🔗 Combinando leads Pesquisa + CAPI")
+
+        # 1. Carregar leads da pesquisa
+        survey_loader = LeadDataLoader()
+        survey_df = survey_loader.load_leads_csv(csv_path)
+        survey_df['source_type'] = 'survey'
+
+        logger.info(f"   📋 Pesquisa: {len(survey_df)} leads")
+
+        # 2. Filtrar por período
+        from src.validation.matching import filter_by_period
+        from datetime import datetime
+
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+
+        survey_period = filter_by_period(survey_df, start_dt, end_dt, date_col='data_captura')
+        survey_emails = set(survey_period[survey_period['email'].notna()]['email'].unique())
+
+        logger.info(f"   📋 Pesquisa (período): {len(survey_period)} leads, {len(survey_emails)} emails únicos")
+
+        # 3. Buscar TODOS os leads do CAPI no período
+        logger.info("   🔍 Buscando leads no CAPI...")
+
+        import requests
+
+        url = f"{self.api_url}/webhook/lead_capture/recent"
+        params = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "limit": 10000  # Buscar todos do período
+        }
+
+        try:
+            response = requests.get(url, params=params, timeout=60)
+
+            if response.status_code == 200:
+                result = response.json()
+                capi_leads_data = result.get('leads', [])
+
+                logger.info(f"   📊 CAPI (período): {len(capi_leads_data)} leads")
+
+                if capi_leads_data:
+                    # Converter para DataFrame
+                    capi_df = pd.DataFrame(capi_leads_data)
+
+                    # Normalizar
+                    capi_norm = pd.DataFrame()
+                    capi_norm['email'] = capi_df['email'].apply(lambda x: normalizar_email(x) if pd.notna(x) else None)
+                    capi_norm['nome'] = capi_df.get('name', np.nan)
+                    capi_norm['telefone'] = capi_df.get('phone', np.nan).apply(
+                        lambda x: normalizar_telefone_robusto(str(x)) if pd.notna(x) else None
+                    )
+                    capi_norm['data_captura'] = pd.to_datetime(capi_df['created_at'], errors='coerce')
+                    capi_norm['campaign'] = capi_df.get('utm_campaign', np.nan)
+                    capi_norm['source'] = capi_df.get('utm_source', np.nan)
+                    capi_norm['medium'] = capi_df.get('utm_medium', np.nan)
+                    capi_norm['term'] = capi_df.get('utm_term', np.nan)
+                    capi_norm['content'] = capi_df.get('utm_content', np.nan)
+                    capi_norm['lead_score'] = np.nan
+                    capi_norm['decile'] = None
+                    capi_norm['source_type'] = 'capi'
+
+                    # Remover leads sem email
+                    capi_norm = capi_norm[capi_norm['email'].notna()].copy()
+
+                    # Filtrar APENAS leads do CAPI que NÃO estão na pesquisa
+                    capi_emails = set(capi_norm['email'].unique())
+                    capi_extras = capi_emails - survey_emails
+                    capi_extra_leads = capi_norm[capi_norm['email'].isin(capi_extras)].copy()
+
+                    logger.info(f"   ➕ Leads extras do CAPI (não estão na pesquisa): {len(capi_extra_leads)}")
+                    logger.info(f"   UTM válida: {capi_extra_leads['campaign'].notna().sum()}/{len(capi_extra_leads)} ({capi_extra_leads['campaign'].notna().sum()/len(capi_extra_leads)*100:.1f}%)" if len(capi_extra_leads) > 0 else "")
+
+                    # 4. Combinar pesquisa + extras do CAPI
+                    stats = {
+                        'survey_leads': len(survey_period),
+                        'capi_leads_total': len(capi_leads_data),
+                        'capi_leads_extras': len(capi_extra_leads)
+                    }
+
+                    if len(capi_extra_leads) > 0:
+                        combined = pd.concat([survey_period, capi_extra_leads], ignore_index=True)
+                        logger.info(f"   ✅ Total combinado: {len(combined)} leads ({len(survey_period)} pesquisa + {len(capi_extra_leads)} CAPI)")
+                        return combined, stats
+                    else:
+                        logger.info(f"   ✅ Total: {len(survey_period)} leads (apenas pesquisa)")
+                        return survey_period, stats
+                else:
+                    logger.info("   ⚠️ Nenhum lead encontrado no CAPI")
+                    stats = {
+                        'survey_leads': len(survey_period),
+                        'capi_leads_total': 0,
+                        'capi_leads_extras': 0
+                    }
+                    return survey_period, stats
+            else:
+                logger.warning(f"   ⚠️ Erro ao buscar CAPI: {response.status_code}")
+                logger.info(f"   ✅ Usando apenas pesquisa: {len(survey_period)} leads")
+                stats = {
+                    'survey_leads': len(survey_period),
+                    'capi_leads_total': 0,
+                    'capi_leads_extras': 0
+                }
+                return survey_period, stats
+
+        except Exception as e:
+            logger.warning(f"   ⚠️ Erro ao conectar com CAPI: {str(e)}")
+            logger.info(f"   ✅ Usando apenas pesquisa: {len(survey_period)} leads")
+            stats = {
+                'survey_leads': len(survey_period),
+                'capi_leads_total': 0,
+                'capi_leads_extras': 0
+            }
+            return survey_period, stats

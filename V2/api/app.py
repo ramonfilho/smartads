@@ -31,7 +31,7 @@ from api.meta_config import META_CONFIG, BUSINESS_CONFIG
 from api.economic_metrics import enrich_utm_with_economic_metrics
 
 # Importar módulos CAPI
-from api.database import get_db, init_database, create_lead_capi, count_leads, count_leads_with_fbp, count_leads_with_fbc, get_leads_by_emails
+from api.database import get_db, init_database, create_lead_capi, count_leads, count_leads_with_fbp, count_leads_with_fbc, get_leads_by_emails, LeadCAPI
 from api.capi_integration import send_batch_events
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
@@ -548,22 +548,51 @@ async def webhook_lead_capture(
         raise HTTPException(status_code=500, detail=f"Erro ao capturar lead: {str(e)}")
 
 @app.get("/webhook/lead_capture/stats")
-async def lead_capture_stats(db: Session = Depends(get_db)):
+async def lead_capture_stats(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
     """
     Estatísticas de captura de leads CAPI
     Útil para monitoramento e debug
+
+    Args:
+        start_date: Data início (YYYY-MM-DD) - opcional
+        end_date: Data fim (YYYY-MM-DD) - opcional
     """
     try:
-        total = count_leads(db)
-        with_fbp = count_leads_with_fbp(db)
-        with_fbc = count_leads_with_fbc(db)
+        from datetime import datetime, timedelta
+
+        # Construir query base
+        query = db.query(LeadCAPI)
+
+        # Aplicar filtros de data se fornecidos
+        if start_date:
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+            query = query.filter(LeadCAPI.created_at >= start_dt)
+
+        if end_date:
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+            # Incluir todo o dia final
+            end_dt = end_dt + timedelta(days=1)
+            query = query.filter(LeadCAPI.created_at < end_dt)
+
+        # Contar totais
+        total = query.count()
+        with_fbp = query.filter(LeadCAPI.fbp.isnot(None), LeadCAPI.fbp != '').count()
+        with_fbc = query.filter(LeadCAPI.fbc.isnot(None), LeadCAPI.fbc != '').count()
+        with_utm = query.filter(LeadCAPI.utm_campaign.isnot(None), LeadCAPI.utm_campaign != '').count()
 
         return {
             "total_leads": total,
             "leads_with_fbp": with_fbp,
             "leads_with_fbc": with_fbc,
+            "leads_with_utm_campaign": with_utm,
             "fbp_fill_rate": round(with_fbp / total * 100, 2) if total > 0 else 0,
-            "fbc_fill_rate": round(with_fbc / total * 100, 2) if total > 0 else 0
+            "fbc_fill_rate": round(with_fbc / total * 100, 2) if total > 0 else 0,
+            "utm_fill_rate": round(with_utm / total * 100, 2) if total > 0 else 0,
+            "period": f"{start_date or 'início'} a {end_date or 'hoje'}"
         }
 
     except Exception as e:
@@ -571,21 +600,118 @@ async def lead_capture_stats(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Erro ao obter stats: {str(e)}")
 
 @app.get("/webhook/lead_capture/recent")
-async def get_recent_leads_endpoint(limit: int = 10, db: Session = Depends(get_db)):
+async def get_recent_leads_endpoint(
+    limit: int = 10,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
     """
-    DEBUG: Retorna leads mais recentes
+    Retorna leads recentes com filtros opcionais de data
+
+    Args:
+        limit: Número máximo de leads (padrão: 10, máx: 10000)
+        start_date: Data início (YYYY-MM-DD) - opcional
+        end_date: Data fim (YYYY-MM-DD) - opcional
     """
     try:
         from api.database import get_recent_leads
-        leads = get_recent_leads(db, limit=limit)
+        from datetime import datetime, timedelta
+
+        # Limitar máximo
+        if limit > 10000:
+            limit = 10000
+
+        # Se tiver filtros de data, usar query customizada
+        if start_date or end_date:
+            query = db.query(LeadCAPI)
+
+            if start_date:
+                start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+                query = query.filter(LeadCAPI.created_at >= start_dt)
+
+            if end_date:
+                end_dt = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)
+                query = query.filter(LeadCAPI.created_at < end_dt)
+
+            leads = query.order_by(LeadCAPI.created_at.desc()).limit(limit).all()
+        else:
+            # Sem filtros, usar função existente
+            leads = get_recent_leads(db, limit=limit)
 
         return {
             "total": len(leads),
-            "leads": [lead.to_dict() for lead in leads]
+            "leads": [lead.to_dict() for lead in leads],
+            "period": f"{start_date or 'início'} a {end_date or 'hoje'}" if (start_date or end_date) else "recent"
         }
 
     except Exception as e:
         logger.error(f"❌ Erro ao buscar leads: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
+
+@app.post("/webhook/lead_capture/by_emails")
+async def get_leads_by_emails_endpoint(
+    request: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    Busca leads por lista de emails com filtro de data opcional
+
+    Body:
+        {
+            "emails": ["email1@example.com", "email2@example.com"],
+            "start_date": "2025-11-18",  // opcional
+            "end_date": "2025-11-24"     // opcional
+        }
+    """
+    try:
+        from datetime import datetime, timedelta
+        from api.database import get_leads_by_emails
+
+        emails = request.get('emails', [])
+        start_date = request.get('start_date')
+        end_date = request.get('end_date')
+
+        if not emails:
+            raise HTTPException(status_code=400, detail="Lista de emails é obrigatória")
+
+        # Buscar leads
+        leads = get_leads_by_emails(db, emails)
+
+        # Filtrar por data se fornecido
+        if start_date or end_date:
+            filtered_leads = []
+            for lead in leads:
+                if start_date:
+                    start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+                    if lead.created_at < start_dt:
+                        continue
+
+                if end_date:
+                    end_dt = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)
+                    if lead.created_at >= end_dt:
+                        continue
+
+                filtered_leads.append(lead)
+
+            leads = filtered_leads
+
+        # Contar com UTM válida
+        with_utm = sum(1 for lead in leads if lead.utm_campaign and lead.utm_campaign.strip())
+
+        return {
+            "total_requested": len(emails),
+            "total_found": len(leads),
+            "leads_with_utm": with_utm,
+            "utm_fill_rate": round(with_utm / len(leads) * 100, 2) if leads else 0,
+            "leads": [lead.to_dict() for lead in leads],
+            "period": f"{start_date or 'início'} a {end_date or 'hoje'}"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Erro ao buscar leads por emails: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
 
 # === CAPI BATCH PROCESSING ===

@@ -18,6 +18,80 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _check_campaign_ids_in_meta(excluded_df: pd.DataFrame, campaign_col: str):
+    """
+    Verifica IDs numéricos de campanha na Meta API para ver se existem campanhas ativas.
+
+    Args:
+        excluded_df: DataFrame com leads excluídos
+        campaign_col: Nome da coluna de campanha
+    """
+    # Identificar IDs numéricos
+    def is_numeric_id(value):
+        if pd.isna(value):
+            return False
+        value_str = str(value).strip()
+        return value_str.isdigit() and len(value_str) > 10
+
+    numeric_ids = []
+    for value in excluded_df[campaign_col].unique():
+        if is_numeric_id(value):
+            numeric_ids.append(str(int(float(value))))
+
+    if not numeric_ids:
+        return
+
+    logger.info(f"   🔍 Verificando {len(numeric_ids)} IDs numéricos na Meta API...")
+
+    try:
+        from api.meta_integration import MetaAdsIntegration
+        from api.meta_config import META_CONFIG
+        import requests
+
+        meta_api = MetaAdsIntegration(access_token=META_CONFIG['access_token'])
+
+        found_campaigns = []
+        for campaign_id in numeric_ids:
+            try:
+                # Buscar nome da campanha via API
+                url = f"{meta_api.base_url}/{campaign_id}"
+                params = {
+                    'access_token': META_CONFIG['access_token'],
+                    'fields': 'name,status,effective_status'
+                }
+
+                response = requests.get(url, params=params, timeout=2)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    name = data.get('name', 'N/A')
+                    status = data.get('status', 'N/A')
+                    eff_status = data.get('effective_status', 'N/A')
+
+                    found_campaigns.append({
+                        'id': campaign_id,
+                        'name': name,
+                        'status': status,
+                        'effective_status': eff_status
+                    })
+
+            except Exception as e:
+                logger.debug(f"      Erro ao verificar {campaign_id}: {e}")
+                continue
+
+        if found_campaigns:
+            logger.info(f"   ✅ {len(found_campaigns)} campanhas encontradas na Meta:")
+            for camp in found_campaigns:
+                logger.info(f"      • {camp['id']}: {camp['name'][:60]} (Status: {camp['effective_status']})")
+        else:
+            logger.info(f"   ⚠️ Nenhuma campanha ativa encontrada para os IDs fornecidos")
+
+    except ImportError:
+        logger.debug("   ⚠️ Meta API não disponível para verificar IDs")
+    except Exception as e:
+        logger.debug(f"   ⚠️ Erro ao verificar IDs na Meta API: {e}")
+
+
 def is_captacao_campaign(campaign_name: str) -> bool:
     """
     Verifica se é campanha de captação para lançamento.
@@ -129,7 +203,38 @@ def add_ml_classification(df: pd.DataFrame, campaign_col: str = 'campaign') -> p
 
     excluded_count = before_count - after_count
     if excluded_count > 0:
-        logger.info(f"   ⚠️ {excluded_count} leads de campanhas não-captação foram excluídos")
+        logger.info(f"   ⚠️ {excluded_count} respostas de campanhas não-captação foram excluídas")
+
+        # Verificar se respostas excluídas têm conversões
+        excluded_df = df[df['ml_type'] == 'EXCLUIR']
+        if 'converted' in excluded_df.columns:
+            excluded_conversions = excluded_df['converted'].sum()
+            if excluded_conversions > 0:
+                logger.warning(f"   ⚠️⚠️⚠️ ATENÇÃO: {excluded_conversions} CONVERSÕES PERDIDAS nas respostas excluídas!")
+                logger.warning(f"            Isso pode estar reduzindo artificialmente suas métricas de conversão")
+
+        # Mostrar campanhas excluídas
+        excluded_campaigns = excluded_df[campaign_col].unique()
+        logger.info(f"   📋 Campanhas excluídas ({len(excluded_campaigns)}):")
+        for camp in excluded_campaigns[:10]:  # Mostrar até 10
+            camp_count = len(excluded_df[excluded_df[campaign_col] == camp])
+            camp_str = str(camp)[:100] if pd.notna(camp) else "NaN/Empty"
+
+            # Mostrar conversões se houver
+            if 'converted' in excluded_df.columns:
+                camp_conversions = excluded_df[excluded_df[campaign_col] == camp]['converted'].sum()
+                if camp_conversions > 0:
+                    logger.info(f"      • {camp_str} ({camp_count} respostas, ⚠️ {camp_conversions} conversões)")
+                else:
+                    logger.info(f"      • {camp_str} ({camp_count} respostas)")
+            else:
+                logger.info(f"      • {camp_str} ({camp_count} respostas)")
+
+        if len(excluded_campaigns) > 10:
+            logger.info(f"      ... e mais {len(excluded_campaigns) - 10} campanhas")
+
+        # Buscar IDs numéricos na Meta API
+        _check_campaign_ids_in_meta(excluded_df, campaign_col)
 
     # Calcular percentuais
     if after_count > 0:
@@ -144,7 +249,8 @@ def add_ml_classification(df: pd.DataFrame, campaign_col: str = 'campaign') -> p
     else:
         logger.warning("   ⚠️ Nenhuma campanha de captação encontrada!")
 
-    return df_filtered
+    # Retornar dataframe filtrado e contador de excluídos
+    return df_filtered, excluded_count
 
 
 def get_classification_stats(df: pd.DataFrame) -> dict:

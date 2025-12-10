@@ -27,22 +27,32 @@ class MetaAdsIntegration:
         days: int = 7,
         fields: Optional[List[str]] = None,
         since_date: Optional[str] = None,
-        until_date: Optional[str] = None
+        until_date: Optional[str] = None,
+        action_breakdowns: Optional[List[str]] = None,
+        action_attribution_windows: Optional[List[str]] = None,
+        filtering: Optional[List[Dict]] = None
     ) -> List[Dict]:
         """
         Busca insights (métricas) de uma conta de anúncios
 
         Args:
-            account_id: ID da conta (formato: act_XXXXXXXXX)
+            account_id: ID da conta (formato: act_XXXXXXXXX ou apenas o número)
             level: Nível de agregação (campaign, adset, ad)
             days: Número de dias para buscar dados (ignorado se since_date/until_date forem fornecidos)
             fields: Campos a retornar (padrão: campaign_name, spend, impressions, clicks, actions)
             since_date: Data início (formato YYYY-MM-DD), se None usa days
             until_date: Data fim EXCLUSIVA (formato YYYY-MM-DD), se None usa ontem
+            action_breakdowns: Breakdowns para ações (ex: ['action_type'] para eventos detalhados)
+            action_attribution_windows: Janelas de atribuição (ex: ['7d_click', '1d_view'] - padrão do Meta Ads Manager)
+            filtering: Filtros para aplicar (ex: [{'field': 'delivery_info', 'operator': 'IN', 'value': ['active']}])
 
         Returns:
             Lista de dicts com dados de cada campanha/adset/ad
         """
+        # Normalizar account_id (adicionar prefixo act_ se necessário)
+        if not account_id.startswith('act_'):
+            account_id = f'act_{account_id}'
+
         if fields is None:
             fields = ['campaign_name', 'adset_name', 'ad_name', 'spend', 'impressions', 'clicks', 'actions']
 
@@ -51,9 +61,9 @@ class MetaAdsIntegration:
         # Calcular período
         if since_date and until_date:
             since = since_date
-            # Meta API: until é INCLUSIVO, então precisamos subtrair 1 dia
-            until_dt = datetime.strptime(until_date, '%Y-%m-%d') - timedelta(days=1)
-            until = until_dt.strftime('%Y-%m-%d')
+            # Meta API: until é INCLUSIVO na interface mas EXCLUSIVO na API
+            # Usar until_date diretamente (já vem como o dia seguinte ao desejado)
+            until = until_date
         else:
             since = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
             until = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')  # Ontem, não hoje!
@@ -66,7 +76,20 @@ class MetaAdsIntegration:
             'limit': 1000
         }
 
-        logger.info(f"Buscando insights: account={account_id}, level={level}, days={days}")
+        # Adicionar breakdowns se fornecidos
+        if action_breakdowns:
+            params['action_breakdowns'] = ','.join(action_breakdowns)
+
+        # Adicionar janelas de atribuição se fornecidas
+        if action_attribution_windows:
+            params['action_attribution_windows'] = str(action_attribution_windows).replace("'", '"')
+
+        # Adicionar filtros se fornecidos
+        if filtering:
+            import json
+            params['filtering'] = json.dumps(filtering)
+
+        logger.info(f"Buscando insights: account={account_id}, level={level}, days={days}, attribution={action_attribution_windows or 'default'}, filtering={bool(filtering)}")
 
         try:
             response = requests.get(url, params=params, timeout=10)
@@ -117,10 +140,14 @@ class MetaAdsIntegration:
             # Verificar se tem budget na campaign (CBO)
             has_campaign_budget = bool(data.get('daily_budget') or data.get('lifetime_budget'))
 
+            # Meta API retorna budgets em centavos - converter para reais
+            daily_budget = float(data.get('daily_budget', 0) or 0) / 100 if data.get('daily_budget') else None
+            lifetime_budget = float(data.get('lifetime_budget', 0) or 0) / 100 if data.get('lifetime_budget') else None
+
             return {
                 'has_campaign_budget': has_campaign_budget,
-                'daily_budget': data.get('daily_budget'),
-                'lifetime_budget': data.get('lifetime_budget'),
+                'daily_budget': daily_budget,
+                'lifetime_budget': lifetime_budget,
                 'bid_strategy': data.get('bid_strategy'),
                 'objective': data.get('objective'),
                 'status': data.get('status')
@@ -140,30 +167,44 @@ class MetaAdsIntegration:
 
     def get_adset_optimization_goal(self, adset_id: str) -> str:
         """
-        Busca apenas o optimization_goal de um adset (mais rápido que buscar tudo)
+        Busca o evento de conversão customizado de um adset.
+
+        Prioriza promoted_object.custom_event_str (evento específico como LeadQualified)
+        sobre optimization_goal genérico (OFFSITE_CONVERSIONS).
 
         Args:
             adset_id: ID do adset
 
         Returns:
-            String com optimization_goal (ex: 'LEAD', 'LeadQualified')
+            String com evento de conversão (ex: 'LeadQualified', 'LeadQualifiedHighQuality', 'Faixa A')
+            ou optimization_goal se não houver evento customizado
             ou None se não encontrado
         """
         url = f"{self.base_url}/{adset_id}"
 
         params = {
             'access_token': self.access_token,
-            'fields': 'optimization_goal'
+            'fields': 'optimization_goal,promoted_object'
         }
 
         try:
             response = requests.get(url, params=params, timeout=3)
             response.raise_for_status()
             data = response.json()
-            return data.get('optimization_goal')
+
+            # Priorizar promoted_object.custom_event_str (evento específico)
+            promoted_obj = data.get('promoted_object', {})
+            custom_event = promoted_obj.get('custom_event_str')
+
+            if custom_event:
+                # Evento customizado encontrado (LeadQualified, LeadQualifiedHighQuality, etc.)
+                return custom_event
+            else:
+                # Fallback para optimization_goal genérico
+                return data.get('optimization_goal')
 
         except requests.exceptions.RequestException as e:
-            logger.warning(f"⚠️  Erro ao buscar optimization_goal do adset {adset_id}: {e}")
+            logger.warning(f"⚠️  Erro ao buscar dados do adset {adset_id}: {e}")
             return None
 
     def get_adset_budget_info(self, adset_id: str) -> Dict:
@@ -199,10 +240,14 @@ class MetaAdsIntegration:
             # Se não tem budget, significa que usa o budget da campanha (CBO)
             has_adset_budget = bool(data.get('daily_budget') or data.get('lifetime_budget'))
 
+            # Meta API retorna budgets em centavos - converter para reais
+            daily_budget = float(data.get('daily_budget', 0) or 0) / 100 if data.get('daily_budget') else None
+            lifetime_budget = float(data.get('lifetime_budget', 0) or 0) / 100 if data.get('lifetime_budget') else None
+
             return {
                 'has_adset_budget': has_adset_budget,
-                'daily_budget': data.get('daily_budget'),
-                'lifetime_budget': data.get('lifetime_budget'),
+                'daily_budget': daily_budget,
+                'lifetime_budget': lifetime_budget,
                 'optimization_goal': data.get('optimization_goal'),
                 'status': data.get('status')
             }
@@ -229,7 +274,7 @@ class MetaAdsIntegration:
         Busca hierarquia completa: Campaign → Adsets → Ads com custos individuais
 
         Args:
-            account_id: ID da conta (formato: act_XXXXXXXXX)
+            account_id: ID da conta (formato: act_XXXXXXXXX ou apenas o número)
             days: Número de dias (ignorado se since_date/until_date forem fornecidos)
             since_date: Data início (formato YYYY-MM-DD)
             until_date: Data fim EXCLUSIVA (formato YYYY-MM-DD)
@@ -260,6 +305,10 @@ class MetaAdsIntegration:
                 }
             }
         """
+        # Normalizar account_id (adicionar prefixo act_ se necessário)
+        if not account_id.startswith('act_'):
+            account_id = f'act_{account_id}'
+
         logger.info("🔍 Buscando hierarquia completa de campanhas...")
 
         hierarchy = {'campaigns': {}}

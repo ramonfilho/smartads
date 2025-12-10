@@ -4,6 +4,11 @@
 # Token de acesso da Meta Ads API
 meta_access_token: "EAAV..."  # TODO: Substituir pelo token real
 
+# Account IDs Meta Ads (usar ambos na validação)
+meta_account_ids:
+  - act_188005769808959  # Ads - Rodolfo Mori
+  - act_786790755803474  # Ads - Gestor de IA
+
 # Configurações globais
 product_value: 2000.00  # Valor do produto em R$
 max_match_days: 30      # Janela máxima para matching leads-vendas

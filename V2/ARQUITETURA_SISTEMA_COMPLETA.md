@@ -375,6 +375,128 @@ run.googleapis.com/cloudsql-instances: smart-ads-451319:us-central1:smart-ads-db
 
 ---
 
+## PARTE 9: ACESSO AO DATABASE (Python)
+
+### Como acessar o database programaticamente
+
+O sistema já possui infraestrutura completa para acessar o Cloud SQL PostgreSQL via Python.
+
+#### Método: Usar SessionLocal() do api/database.py
+
+**Arquivo exemplo:** `api/bigquery_sync.py`
+
+```python
+from api.database import SessionLocal, LeadCAPI
+from datetime import datetime
+
+# Criar sessão
+db = SessionLocal()
+try:
+    # Exemplo 1: Buscar leads por período
+    start_date = datetime(2025, 11, 11)
+    end_date = datetime(2025, 11, 17)
+
+    leads = db.query(LeadCAPI).filter(
+        LeadCAPI.created_at >= start_date,
+        LeadCAPI.created_at <= end_date
+    ).all()
+
+    # Exemplo 2: Buscar leads por email
+    emails = ['email1@example.com', 'email2@example.com']
+    leads = db.query(LeadCAPI).filter(
+        LeadCAPI.email.in_(emails)
+    ).all()
+
+    # Exemplo 3: Buscar campaign_id de emails específicos
+    results = db.query(LeadCAPI.email, LeadCAPI.utm_campaign).filter(
+        LeadCAPI.email.in_(emails)
+    ).all()
+
+    for email, utm_campaign in results:
+        # Extrair campaign_id do utm_campaign
+        match = re.search(r'\d{18,}', utm_campaign)
+        if match:
+            campaign_id = match.group(0)
+            print(f"{email}: {campaign_id}")
+
+finally:
+    db.close()
+```
+
+#### Como funciona a conexão
+
+O `database.py` detecta automaticamente o ambiente:
+
+1. **Cloud Run (produção):**
+   - Usa `CLOUD_SQL_CONNECTION_NAME` environment variable
+   - Conecta via Unix socket: `/cloudsql/smart-ads-451319:us-central1:smart-ads-db/.s.PGSQL.5432`
+   - Driver: `postgresql+pg8000`
+   - Password: `SmartAds2025!` (via `DB_PASSWORD` env var)
+
+2. **Local (desenvolvimento):**
+   - Se não tiver env vars configuradas, usa SQLite fallback
+   - Para acessar Cloud SQL localmente, configure Cloud SQL Proxy OU use gcloud auth
+
+#### Funções CRUD disponíveis (api/database.py)
+
+```python
+from api.database import (
+    get_lead_by_email,
+    get_leads_by_emails,
+    get_recent_leads,
+    count_leads,
+    create_lead_capi
+)
+
+db = SessionLocal()
+try:
+    # Buscar lead por email
+    lead = get_lead_by_email(db, "email@example.com")
+
+    # Buscar múltiplos leads
+    leads = get_leads_by_emails(db, ["email1@example.com", "email2@example.com"])
+
+    # Contar total de leads
+    total = count_leads(db)
+
+finally:
+    db.close()
+```
+
+#### ⚠️ IMPORTANTE: Ambiente Local
+
+Para acessar o database localmente, você precisa:
+
+**Opção 1: Cloud SQL Auth Proxy** (recomendado)
+```bash
+# Instalar proxy
+gcloud components install cloud-sql-proxy
+
+# Executar proxy
+cloud-sql-proxy smart-ads-451319:us-central1:smart-ads-db
+
+# Configurar env vars
+export DB_HOST=127.0.0.1
+export DB_PORT=5432
+export DB_NAME=smart_ads
+export DB_USER=postgres
+export DB_PASSWORD=SmartAds2025!
+```
+
+**Opção 2: gcloud auth**
+```bash
+# Autenticar com gcloud
+gcloud auth application-default login
+
+# O SessionLocal() usará suas credenciais automaticamente
+```
+
+**Opção 3: Usar dados da produção via CSV**
+- Exportar dados de leads para CSV
+- Usar CSV localmente (mais simples para desenvolvimento)
+
+---
+
 ## COMANDOS ÚTEIS
 
 ### Ver status do serviço

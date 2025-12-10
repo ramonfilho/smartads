@@ -32,7 +32,7 @@ from tabulate import tabulate
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Imports dos módulos de validação
-from src.validation.data_loader import LeadDataLoader, SalesDataLoader
+from src.validation.data_loader import LeadDataLoader, SalesDataLoader, CAPILeadDataLoader
 from src.validation.campaign_classifier import add_ml_classification
 from src.validation.matching import (
     match_leads_to_sales,
@@ -49,6 +49,7 @@ from src.validation.metrics_calculator import (
 from src.validation.report_generator import ValidationReportGenerator
 from src.validation.visualization import ValidationVisualizer
 from src.validation.fair_campaign_comparison import FairCampaignMatcher
+from src.validation.period_calculator import PeriodCalculator
 
 # Imports de integrações existentes
 from api.meta_integration import MetaAdsIntegration
@@ -180,6 +181,18 @@ Exemplos de uso:
         help='Janela máxima para matching em dias (sobrescreve config)'
     )
 
+    parser.add_argument(
+        '--no-cache',
+        action='store_true',
+        help='Desabilita cache de chamadas à Meta API (força buscar dados novos)'
+    )
+
+    parser.add_argument(
+        '--clear-cache',
+        action='store_true',
+        help='Limpa todo o cache antes de executar'
+    )
+
     # Meta Access Token
     parser.add_argument(
         '--meta-token',
@@ -187,11 +200,11 @@ Exemplos de uso:
         help='Token de acesso Meta API (sobrescreve config)'
     )
 
-    # Fair Comparison
+    # Fair Comparison (HABILITADO POR PADRÃO)
     parser.add_argument(
-        '--enable-fair-comparison',
+        '--disable-fair-comparison',
         action='store_true',
-        help='Habilita comparação justa (busca campanhas com mesmo spend/criativos)'
+        help='Desabilita comparação justa (usa comparação total COM ML vs SEM ML)'
     )
 
     args = parser.parse_args()
@@ -312,6 +325,94 @@ def print_decile_table(decile_metrics):
     print(f"💰 Receita Total (Guru+TMB): R$ {decile_metrics['revenue_total'].sum():,.2f}", flush=True)
 
 
+def enrich_campaign_ids(leads_df: pd.DataFrame, account_ids: list, access_token: str) -> pd.DataFrame:
+    """
+    Enriquece IDs de campanha/adset com nomes reais da Meta API.
+
+    Identifica linhas onde a coluna 'campaign' contém apenas um ID numérico
+    e busca o nome real da campanha ou adset na Meta API.
+
+    Args:
+        leads_df: DataFrame com leads
+        account_ids: Lista de IDs das contas Meta
+        access_token: Token de acesso Meta API
+
+    Returns:
+        DataFrame com nomes de campanha enriquecidos
+    """
+    logger.info("   🔍 Procurando IDs de campanha/adset sem nomes...")
+
+    # Identificar linhas com apenas ID numérico
+    def is_numeric_id(value):
+        if pd.isna(value):
+            return False
+        value_str = str(value).strip()
+        return value_str.isdigit() and len(value_str) > 10  # IDs Meta têm 15+ dígitos
+
+    mask = leads_df['campaign'].apply(is_numeric_id)
+    ids_to_enrich = leads_df.loc[mask, 'campaign'].unique()
+
+    if len(ids_to_enrich) == 0:
+        logger.info("   ✅ Nenhum ID sem nome encontrado")
+        return leads_df
+
+    logger.info(f"   📋 Encontrados {len(ids_to_enrich)} IDs únicos para enriquecer ({mask.sum()} respostas)")
+
+    # Inicializar Meta API
+    meta_api = MetaAdsIntegration(access_token=access_token)
+
+    # Mapa ID → Nome
+    id_to_name = {}
+
+    for campaign_id in ids_to_enrich:
+        # Evitar conversão para float que perde precisão em IDs grandes
+        campaign_id_str = str(campaign_id).strip()
+        # Remover .0 se houver
+        if campaign_id_str.endswith('.0'):
+            campaign_id_str = campaign_id_str[:-2]
+
+        try:
+            import requests
+
+            # Buscar nome via API direta
+            url = f"{meta_api.base_url}/{campaign_id_str}"
+            params = {
+                'access_token': access_token,
+                'fields': 'name'
+            }
+
+            response = requests.get(url, params=params, timeout=1)  # Timeout reduzido para 1s
+
+            if response.status_code == 200:
+                data = response.json()
+                name = data.get('name', campaign_id_str)
+                id_to_name[campaign_id] = name
+                logger.info(f"      ✅ {campaign_id_str[:15]}... → {name[:60]}...")
+            else:
+                logger.info(f"      ⚠️ ID {campaign_id_str}: status {response.status_code} (pode ser adset ou campanha de outra conta)")
+                id_to_name[campaign_id] = campaign_id_str
+
+        except Exception as e:
+            logger.info(f"      ⚠️ Erro ao buscar {campaign_id_str}: {e}")
+            id_to_name[campaign_id] = campaign_id_str
+
+    # Atualizar DataFrame
+    enriched_count = 0
+    for old_id, new_name in id_to_name.items():
+        # Converter old_id para string sem perder precisão
+        old_id_str = str(old_id).strip()
+        if old_id_str.endswith('.0'):
+            old_id_str = old_id_str[:-2]
+
+        if new_name != old_id_str:  # Se mudou
+            leads_df.loc[leads_df['campaign'] == old_id, 'campaign'] = new_name
+            enriched_count += 1
+
+    logger.info(f"   ✅ {enriched_count}/{len(ids_to_enrich)} IDs enriquecidos com sucesso")
+
+    return leads_df
+
+
 def main():
     """
     Função principal do CLI.
@@ -325,6 +426,19 @@ def main():
 
     # 1. Parse argumentos
     args = parse_args()
+
+    # 1.5. Gerenciar cache se solicitado
+    if args.clear_cache:
+        import shutil
+        cache_dir = Path(__file__).parent.parent.parent / 'files' / 'validation' / 'cache'
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            print("🗑️  Cache limpo com sucesso!", flush=True)
+            print(flush=True)
+        else:
+            print("⚠️  Nenhum cache encontrado para limpar", flush=True)
+            print(flush=True)
 
     # 2. Carregar configuração
     logger.info(f"⚙️ Carregando configuração de {args.config}...")
@@ -392,18 +506,28 @@ def main():
     print("📂 CARREGANDO DADOS...", flush=True)
     print(flush=True)
 
-    # Leads
-    lead_loader = LeadDataLoader()
+    # Leads - usar CAPI + Pesquisa combinados
+    capi_loader = CAPILeadDataLoader()
     if not Path(leads_path).exists():
         logger.error(f"❌ Arquivo de leads não encontrado: {leads_path}")
         sys.exit(1)
-    leads_df = lead_loader.load_leads_csv(leads_path)
+
+    # Usar loader combinado que busca Pesquisa + CAPI
+    # start_date e end_date já são datetime objects
+    leads_df, lead_source_stats = capi_loader.load_combined_leads(
+        csv_path=leads_path,
+        start_date=start_date if isinstance(start_date, str) else start_date.strftime('%Y-%m-%d'),
+        end_date=end_date if isinstance(end_date, str) else end_date.strftime('%Y-%m-%d')
+    )
     logger.info(f"   ✅ {len(leads_df)} leads carregados")
+    logger.info(f"   📊 Estatísticas: {lead_source_stats['survey_leads']} pesquisa + {lead_source_stats['capi_leads_extras']} CAPI extras")
 
     # Vendas
     sales_loader = SalesDataLoader()
-    guru_files = sorted(glob(f"{vendas_path}/guru_*.xlsx")) + sorted(glob(f"{vendas_path}/GURU*.xlsx"))
-    tmb_files = sorted(glob(f"{vendas_path}/tmb_*.xlsx")) + sorted(glob(f"{vendas_path}/TMB*.xlsx"))
+    # Buscar arquivos Guru com qualquer capitalização: guru_, Guru, GURU
+    guru_files = sorted(glob(f"{vendas_path}/guru_*.xlsx")) + sorted(glob(f"{vendas_path}/Guru*.xlsx")) + sorted(glob(f"{vendas_path}/GURU*.xlsx"))
+    # Buscar arquivos TMB com qualquer capitalização: tmb_, Tmb, TMB
+    tmb_files = sorted(glob(f"{vendas_path}/tmb_*.xlsx")) + sorted(glob(f"{vendas_path}/Tmb*.xlsx")) + sorted(glob(f"{vendas_path}/TMB*.xlsx"))
 
     logger.info(f"   Arquivos Guru encontrados: {len(guru_files)}")
     logger.info(f"   Arquivos TMB encontrados: {len(tmb_files)}")
@@ -422,9 +546,20 @@ def main():
 
     # 4. Filtrar por período
     # Período de vendas pode ser diferente do período de captação
-    sales_start = args.sales_start_date if args.sales_start_date else start_date
-    sales_end = args.sales_end_date if args.sales_end_date else end_date
+    # Se não foram fornecidos, calcular usando a lógica documentada (3 semanas)
+    if args.sales_start_date and args.sales_end_date:
+        sales_start = args.sales_start_date
+        sales_end = args.sales_end_date
+        logger.info(f"   📅 Usando período de vendas customizado: {sales_start} a {sales_end}")
+    else:
+        # Usar PeriodCalculator para calcular o período de vendas correto
+        period_calc = PeriodCalculator()
+        calculated_periods = period_calc.calculate_periods(start_date)
+        sales_start = calculated_periods['sales']['start']
+        sales_end = calculated_periods['sales']['end']
+        logger.info(f"   📅 Período de vendas calculado automaticamente: {sales_start} a {sales_end}")
 
+    print(flush=True)
     print(f"📅 FILTRANDO DADOS...", flush=True)
     print(f"   Período de Captação (Leads/Campanhas): {start_date} a {end_date}", flush=True)
     print(f"   Período de Vendas (Matching): {sales_start} a {sales_end}", flush=True)
@@ -436,10 +571,15 @@ def main():
         logger.error("❌ Nenhum lead no período especificado")
         sys.exit(1)
 
+    # 4.5. Enriquecer IDs de campanha/adset com nomes reais
+    print("🔗 ENRIQUECENDO NOMES DE CAMPANHA...", flush=True)
+    print(flush=True)
+    leads_df = enrich_campaign_ids(leads_df, args.account_id, META_CONFIG['access_token'])
+
     # 5. Classificar campanhas
     print("🏷️ CLASSIFICANDO CAMPANHAS...", flush=True)
     print(flush=True)
-    leads_df = add_ml_classification(leads_df, campaign_col='campaign')
+    leads_df, excluded_count = add_ml_classification(leads_df, campaign_col='campaign')
 
     com_ml_count = len(leads_df[leads_df['ml_type'] == 'COM_ML'])
     sem_ml_count = len(leads_df[leads_df['ml_type'] == 'SEM_ML'])
@@ -451,7 +591,7 @@ def main():
     fair_control_map = {}
     control_id_to_name = {}
     ml_metadata = {}
-    if args.enable_fair_comparison:
+    if not args.disable_fair_comparison:
         print("🎯 COMPARAÇÃO JUSTA - BUSCANDO CAMPANHAS DE CONTROLE...", flush=True)
         print(flush=True)
 
@@ -567,23 +707,35 @@ def main():
     print(flush=True)
 
     # Por campanha
+    use_cache = not args.no_cache  # Usar cache por padrão, desabilitar se --no-cache
     campaign_calc = CampaignMetricsCalculator(
         meta_api if meta_api else None,
-        config['product_value']
+        config['product_value'],
+        use_cache=use_cache
     )
 
-    # Usar primeira conta como referência (para retrocompatibilidade)
-    primary_account_id = args.account_id[0] if isinstance(args.account_id, list) else args.account_id
+    if not use_cache:
+        logger.info("   ⚠️ Cache desabilitado - forçando busca de dados novos da Meta API")
+
+    # Usar TODAS as contas para buscar leads (não apenas a primeira)
+    all_account_ids = ','.join(args.account_id) if isinstance(args.account_id, list) else args.account_id
 
     campaign_metrics = campaign_calc.calculate_campaign_metrics(
         matched_df,
-        primary_account_id,
+        all_account_ids,
         start_date,
         end_date,
         global_tracking_rate=matching_stats.get('tracking_rate', 100.0),
         costs_hierarchy_consolidated=costs_hierarchy_consolidated
     )
     logger.info(f"   ✅ Métricas calculadas para {len(campaign_metrics)} campanhas")
+
+    # Adicionar comparison_group ao campaign_metrics (se disponível)
+    if 'comparison_group' in matched_df.columns:
+        # Criar mapeamento campanha → comparison_group
+        campaign_to_group = matched_df.groupby('campaign')['comparison_group'].first().to_dict()
+        campaign_metrics['comparison_group'] = campaign_metrics['campaign'].map(campaign_to_group)
+        logger.info(f"   ✅ Grupos de comparação adicionados às métricas de campanha")
 
     # Por decil
     decile_calc = DecileMetricsCalculator()
@@ -603,13 +755,16 @@ def main():
         lead_period=(start_date, end_date),
         sales_period=(sales_start, sales_end),
         sales_df=sales_df,  # Todas as vendas do período
-        product_value=config['product_value']
+        product_value=config['product_value'],
+        excluded_leads=excluded_count,
+        campaign_calc=campaign_calc,  # Para acessar total_leads_meta_before_filter
+        lead_source_stats=lead_source_stats  # Estatísticas de pesquisa vs CAPI
     )
 
     # Comparação por grupo (quando fair comparison estiver habilitado)
     comparison_group_metrics = None
     fair_comparison_info = None
-    if args.enable_fair_comparison and 'comparison_group' in matched_df.columns:
+    if not args.disable_fair_comparison and 'comparison_group' in matched_df.columns:
         comparison_group_metrics = calculate_comparison_group_metrics(matched_df, campaign_metrics)
 
         # Preparar informações dos matches para o relatório
@@ -703,13 +858,18 @@ def main():
     print(f"Total de campanhas: {len(campaign_display)}", flush=True)
     print(flush=True)
 
-    # 10. Gerar relatório Excel (sobrescreve arquivo anterior)
+    # 10. Gerar relatório Excel
     print("📄 Gerando relatório Excel...", flush=True)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Nome fixo - sobrescreve a cada execução
-    excel_filename = "validation_report.xlsx"
+    # Sempre usar nome com datas (sobrescreve se mesmo período)
+    excel_filename = f"validation_report_{start_date}_to_{end_date}.xlsx"
     excel_path = str(Path(output_dir) / excel_filename)
+
+    if Path(excel_path).exists():
+        logger.info(f"   📌 Sobrescrevendo relatório existente: {excel_filename}")
+    else:
+        logger.info(f"   📌 Criando novo relatório: {excel_filename}")
 
     # Formatar account IDs para exibição
     account_ids_display = ', '.join(args.account_id) if isinstance(args.account_id, list) else args.account_id

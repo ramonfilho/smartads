@@ -70,30 +70,22 @@ class ValidationReportGenerator:
         # Definir formatos
         formats = self._create_formats(workbook)
 
-        # Aba 1: Resumo Executivo
-        logger.info("   Gerando aba: Resumo Executivo")
-        self._write_resumo_executivo(writer, ml_comparison, overall_stats, matching_stats, formats)
+        # Aba 1: Performance Geral
+        logger.info("   Gerando aba: Performance Geral")
+        self._write_performance_geral(writer, overall_stats, matching_stats, campaign_metrics, formats)
 
-        # Aba 2: Métricas por Campanha
-        logger.info("   Gerando aba: Métricas por Campanha")
-        self._write_metricas_campanhas(writer, campaign_metrics, formats)
+        # Aba 2: Performance por Campanha
+        logger.info("   Gerando aba: Performance por Campanha")
+        self._write_performance_campanhas(writer, campaign_metrics, formats)
 
-        # Aba 3: Performance por Decil - REMOVIDA (conforme solicitado)
-        # logger.info("   Gerando aba: Performance por Decil")
-        # self._write_performance_decis(writer, decile_metrics, formats)
+        # Aba 3: Comparação Justa (PENÚLTIMA - detalhes dos matches ML vs Fair Control)
+        # SEMPRE gerar aba (mesmo se vazia), para ter consistência no relatório
+        logger.info("   Gerando aba: Comparação Justa")
+        self._write_fair_comparison(writer, campaign_metrics, comparison_group_metrics, fair_comparison_info, formats)
 
-        # Aba 4: Matching Stats - REMOVIDA (informação desnecessária)
-        # logger.info("   Gerando aba: Matching Stats")
-        # self._write_matching_stats(writer, matching_stats, formats)
-
-        # Aba 5: Configuração - REMOVIDA (informação desnecessária)
-        # logger.info("   Gerando aba: Configuração")
-        # self._write_configuracao(writer, config_params, formats)
-
-        # Aba 6: Comparação Justa (opcional, se fair comparison estiver habilitado)
-        if comparison_group_metrics is not None and not comparison_group_metrics.empty:
-            logger.info("   Gerando aba: Comparação Justa")
-            self._write_fair_comparison(writer, comparison_group_metrics, fair_comparison_info, formats)
+        # Aba 4: Comparação ML (ÚLTIMA - resumo da comparação)
+        logger.info("   Gerando aba: Comparação ML")
+        self._write_comparacao_ml(writer, ml_comparison, comparison_group_metrics, formats)
 
         # Salvar Excel
         writer.close()
@@ -178,21 +170,21 @@ class ValidationReportGenerator:
 
         return formats
 
-    def _write_resumo_executivo(
+    def _write_performance_geral(
         self,
         writer: pd.ExcelWriter,
-        ml_comparison: Dict,
         overall_stats: Dict,
         matching_stats: Dict,
+        campaign_metrics: pd.DataFrame,
         formats: Dict
     ):
         """
-        Escreve aba 'Resumo Executivo' com KPIs principais.
+        Escreve aba 'Performance Geral' com estatísticas agregadas do período.
         """
-        worksheet = workbook = writer.book.add_worksheet('Resumo Executivo')
+        worksheet = workbook = writer.book.add_worksheet('Performance Geral')
 
         # Título
-        worksheet.write(0, 0, 'RESUMO EXECUTIVO - VALIDAÇÃO DE PERFORMANCE ML', formats['title'])
+        worksheet.write(0, 0, 'PERFORMANCE GERAL - VALIDAÇÃO DE PERFORMANCE ML', formats['title'])
         worksheet.write(1, 0, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}", formats['subtitle'])
 
         # Períodos de Aferição
@@ -224,11 +216,32 @@ class ValidationReportGenerator:
         matched_conv = overall_stats.get('matched_conversions', 0)
         tracking_rate = (matched_conv / total_conv) if total_conv > 0 else 0
 
+        # Métricas conforme definido pelo usuário
+        # 1. Leads Meta - da API do Meta
+        total_leads_meta = overall_stats.get('total_leads_meta', 0)
+
+        # 2. Leads no banco CAPI - total no PostgreSQL
+        capi_leads_total = overall_stats.get('capi_leads_total', 0)
+
+        # 3. Respostas na pesquisa - da Google Sheets
+        survey_leads = overall_stats.get('survey_leads', 0)
+
+        # 4. Vendas - total no período
+        total_vendas = total_conv
+
+        # 5. Vendas identificadas - com matching
+        vendas_identificadas = matched_conv
+
+        # 6. % de trackeamento - vendas identificadas / total vendas
+        pct_trackeamento = tracking_rate
+
         general_data = [
-            ['Total de Leads', overall_stats.get('total_leads', 0)],
-            ['Total de Conversões', total_conv],  # TODAS as vendas do período
-            ['Total de Conversões Identificadas', matched_conv],  # Apenas vendas matched
-            ['% Trackeamento', tracking_rate],  # matched / total
+            ['Leads Meta', total_leads_meta],
+            ['Leads no banco CAPI', capi_leads_total],
+            ['Respostas na pesquisa', survey_leads],
+            ['Vendas', total_vendas],
+            ['Vendas identificadas', vendas_identificadas],
+            ['% de trackeamento', pct_trackeamento],
             ['Taxa de Conversão Geral', overall_stats.get('conversion_rate', 0) / 100],
             ['Receita Total', overall_stats.get('total_revenue', 0)],
             ['Gasto Total', overall_stats.get('total_spend', 0)],
@@ -242,7 +255,7 @@ class ValidationReportGenerator:
 
         for metric, value in general_data:
             worksheet.write(row, 0, metric, formats['text'])
-            if 'Taxa' in metric or 'Trackeamento' in metric:
+            if '% de trackeamento' in metric or 'Taxa' in metric:
                 worksheet.write(row, 1, value, formats['percent'])
             elif 'Receita' in metric or 'Gasto' in metric or 'Margem' in metric:
                 worksheet.write(row, 1, value, formats['currency'])
@@ -252,12 +265,150 @@ class ValidationReportGenerator:
                 worksheet.write(row, 1, value, formats['number'])
             row += 1
 
-        # Comparação COM ML vs SEM ML
-        row += 2
-        worksheet.write(row, 0, '⚖️ COMPARAÇÃO: COM ML vs SEM ML', formats['subtitle'])
-        row += 1
+        # Ajustar larguras
+        worksheet.set_column(0, 0, 25)
+        worksheet.set_column(1, 3, 18)
 
+    def _write_performance_campanhas(
+        self,
+        writer: pd.ExcelWriter,
+        campaign_metrics: pd.DataFrame,
+        formats: Dict
+    ):
+        """
+        Escreve aba 'Performance por Campanha' com tabela detalhada.
+        """
+        if campaign_metrics.empty:
+            # Criar sheet vazia com mensagem
+            worksheet = writer.book.add_worksheet('Performance por Campanha')
+            worksheet.write(0, 0, 'Nenhuma métrica de campanha disponível', formats['subtitle'])
+            return
+
+        # Reorganizar e renomear colunas
+        column_mapping = {
+            'ml_type': 'Tipo de campanha',
+            'campaign': 'Campanha',
+            'optimization_goal': 'Evento de conversão',
+            'leads': 'Leads',
+            'LeadQualified': 'LeadQualified',
+            'LeadQualifiedHighQuality': 'LeadQualifiedHighQuality',
+            'Faixa A': 'Faixa A',
+            'respostas_pesquisa': 'Respostas pesquisa',
+            'taxa_resposta': '% de resposta',
+            'conversions': 'Vendas',
+            'conversion_rate': 'Taxa de conversão',
+            'budget': 'Orçamento',
+            'spend': 'Valor gasto',
+            'cpl': 'CPL',
+            'roas': 'ROAS',
+            'contribution_margin': 'Margem de contribuição',
+        }
+
+        # Ordem das colunas (campaign após ml_type, custom events após leads)
+        column_order = [
+            'ml_type', 'campaign', 'optimization_goal', 'leads',
+            'LeadQualified', 'LeadQualifiedHighQuality', 'Faixa A',
+            'respostas_pesquisa', 'taxa_resposta', 'conversions', 'conversion_rate', 'budget',
+            'spend', 'cpl', 'roas', 'contribution_margin'
+        ]
+
+        # Colunas a excluir
+        exclude_cols = ['comparison_group', 'margin_percent']
+
+        # Adicionar colunas restantes que não estão na lista (exceto as excluídas)
+        remaining_cols = [
+            col for col in campaign_metrics.columns
+            if col not in column_order and col not in exclude_cols
+        ]
+        final_column_order = column_order + remaining_cols
+
+        # Reordenar DataFrame mantendo apenas colunas que existem
+        existing_cols = [col for col in final_column_order if col in campaign_metrics.columns]
+        campaign_metrics_ordered = campaign_metrics[existing_cols].copy()
+
+        # Renomear colunas para nomes em português
+        campaign_metrics_ordered.rename(columns=column_mapping, inplace=True)
+
+        # Escrever DataFrame
+        campaign_metrics_ordered.to_excel(writer, sheet_name='Performance por Campanha', index=False, startrow=1)
+
+        worksheet = writer.sheets['Performance por Campanha']
+
+        # Título
+        worksheet.write(0, 0, '📊 PERFORMANCE DETALHADA POR CAMPANHA', formats['title'])
+
+        # Aplicar formatos aos headers (row 1)
+        for col_num, col_name in enumerate(campaign_metrics_ordered.columns):
+            worksheet.write(1, col_num, col_name, formats['header'])
+
+        # Aplicar formatos às células de dados
+        for row_num in range(len(campaign_metrics_ordered)):
+            for col_num, col_name in enumerate(campaign_metrics_ordered.columns):
+                value = campaign_metrics_ordered.iloc[row_num, col_num]
+
+                # Escolher formato baseado no nome da coluna
+                if col_name in ['Taxa de conversão', '% de resposta']:
+                    # Converter % para decimal
+                    worksheet.write(row_num + 2, col_num, value / 100, formats['percent'])
+                elif col_name in ['Valor gasto', 'Orçamento', 'CPL', 'Margem de contribuição']:
+                    worksheet.write(row_num + 2, col_num, value, formats['currency'])
+                elif col_name in ['ROAS']:
+                    worksheet.write(row_num + 2, col_num, value, formats['decimal'])
+                elif col_name in ['Leads', 'Respostas pesquisa', 'Vendas', 'LeadQualified', 'LeadQualifiedHighQuality', 'Faixa A']:
+                    # Sempre mostrar o número, mesmo que seja 0
+                    worksheet.write(row_num + 2, col_num, value, formats['number'])
+                else:
+                    worksheet.write(row_num + 2, col_num, value, formats['text'])
+
+        # Ajustar larguras
+        worksheet.set_column(0, 0, 18)  # Tipo de campanha
+        worksheet.set_column(1, 1, 30)  # Evento de conversão
+
+        worksheet.set_column(2, len(campaign_metrics_ordered.columns) - 1, 15)
+
+    def _write_comparacao_ml(
+        self,
+        writer: pd.ExcelWriter,
+        ml_comparison: Dict,
+        comparison_group_metrics: pd.DataFrame,
+        formats: Dict
+    ):
+        """
+        Escreve aba 'Comparação ML' com tabela de comparação.
+
+        Se comparison_group_metrics estiver disponível, usa comparação justa (ML vs Fair Control).
+        Caso contrário, usa comparação total (COM ML vs SEM ML).
+        """
+        worksheet = writer.book.add_worksheet('Comparação ML')
+
+        # Verificar se temos dados de comparação justa
+        use_fair_comparison = (
+            comparison_group_metrics is not None and
+            not comparison_group_metrics.empty and
+            'ML' in comparison_group_metrics['comparison_group'].values and
+            'Fair Control' in comparison_group_metrics['comparison_group'].values
+        )
+
+        if use_fair_comparison:
+            # COMPARAÇÃO JUSTA: ML vs Fair Control (campanhas duplicadas com mesmo setup)
+            worksheet.write(0, 0, '⚖️ COMPARAÇÃO JUSTA: ML vs Fair Control', formats['title'])
+            worksheet.write(1, 0, 'Apenas campanhas com MESMO budget e criativos (duplicadas)', formats['subtitle'])
+            self._write_fair_comparison_table(worksheet, comparison_group_metrics, formats, start_row=3)
+        else:
+            # COMPARAÇÃO TOTAL: COM ML vs SEM ML (todas as campanhas)
+            worksheet.write(0, 0, '⚖️ COMPARAÇÃO: COM ML vs SEM ML', formats['title'])
+            self._write_total_comparison_table(worksheet, ml_comparison, formats, start_row=2)
+
+    def _write_total_comparison_table(
+        self,
+        worksheet,
+        ml_comparison: Dict,
+        formats: Dict,
+        start_row: int = 2
+    ):
+        """Escreve tabela de comparação total (COM ML vs SEM ML)."""
         # Headers
+        row = start_row
         worksheet.write(row, 0, 'Métrica', formats['header'])
         worksheet.write(row, 1, 'COM ML', formats['header_green'])
         worksheet.write(row, 2, 'SEM ML', formats['header_red'])
@@ -281,23 +432,14 @@ class ValidationReportGenerator:
 
         for metric, com_value, sem_value, diff_value, fmt_type in comparison_data:
             worksheet.write(row, 0, metric, formats['text'])
-
-            # COM ML
             worksheet.write(row, 1, com_value, formats[fmt_type])
-
-            # SEM ML
             worksheet.write(row, 2, sem_value, formats[fmt_type])
 
-            # Diferença
             if diff_value is not None:
                 cell_format = formats['positive'] if diff_value > 0 else formats['negative']
-                if fmt_type == 'percent':
-                    worksheet.write(row, 3, diff_value, cell_format)
-                else:
-                    worksheet.write(row, 3, diff_value, cell_format)
+                worksheet.write(row, 3, diff_value, cell_format)
             else:
                 worksheet.write(row, 3, '-', formats['text'])
-
             row += 1
 
         # Vencedor
@@ -315,125 +457,85 @@ class ValidationReportGenerator:
         worksheet.set_column(0, 0, 25)
         worksheet.set_column(1, 3, 18)
 
-    def _write_metricas_campanhas(
+    def _write_fair_comparison_table(
         self,
-        writer: pd.ExcelWriter,
-        campaign_metrics: pd.DataFrame,
-        formats: Dict
+        worksheet,
+        comparison_group_metrics: pd.DataFrame,
+        formats: Dict,
+        start_row: int = 3
     ):
-        """
-        Escreve aba 'Métricas por Campanha' com tabela detalhada.
-        """
-        if campaign_metrics.empty:
-            # Criar sheet vazia com mensagem
-            worksheet = writer.book.add_worksheet('Métricas por Campanha')
-            worksheet.write(0, 0, 'Nenhuma métrica de campanha disponível', formats['subtitle'])
+        """Escreve tabela de comparação justa (ML vs Fair Control)."""
+        # Filtrar apenas ML e Fair Control
+        ml_data = comparison_group_metrics[comparison_group_metrics['comparison_group'] == 'ML']
+        fc_data = comparison_group_metrics[comparison_group_metrics['comparison_group'] == 'Fair Control']
+
+        if ml_data.empty or fc_data.empty:
+            worksheet.write(start_row, 0, 'Dados insuficientes para comparação justa', formats['subtitle'])
             return
 
-        # Escrever DataFrame
-        campaign_metrics.to_excel(writer, sheet_name='Métricas por Campanha', index=False, startrow=1)
+        # Extrair métricas
+        ml_metrics = ml_data.iloc[0]
+        fc_metrics = fc_data.iloc[0]
 
-        worksheet = writer.sheets['Métricas por Campanha']
-
-        # Título
-        worksheet.write(0, 0, '📊 MÉTRICAS DETALHADAS POR CAMPANHA', formats['title'])
-
-        # Aplicar formatos aos headers (row 1)
-        for col_num, col_name in enumerate(campaign_metrics.columns):
-            worksheet.write(1, col_num, col_name, formats['header'])
-
-        # Aplicar formatos às células de dados
-        for row_num in range(len(campaign_metrics)):
-            for col_num, col_name in enumerate(campaign_metrics.columns):
-                value = campaign_metrics.iloc[row_num, col_num]
-
-                # Escolher formato baseado no nome da coluna
-                if col_name in ['conversion_rate', 'margin_percent']:
-                    # Converter % para decimal
-                    worksheet.write(row_num + 2, col_num, value / 100, formats['percent'])
-                elif col_name in ['spend', 'budget', 'cpl', 'total_revenue', 'contribution_margin']:
-                    worksheet.write(row_num + 2, col_num, value, formats['currency'])
-                elif col_name in ['roas']:
-                    worksheet.write(row_num + 2, col_num, value, formats['decimal'])
-                elif col_name in ['leads', 'conversions', 'num_creatives']:
-                    worksheet.write(row_num + 2, col_num, value, formats['number'])
-                else:
-                    worksheet.write(row_num + 2, col_num, value, formats['text'])
-
-        # Ajustar larguras
-        worksheet.set_column(0, 0, 12)  # ml_type
-        worksheet.set_column(1, 1, 50)  # campaign
-        worksheet.set_column(2, len(campaign_metrics.columns) - 1, 15)
-
-    def _write_comparacao_ml(
-        self,
-        writer: pd.ExcelWriter,
-        ml_comparison: Dict,
-        formats: Dict
-    ):
-        """
-        Escreve aba 'Comparação ML' com tabela agregada.
-        """
-        worksheet = writer.book.add_worksheet('Comparação ML')
-
-        # Título
-        worksheet.write(0, 0, '⚖️ COMPARAÇÃO AGREGADA: COM ML vs SEM ML', formats['title'])
+        # Calcular diferenças percentuais
+        def calc_diff_pct(ml_val, fc_val):
+            if fc_val == 0:
+                return 0
+            return ((ml_val - fc_val) / fc_val) * 100
 
         # Headers
-        row = 2
+        row = start_row
         worksheet.write(row, 0, 'Métrica', formats['header'])
-        worksheet.write(row, 1, 'COM ML', formats['header_green'])
-        worksheet.write(row, 2, 'SEM ML', formats['header_red'])
-        worksheet.write(row, 3, 'Diferença', formats['header'])
-        worksheet.write(row, 4, 'Diferença %', formats['header'])
+        worksheet.write(row, 1, 'ML', formats['header_green'])
+        worksheet.write(row, 2, 'Fair Control', formats['header_red'])
+        worksheet.write(row, 3, 'Diferença %', formats['header'])
         row += 1
 
-        com_ml = ml_comparison.get('com_ml', {})
-        sem_ml = ml_comparison.get('sem_ml', {})
-        diff = ml_comparison.get('difference', {})
-
+        # Preparar dados de comparação
         comparison_data = [
-            ('Total de Leads', com_ml.get('leads', 0), sem_ml.get('leads', 0), None, None, 'number'),
-            ('Conversões', com_ml.get('conversions', 0), sem_ml.get('conversions', 0), None, None, 'number'),
-            ('Taxa Conversão (%)', com_ml.get('conversion_rate', 0), sem_ml.get('conversion_rate', 0),
-             com_ml.get('conversion_rate', 0) - sem_ml.get('conversion_rate', 0),
-             diff.get('conversion_rate_diff', 0), 'decimal'),
-            ('Receita Total', com_ml.get('revenue', 0), sem_ml.get('revenue', 0),
-             com_ml.get('revenue', 0) - sem_ml.get('revenue', 0), None, 'currency'),
-            ('Gasto Total', com_ml.get('spend', 0), sem_ml.get('spend', 0),
-             com_ml.get('spend', 0) - sem_ml.get('spend', 0), None, 'currency'),
-            ('CPL', com_ml.get('cpl', 0), sem_ml.get('cpl', 0),
-             com_ml.get('cpl', 0) - sem_ml.get('cpl', 0), None, 'currency'),
-            ('ROAS', com_ml.get('roas', 0), sem_ml.get('roas', 0),
-             com_ml.get('roas', 0) - sem_ml.get('roas', 0),
-             diff.get('roas_diff', 0), 'decimal'),
-            ('Margem Contribuição', com_ml.get('margin', 0), sem_ml.get('margin', 0),
-             com_ml.get('margin', 0) - sem_ml.get('margin', 0),
-             diff.get('margin_diff', 0), 'currency'),
+            ('Total de Leads', ml_metrics.get('leads', 0), fc_metrics.get('leads', 0), 'number'),
+            ('Conversões', ml_metrics.get('conversions', 0), fc_metrics.get('conversions', 0), 'number'),
+            ('Taxa Conversão', ml_metrics.get('conversion_rate', 0) / 100, fc_metrics.get('conversion_rate', 0) / 100, 'percent'),
+            ('Receita Total', ml_metrics.get('total_revenue', 0), fc_metrics.get('total_revenue', 0), 'currency'),
+            ('Gasto Total', ml_metrics.get('spend', 0), fc_metrics.get('spend', 0), 'currency'),
+            ('CPL', ml_metrics.get('cpl', 0), fc_metrics.get('cpl', 0), 'currency'),
+            ('ROAS', ml_metrics.get('roas', 0), fc_metrics.get('roas', 0), 'decimal'),
+            ('Margem Contribuição', ml_metrics.get('margin', 0), fc_metrics.get('margin', 0), 'currency'),
         ]
 
-        for metric, com_value, sem_value, diff_value, diff_pct, fmt_type in comparison_data:
+        for metric, ml_value, fc_value, fmt_type in comparison_data:
             worksheet.write(row, 0, metric, formats['text'])
-            worksheet.write(row, 1, com_value, formats[fmt_type])
-            worksheet.write(row, 2, sem_value, formats[fmt_type])
+            worksheet.write(row, 1, ml_value, formats[fmt_type])
+            worksheet.write(row, 2, fc_value, formats[fmt_type])
 
-            if diff_value is not None:
-                cell_format = formats['positive'] if diff_value > 0 else formats['negative']
-                worksheet.write(row, 3, diff_value, cell_format)
+            # Calcular diferença %
+            diff_pct = calc_diff_pct(ml_value, fc_value) / 100
+            if diff_pct is not None and diff_pct != 0:
+                cell_format = formats['positive'] if diff_pct > 0 else formats['negative']
+                worksheet.write(row, 3, diff_pct, cell_format)
             else:
                 worksheet.write(row, 3, '-', formats['text'])
-
-            if diff_pct is not None:
-                cell_format = formats['positive'] if diff_pct > 0 else formats['negative']
-                worksheet.write(row, 4, diff_pct / 100, cell_format)
-            else:
-                worksheet.write(row, 4, '-', formats['text'])
-
             row += 1
+
+        # Vencedor
+        row += 1
+        ml_roas = ml_metrics.get('roas', 0)
+        fc_roas = fc_metrics.get('roas', 0)
+
+        if ml_roas > fc_roas:
+            diff_pct = calc_diff_pct(ml_roas, fc_roas)
+            winner_text = f"🏆 VENCEDOR: ML (ROAS {diff_pct:.1f}% maior)"
+            worksheet.write(row, 0, winner_text, formats['header_green'])
+        elif fc_roas > ml_roas:
+            diff_pct = abs(calc_diff_pct(ml_roas, fc_roas))
+            winner_text = f"⚠️ VENCEDOR: Fair Control (ROAS {diff_pct:.1f}% maior)"
+            worksheet.write(row, 0, winner_text, formats['header_red'])
+        else:
+            worksheet.write(row, 0, "➖ Empate técnico em ROAS", formats['header'])
 
         # Ajustar larguras
         worksheet.set_column(0, 0, 25)
-        worksheet.set_column(1, 4, 18)
+        worksheet.set_column(1, 3, 18)
 
     def _write_matching_stats(
         self,
@@ -506,81 +608,90 @@ class ValidationReportGenerator:
     def _write_fair_comparison(
         self,
         writer: pd.ExcelWriter,
+        campaign_metrics: pd.DataFrame,
         comparison_group_metrics: pd.DataFrame,
         fair_comparison_info: Optional[Dict],
         formats: Dict
     ):
         """
-        Escreve aba 'Comparação Justa' com métricas por grupo e detalhes dos matches.
+        Escreve aba 'Comparação Justa' com lista detalhada de campanhas ML vs Fair Control matched.
+        Usa o mesmo matching que já funciona nas outras abas (via comparison_group).
         """
         worksheet = writer.book.add_worksheet('Comparação Justa')
 
         # Título
-        worksheet.write(0, 0, '🎯 COMPARAÇÃO JUSTA - ML vs FAIR CONTROL vs OTHER', formats['title'])
-        worksheet.write(1, 0, 'Comparação entre campanhas com características similares (budget, criativos, período)', formats['subtitle'])
+        worksheet.write(0, 0, '🎯 COMPARAÇÃO JUSTA - ML vs FAIR CONTROL', formats['title'])
+        worksheet.write(1, 0, 'Lista de campanhas matched com MESMO budget e criativos', formats['subtitle'])
 
-        # SEÇÃO 1: Métricas por Grupo
-        worksheet.write(3, 0, '📊 MÉTRICAS POR GRUPO DE COMPARAÇÃO', formats['header'])
+        row = 3
 
-        # Cabeçalhos
-        headers = ['Grupo', 'Leads', 'Conversões', 'Taxa Conv.', 'Receita', 'Gasto', 'CPL', 'ROAS', 'Margem']
+        # Verificar se temos métricas de comparação
+        if campaign_metrics.empty or 'comparison_group' not in campaign_metrics.columns:
+            # Mensagem simples quando não há matches
+            worksheet.write(row, 0, 'Nenhuma campanha de controle encontrada no período.', formats['text'])
+            return
+
+        # Cabeçalhos (ordem consistente com aba Performance por Campanha)
+        headers = [
+            'Campanha', 'Grupo', 'Evento de conversão',
+            'Leads', 'LeadQualified', 'LeadQualifiedHighQuality', 'Faixa A',
+            'Respostas pesquisa', '% de resposta',
+            'Vendas', 'Taxa de conversão',
+            'Orçamento', 'Valor gasto', 'CPL', 'ROAS', 'Margem de contribuição'
+        ]
         for col, header in enumerate(headers):
-            worksheet.write(4, col, header, formats['header'])
+            worksheet.write(row, col, header, formats['header'])
+        row += 1
 
-        # Dados
-        row = 5
-        for _, metrics in comparison_group_metrics.iterrows():
-            worksheet.write(row, 0, metrics['comparison_group'], formats['text'])
-            worksheet.write(row, 1, int(metrics['leads']), formats['number'])
-            worksheet.write(row, 2, int(metrics['conversions']), formats['number'])
-            worksheet.write(row, 3, f"{metrics['conversion_rate']:.2f}%", formats['percent'])
-            worksheet.write(row, 4, f"R$ {metrics['total_revenue']:,.2f}", formats['currency'])
-            worksheet.write(row, 5, f"R$ {metrics['spend']:,.2f}", formats['currency'])
-            worksheet.write(row, 6, f"R$ {metrics['cpl']:,.2f}", formats['currency'])
-            worksheet.write(row, 7, f"{metrics['roas']:.2f}x", formats['number'])
-            worksheet.write(row, 8, f"R$ {metrics['margin']:,.2f}", formats['currency'])
+        # Filtrar apenas campanhas ML e Fair Control, e ordenar por grupo e nome
+        fair_campaigns = campaign_metrics[
+            campaign_metrics['comparison_group'].isin(['ML', 'Fair Control'])
+        ].sort_values(['comparison_group', 'campaign'])
+
+        # Escrever linhas das campanhas
+        for _, campaign_row in fair_campaigns.iterrows():
+            col_idx = 0
+            worksheet.write(row, col_idx, campaign_row['campaign'], formats['text'])
+            col_idx += 1
+            worksheet.write(row, col_idx, campaign_row['comparison_group'], formats['text'])
+            col_idx += 1
+            worksheet.write(row, col_idx, campaign_row.get('optimization_goal', '-'), formats['text'])
+            col_idx += 1
+
+            # Leads - sempre mostrar o número
+            leads_val = campaign_row.get('leads', 0)
+            worksheet.write(row, col_idx, int(leads_val), formats['number'])
+            col_idx += 1
+
+            # Custom events
+            worksheet.write(row, col_idx, int(campaign_row.get('LeadQualified', 0)), formats['number'])
+            col_idx += 1
+            worksheet.write(row, col_idx, int(campaign_row.get('LeadQualifiedHighQuality', 0)), formats['number'])
+            col_idx += 1
+            worksheet.write(row, col_idx, int(campaign_row.get('Faixa A', 0)), formats['number'])
+            col_idx += 1
+
+            worksheet.write(row, col_idx, int(campaign_row.get('respostas_pesquisa', 0)), formats['number'])
+            col_idx += 1
+            worksheet.write(row, col_idx, campaign_row.get('taxa_resposta', 0) / 100, formats['percent'])
+            col_idx += 1
+            worksheet.write(row, col_idx, int(campaign_row['conversions']), formats['number'])
+            col_idx += 1
+            worksheet.write(row, col_idx, campaign_row['conversion_rate'] / 100, formats['percent'])
+            col_idx += 1
+            worksheet.write(row, col_idx, campaign_row.get('budget', 0), formats['currency'])
+            col_idx += 1
+            worksheet.write(row, col_idx, campaign_row['spend'], formats['currency'])
+            col_idx += 1
+            worksheet.write(row, col_idx, campaign_row['cpl'], formats['currency'])
+            col_idx += 1
+            worksheet.write(row, col_idx, campaign_row['roas'], formats['decimal'])
+            col_idx += 1
+            worksheet.write(row, col_idx, campaign_row.get('contribution_margin', 0), formats['currency'])
             row += 1
 
-        # SEÇÃO 2: Detalhes dos Matches (se disponível)
-        if fair_comparison_info:
-            ml_metadata = fair_comparison_info.get('ml_metadata', {})
-            fair_control_map = fair_comparison_info.get('fair_control_map', {})
-            control_id_to_name = fair_comparison_info.get('control_id_to_name', {})
-
-            if ml_metadata and fair_control_map:
-                row += 2
-                worksheet.write(row, 0, '🔗 CAMPANHAS MATCHED (ML ↔ FAIR CONTROL)', formats['header'])
-                row += 1
-
-                # Cabeçalhos
-                match_headers = ['Campanha ML', 'Budget ML', 'Criativos ML', 'Campanha Controle', 'Budget Controle', 'Criativos Controle', 'Overlap']
-                for col, header in enumerate(match_headers):
-                    worksheet.write(row, col, header, formats['header'])
-                row += 1
-
-                # Matches
-                for ml_id, control_ids in fair_control_map.items():
-                    if ml_id in ml_metadata and len(control_ids) > 0:
-                        ml_data = ml_metadata[ml_id]
-
-                        # Para cada campanha de controle matched
-                        for ctrl_id in control_ids:
-                            ctrl_name = control_id_to_name.get(ctrl_id, 'N/A')
-
-                            # Calcular overlap de criativos
-                            # Nota: Não temos os criativos do controle facilmente acessíveis aqui,
-                            # então vamos mostrar apenas info básica
-                            ml_creative_count = len(ml_data.get('creative_ids', []))
-
-                            worksheet.write(row, 0, ml_data['name'], formats['text'])
-                            worksheet.write(row, 1, f"R$ {ml_data.get('budget', 0):,.2f}", formats['currency'])
-                            worksheet.write(row, 2, ml_creative_count, formats['number'])
-                            worksheet.write(row, 3, ctrl_name, formats['text'])
-                            worksheet.write(row, 4, f"R$ {ml_data.get('budget', 0):,.2f}", formats['currency'])  # Mesmo budget
-                            worksheet.write(row, 5, ml_creative_count, formats['number'])  # Mesmos criativos
-                            worksheet.write(row, 6, '100%', formats['percent'])
-                            row += 1
-
         # Ajustar larguras
-        worksheet.set_column(0, 0, 50)  # Grupo / Campanha
-        worksheet.set_column(1, 8, 15)  # Métricas
+        worksheet.set_column(0, 0, 60)  # Campanha
+        worksheet.set_column(1, 1, 15)  # Grupo
+        worksheet.set_column(2, 2, 30)  # Evento de conversão
+        worksheet.set_column(3, 12, 15)  # Outras métricas
