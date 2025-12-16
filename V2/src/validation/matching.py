@@ -5,7 +5,6 @@ Vincula leads captados com vendas realizadas usando:
 1. Match primário: Email exato
 2. Match secundário: Telefone exato
 3. Validação temporal: Venda após captura do lead
-4. Janela máxima configurável (padrão: 30 dias)
 """
 
 import pandas as pd
@@ -23,7 +22,7 @@ def match_leads_to_sales(
     use_temporal_validation: bool = False
 ) -> pd.DataFrame:
     """
-    Vincula leads com vendas usando email/telefone.
+    Vincula leads com vendas usando email e telefone.
 
     Lógica de matching:
     1. Match por email (normalizado)
@@ -132,8 +131,8 @@ def match_leads_to_sales(
 
     logger.info(f"   ✅ Matching concluído:")
     logger.info(f"      Total conversões: {total_matched}")
-    logger.info(f"      Por email: {matched_by_email} ({matched_by_email/total_matched*100:.1f}%)" if total_matched > 0 else "      Por email: 0")
-    logger.info(f"      Por telefone: {matched_by_phone} ({matched_by_phone/total_matched*100:.1f}%)" if total_matched > 0 else "      Por telefone: 0")
+    logger.info(f"      Por email: {matched_by_email}")
+    logger.info(f"      Por telefone: {matched_by_phone}")
     logger.info(f"      Taxa de conversão geral: {match_rate:.2f}%")
 
     return leads
@@ -298,6 +297,134 @@ def filter_by_period(
     logger.info(f"   {before} → {after} registros ({after/before*100:.1f}%)" if before > 0 else "   0 registros")
 
     return df_filtered
+
+
+def filter_conversions_by_capture_period(
+    matched_df: pd.DataFrame,
+    period_start: str,
+    period_end: str
+) -> pd.DataFrame:
+    """
+    Remove conversões de leads captados FORA do período de análise.
+
+    Quando um lead foi captado antes do período mas converteu durante o período,
+    essa conversão NÃO deve ser atribuída às campanhas do período de análise.
+
+    Args:
+        matched_df: DataFrame com matching realizado
+        period_start: Data início do período de captação (formato: 'YYYY-MM-DD')
+        period_end: Data fim do período de captação (formato: 'YYYY-MM-DD')
+
+    Returns:
+        DataFrame com conversões apenas de leads captados no período
+
+    Example:
+        >>> # Lead captado 06/11, convertido 30/11, período 18-24/11 → excluído
+        >>> filtered = filter_conversions_by_capture_period(matched_df, '2025-11-18', '2025-11-24')
+    """
+    logger.info(f"📅 Filtrando conversões por período de captura: {period_start} a {period_end}")
+
+    start = pd.to_datetime(period_start)
+    end = pd.to_datetime(period_end)
+    end_inclusive = end + pd.Timedelta(days=1)  # Incluir o dia inteiro
+
+    # Separar convertidos de não-convertidos
+    conversions = matched_df[matched_df['converted'] == True].copy()
+    non_conversions = matched_df[matched_df['converted'] == False].copy()
+
+    before_filter = len(conversions)
+
+    # Filtrar conversões por data_captura dentro do período
+    conversions_filtered = conversions[
+        (conversions['data_captura'] >= start) &
+        (conversions['data_captura'] < end_inclusive)
+    ].copy()
+
+    after_filter = len(conversions_filtered)
+    removed = before_filter - after_filter
+
+    logger.info(f"   Conversões antes: {before_filter}")
+    logger.info(f"   Conversões depois: {after_filter}")
+    logger.info(f"   Conversões fora do período removidas: {removed}")
+
+    if removed > 0:
+        # Identificar quais foram removidas
+        removed_conversions = conversions[~conversions.index.isin(conversions_filtered.index)]
+        logger.info(f"   Emails removidos (capturados fora do período):")
+        for email in removed_conversions['email'].unique():
+            capture_date = removed_conversions[removed_conversions['email'] == email]['data_captura'].iloc[0]
+            logger.info(f"      • {email} (capturado em {capture_date.date()})")
+
+    # Recombinar conversões filtradas + não-convertidos (mantemos todos os leads do período)
+    result = pd.concat([conversions_filtered, non_conversions], ignore_index=True)
+
+    logger.info(f"   ✅ Filtragem por período concluída")
+
+    return result
+
+
+def deduplicate_conversions(matched_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Remove duplicatas artificiais de conversões.
+
+    Quando o mesmo email é captado múltiplas vezes e corresponde à mesma venda,
+    cria-se duplicatas artificiais. Esta função mantém apenas 1 conversão por venda real.
+
+    Lógica:
+    1. Agrupa conversões por (email, sale_date, sale_value)
+    2. Para cada grupo, mantém apenas o lead capturado PRIMEIRO (data_captura mais antiga)
+    3. Mantém todos os leads não convertidos
+
+    Args:
+        matched_df: DataFrame com matching realizado
+
+    Returns:
+        DataFrame sem duplicatas artificiais
+
+    Example:
+        >>> # Mesmo email, 5 capturas, 1 venda → mantém apenas 1 conversão
+        >>> deduplicated = deduplicate_conversions(matched_df)
+    """
+    logger.info("🧹 Iniciando deduplicação de conversões...")
+
+    # Separar convertidos de não-convertidos
+    conversions = matched_df[matched_df['converted'] == True].copy()
+    non_conversions = matched_df[matched_df['converted'] == False].copy()
+
+    before_dedup = len(conversions)
+    logger.info(f"   Conversões antes: {before_dedup}")
+
+    if len(conversions) == 0:
+        logger.info("   Sem conversões para deduplic")
+        return matched_df
+
+    # Criar chave de agrupamento: email + sale_date + sale_value
+    conversions['_dedup_key'] = (
+        conversions['email'].astype(str).str.strip().str.lower() + '|' +
+        conversions['sale_date'].astype(str) + '|' +
+        conversions['sale_value'].astype(str)
+    )
+
+    # Para cada grupo, manter apenas o lead capturado PRIMEIRO (data_captura mais antiga)
+    # Ordenar por data_captura (mais antiga primeiro) e pegar o primeiro de cada grupo
+    conversions_sorted = conversions.sort_values('data_captura')
+    deduplicated = conversions_sorted.drop_duplicates(subset='_dedup_key', keep='first')
+
+    # Remover coluna auxiliar
+    deduplicated = deduplicated.drop('_dedup_key', axis=1)
+
+    after_dedup = len(deduplicated)
+    removed = before_dedup - after_dedup
+
+    logger.info(f"   Conversões depois: {after_dedup}")
+    logger.info(f"   Duplicatas removidas: {removed}")
+
+    # Recombinar convertidos (sem duplicatas) + não-convertidos
+    result = pd.concat([deduplicated, non_conversions], ignore_index=True)
+
+    logger.info(f"   ✅ Deduplicação concluída")
+
+    return result
 
 
 def analyze_conversion_by_decile(matched_df: pd.DataFrame) -> pd.DataFrame:

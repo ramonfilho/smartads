@@ -207,6 +207,15 @@ Exemplos de uso:
         help='Desabilita comparação justa (usa comparação total COM ML vs SEM ML)'
     )
 
+    # Nível de Comparação - Evento ML
+    parser.add_argument(
+        '--comparison-level',
+        type=str,
+        choices=['adsets_iguais', 'todos', 'both'],
+        default='both',
+        help='Nível de comparação: adsets_iguais (apenas ADV estrutura idêntica), todos (todas campanhas ML), both (gera ambos) - default: both'
+    )
+
     args = parser.parse_args()
 
     # Validações
@@ -605,10 +614,11 @@ def main():
             ml_metadata = matcher.get_ml_campaign_metadata(start_date, end_date)
 
             if ml_metadata:
-                # Encontrar campanhas de controle justo
+                # Encontrar campanhas de controle justo (critérios refinados: ±30% budget, 80% ads)
                 fair_control_map, control_id_to_name = matcher.find_fair_control_campaigns(
                     ml_metadata,
                     min_creative_overlap=0.8,
+                    budget_tolerance=0.30,
                     start_date=start_date,
                     end_date=end_date
                 )
@@ -619,11 +629,47 @@ def main():
 
                 # Adicionar comparison_group aos leads
                 if total_matches > 0:
+                    # Buscar hierarquia de campanhas com optimization_goal para classificação correta
+                    campaign_hierarchy = None
+                    if matcher.api_available:
+                        try:
+                            from api.meta_integration import MetaAdsIntegration
+                            meta_api = MetaAdsIntegration(access_token=META_CONFIG['access_token'])
+                            costs = meta_api.get_costs_hierarchy(
+                                account_id=primary_account_id,
+                                since_date=start_date,
+                                until_date=end_date
+                            )
+                            campaign_hierarchy = costs.get('campaigns', {})
+                            logger.info(f"   ✅ Hierarquia obtida: {len(campaign_hierarchy)} campanhas")
+                        except Exception as e:
+                            logger.warning(f"   ⚠️ Erro ao buscar hierarquia de campanhas: {e}")
+
+                    # Detectar campanhas que usam eventos customizados
+                    # Método 1: Verificar optimization_goal na hierarquia
+                    campaigns_with_custom_events = set()
+                    if campaign_hierarchy:
+                        for campaign_id, campaign_data in campaign_hierarchy.items():
+                            adsets = campaign_data.get('adsets', {})
+                            for adset_id, adset_data in adsets.items():
+                                opt_goal = adset_data.get('optimization_goal', '')
+                                if opt_goal in ['LeadQualified', 'LeadQualifiedHighQuality']:
+                                    campaigns_with_custom_events.add(campaign_id)
+                                    break
+
+                    # Método 2: A classificação também usa heurística por data
+                    # (ver fair_campaign_comparison.py linha 943-953)
+
+                    if campaigns_with_custom_events:
+                        logger.info(f"   ✅ Detectadas {len(campaigns_with_custom_events)} campanhas com eventos customizados")
+
                     leads_df = matcher.create_comparison_groups(
                         leads_df,
                         ml_metadata,
                         fair_control_map,
-                        control_id_to_name
+                        control_id_to_name,
+                        campaign_hierarchy=campaign_hierarchy,
+                        campaigns_with_custom_events=campaigns_with_custom_events
                     )
             else:
                 logger.warning("   ⚠️ Nenhuma campanha ML encontrada no período")
@@ -642,6 +688,23 @@ def main():
         sales_df,
         use_temporal_validation=False  # Results analysis mode - match against full history
     )
+
+    # 6.1. Filtrar conversões por período de captura
+    print("📅 FILTRANDO CONVERSÕES POR PERÍODO DE CAPTURA...", flush=True)
+    print(flush=True)
+    from src.validation.matching import filter_conversions_by_capture_period
+    matched_df = filter_conversions_by_capture_period(
+        matched_df,
+        period_start=args.start_date,
+        period_end=args.end_date
+    )
+
+    # 6.2. Remover duplicatas artificiais
+    print("🧹 REMOVENDO DUPLICATAS ARTIFICIAIS...", flush=True)
+    print(flush=True)
+    from src.validation.matching import deduplicate_conversions
+    matched_df = deduplicate_conversions(matched_df)
+
     matching_stats = get_matching_stats(matched_df, total_sales=len(sales_df))
 
     logger.info(f"   ✅ Conversões: {matching_stats['total_conversions']}")
@@ -680,9 +743,12 @@ def main():
                         until_date=end_date
                     )
 
-                    # Consolidar campanhas
+                    # Consolidar campanhas, adicionando account_id a cada uma
                     campaigns_from_account = costs.get('campaigns', {})
                     if campaigns_from_account:
+                        # Adicionar account_id a cada campanha
+                        for camp_id, camp_data in campaigns_from_account.items():
+                            camp_data['account_id'] = account_id
                         costs_hierarchy_consolidated['campaigns'].update(campaigns_from_account)
                         logger.info(f"      ✅ {len(campaigns_from_account)} campanhas encontradas")
                     else:
@@ -731,11 +797,13 @@ def main():
     logger.info(f"   ✅ Métricas calculadas para {len(campaign_metrics)} campanhas")
 
     # Adicionar comparison_group ao campaign_metrics (se disponível)
-    if 'comparison_group' in matched_df.columns:
+    if 'comparison_group' in matched_df.columns and len(campaign_metrics) > 0:
         # Criar mapeamento campanha → comparison_group
         campaign_to_group = matched_df.groupby('campaign')['comparison_group'].first().to_dict()
         campaign_metrics['comparison_group'] = campaign_metrics['campaign'].map(campaign_to_group)
         logger.info(f"   ✅ Grupos de comparação adicionados às métricas de campanha")
+    elif len(campaign_metrics) == 0:
+        logger.warning("   ⚠️ Nenhuma métrica de campanha disponível - DataFrame vazio")
 
     # Por decil
     decile_calc = DecileMetricsCalculator()
@@ -746,7 +814,7 @@ def main():
     logger.info(f"   ✅ Performance calculada para todos os decis (D1-D10)")
 
     # Comparação ML
-    ml_comparison = compare_ml_vs_non_ml(campaign_metrics)
+    ml_comparison = compare_ml_vs_non_ml(campaign_metrics) if len(campaign_metrics) > 0 else None
 
     # Estatísticas gerais (usando TODAS as vendas do período, não apenas matched)
     overall_stats = calculate_overall_stats(
@@ -764,7 +832,7 @@ def main():
     # Comparação por grupo (quando fair comparison estiver habilitado)
     comparison_group_metrics = None
     fair_comparison_info = None
-    if not args.disable_fair_comparison and 'comparison_group' in matched_df.columns:
+    if not args.disable_fair_comparison and 'comparison_group' in matched_df.columns and len(campaign_metrics) > 0:
         comparison_group_metrics = calculate_comparison_group_metrics(matched_df, campaign_metrics)
 
         # Preparar informações dos matches para o relatório
@@ -773,6 +841,116 @@ def main():
             'fair_control_map': fair_control_map,
             'control_id_to_name': control_id_to_name
         }
+
+    # 8.5. COMPARAÇÃO POR ANÚNCIO (Ad-Level)
+    ad_level_comparisons = None
+    ad_level_comparisons_adsets_iguais = None
+    ad_level_comparisons_todos = None
+
+    if not args.disable_fair_comparison and len(campaign_metrics) > 0:
+        try:
+            from src.validation.fair_campaign_comparison import (
+                get_ad_level_metrics,
+                compare_ad_performance,
+                filter_campaigns_by_level,
+                filter_ads_by_level,
+                filter_ads_by_adset,
+                get_comparison_config
+            )
+
+            # Extrair campaign IDs do nome (formato: "Nome|ID")
+            def extract_campaign_id(campaign_name):
+                if pd.isna(campaign_name) or not isinstance(campaign_name, str):
+                    return None
+                parts = campaign_name.split('|')
+                if len(parts) >= 2:
+                    return parts[-1].strip()
+                return None
+
+            matched_df_copy = matched_df.copy()
+            matched_df_copy['campaign_id'] = matched_df_copy['campaign'].apply(extract_campaign_id)
+
+            # Determinar quais níveis processar
+            levels_to_process = []
+            if args.comparison_level == 'both':
+                levels_to_process = ['adsets_iguais', 'todos']
+            else:
+                levels_to_process = [args.comparison_level]
+
+            # Processar cada nível
+            for level in levels_to_process:
+                comparison_config = get_comparison_config(level)
+                print(f"\n📊 COMPARAÇÃO POR ANÚNCIO - {comparison_config['name'].upper()}...", flush=True)
+
+                # Filtrar campanhas por nível
+                level_campaign_ids = comparison_config['ml_campaigns'] + comparison_config['control_campaigns']
+                matched_df_level = matched_df_copy[
+                    matched_df_copy['campaign_id'].isin(level_campaign_ids)
+                ].copy()
+
+                if len(matched_df_level) == 0:
+                    print(f"   ⚠️  Nenhuma campanha encontrada para {comparison_config['name']}", flush=True)
+                    continue
+
+                print(f"   Campanhas ML: {len(comparison_config['ml_campaigns'])}", flush=True)
+                print(f"   Campanhas Controle: {len(comparison_config['control_campaigns'])}", flush=True)
+                print(f"   Matched Ads: {len(comparison_config['matched_ads'])}", flush=True)
+                print(f"   Buscando métricas via Meta API...", flush=True)
+                print(f"   Período: {start_date} a {end_date}", flush=True)
+
+                # Buscar métricas por anúncio via Meta API
+                ad_metrics_df = get_ad_level_metrics(
+                    account_id=args.account_id[0] if isinstance(args.account_id, list) else args.account_id,
+                    campaign_ids=level_campaign_ids,
+                    since_date=start_date,
+                    until_date=end_date,
+                    access_token=META_CONFIG['access_token']
+                )
+
+                print(f"   Resultado: {len(ad_metrics_df)} anúncios encontrados", flush=True)
+
+                if not ad_metrics_df.empty:
+                    # Criar mapeamento campaign_id → ml_type
+                    ml_type_map = matched_df_level.groupby('campaign_id')['ml_type'].first().to_dict()
+
+                    # Filtrar anúncios por nível
+                    ad_metrics_df_filtered = filter_ads_by_level(ad_metrics_df, level)
+
+                    # Para Ultra Fair, aplicar filtro adicional de adset
+                    if comparison_config.get('filter_by_adset', False):
+                        ad_metrics_df_filtered = filter_ads_by_adset(ad_metrics_df_filtered, level)
+                        print(f"   Filtro de adset aplicado: {len(ad_metrics_df_filtered)} anúncios em adsets comuns", flush=True)
+
+                    # Comparar performance
+                    comparison_result = compare_ad_performance(
+                        ad_metrics_df=ad_metrics_df_filtered,
+                        matched_df=matched_df_level,
+                        ml_type_map=ml_type_map
+                    )
+
+                    # Armazenar resultado
+                    if level == 'adsets_iguais':
+                        ad_level_comparisons_adsets_iguais = comparison_result
+                    elif level == 'todos':
+                        ad_level_comparisons_todos = comparison_result
+
+                    logger.info(f"   ✅ Comparação {comparison_config['name']} concluída")
+                else:
+                    logger.warning(f"   ⚠️  Nenhum anúncio encontrado para {comparison_config['name']}")
+
+            # Compatibilidade: manter ad_level_comparisons para código existente
+            # Prioriza "adsets iguais" se disponível, senão usa "todos"
+            if ad_level_comparisons_adsets_iguais is not None:
+                ad_level_comparisons = ad_level_comparisons_adsets_iguais
+            elif ad_level_comparisons_todos is not None:
+                ad_level_comparisons = ad_level_comparisons_todos
+            else:
+                logger.warning("   ⚠️  Não foi possível buscar métricas de anúncios")
+
+        except Exception as e:
+            logger.error(f"   ❌ Erro na comparação por anúncio: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
 
     print(flush=True)
 
@@ -896,7 +1074,13 @@ def main():
         config_params,
         excel_path,
         comparison_group_metrics=comparison_group_metrics,
-        fair_comparison_info=fair_comparison_info
+        fair_comparison_info=fair_comparison_info,
+        matched_df=matched_df,
+        sales_df=sales_df,
+        ad_level_comparisons=ad_level_comparisons,
+        ad_level_comparisons_adsets_iguais=ad_level_comparisons_adsets_iguais,
+        ad_level_comparisons_todos=ad_level_comparisons_todos,
+        comparison_level=args.comparison_level
     )
     print(f"   ✅ Excel salvo: {excel_path}", flush=True)
     print(flush=True)
