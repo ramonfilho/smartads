@@ -655,6 +655,30 @@ class CAPILeadDataLoader:
                     # Remover leads sem email
                     capi_norm = capi_norm[capi_norm['email'].notna()].copy()
 
+                    # FILTRO: Manter apenas leads com campaign_id válido da Meta
+                    # Extrai ID de campanha do utm_campaign (padrão: "...|120234062599950390")
+                    def extract_campaign_id_meta(utm_campaign):
+                        """Extrai campaign_id Meta do utm_campaign (últimos 15+ dígitos após |)"""
+                        if pd.isna(utm_campaign):
+                            return None
+                        match = re.search(r'\|(\d{15,})$', str(utm_campaign))
+                        return match.group(1)[:15] if match else None
+
+                    total_antes_filtro = len(capi_norm)
+                    emails_antes_filtro = len(capi_norm['email'].unique())
+
+                    capi_norm['campaign_id_meta'] = capi_norm['campaign'].apply(extract_campaign_id_meta)
+                    capi_norm = capi_norm[capi_norm['campaign_id_meta'].notna()].copy()
+
+                    total_depois_filtro = len(capi_norm)
+                    emails_depois_filtro = len(capi_norm['email'].unique())
+                    removidos = total_antes_filtro - total_depois_filtro
+                    emails_removidos = emails_antes_filtro - emails_depois_filtro
+
+                    if removidos > 0:
+                        logger.info(f"   🔍 Filtrado: {removidos} registros sem campaign_id Meta ({emails_removidos} emails únicos removidos)")
+                        logger.info(f"      Restaram: {total_depois_filtro} registros com campaign_id Meta ({emails_depois_filtro} emails únicos)")
+
                     # Filtrar APENAS leads do CAPI que NÃO estão na pesquisa
                     capi_emails = set(capi_norm['email'].unique())
                     capi_extras = capi_emails - survey_emails
@@ -664,9 +688,12 @@ class CAPILeadDataLoader:
                     logger.info(f"   UTM válida: {capi_extra_leads['campaign'].notna().sum()}/{len(capi_extra_leads)} ({capi_extra_leads['campaign'].notna().sum()/len(capi_extra_leads)*100:.1f}%)" if len(capi_extra_leads) > 0 else "")
 
                     # 4. Combinar pesquisa + extras do CAPI
+                    # IMPORTANTE: Contar pessoas únicas (emails únicos) no CAPI, não total de eventos
+                    # NOTA: Agora conta apenas emails com campaign_id Meta válido
+                    capi_unique_emails = len(capi_norm['email'].unique())
                     stats = {
                         'survey_leads': len(survey_period),
-                        'capi_leads_total': len(capi_leads_data),
+                        'capi_leads_total': capi_unique_emails,  # Pessoas únicas no CAPI
                         'capi_leads_extras': len(capi_extra_leads)
                     }
 

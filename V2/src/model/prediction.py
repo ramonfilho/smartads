@@ -90,6 +90,14 @@ class LeadScoringPredictor:
         with open(metadata_file, 'r') as f:
             self.metadata = json.load(f)
 
+        # Normalizar thresholds para formato D01-D10 (causa raiz do bug D09 vs D9)
+        if 'decil_thresholds' in self.metadata and 'thresholds' in self.metadata['decil_thresholds']:
+            from src.model.decil_thresholds import normalizar_thresholds
+            thresholds_originais = self.metadata['decil_thresholds']['thresholds']
+            thresholds_normalizados = normalizar_thresholds(thresholds_originais)
+            self.metadata['decil_thresholds']['thresholds'] = thresholds_normalizados
+            logger.info(f"Thresholds normalizados: {list(thresholds_normalizados.keys())}")
+
         logger.info(f"Modelo carregado: {self.model_name}")
         logger.info(f"Features esperadas: {len(self.feature_names)}")
 

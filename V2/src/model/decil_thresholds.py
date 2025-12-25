@@ -100,12 +100,32 @@ def _validar_thresholds(thresholds: dict):
                          f"{decil_atual}_max={max_atual:.4f} > {decil_prox}_min={min_prox:.4f}")
 
 
+def normalizar_thresholds(thresholds: dict) -> dict:
+    """
+    Normaliza chaves de thresholds para formato com zeros (D1 -> D01, D9 -> D09).
+
+    Args:
+        thresholds: Dict com thresholds (pode ter chaves D1-D10 ou D01-D10)
+
+    Returns:
+        Dict com chaves normalizadas (D01-D10)
+    """
+    thresholds_normalizados = {}
+
+    for key, value in thresholds.items():
+        # Converter D1-D9 para D01-D09, manter D10 como D10
+        decil_formatado = formatar_decil(key)
+        thresholds_normalizados[decil_formatado] = value
+
+    return thresholds_normalizados
+
+
 def formatar_decil(decil: str) -> str:
     """
     Formata decil com zero à esquerda (D1 -> D01, D2 -> D02, ..., D10 -> D10).
 
     Args:
-        decil: Decil no formato D1-D10
+        decil: Decil no formato D1-D10 ou D01-D10
 
     Returns:
         Decil formatado (D01-D10)
@@ -120,7 +140,7 @@ def atribuir_decil_por_threshold(score: float, thresholds: dict) -> str:
 
     Args:
         score: Probabilidade predita (0-1)
-        thresholds: Dict com thresholds por decil
+        thresholds: Dict com thresholds por decil (chaves devem estar normalizadas D01-D10)
 
     Returns:
         Label do decil formatado (D01-D10)
@@ -134,15 +154,19 @@ def atribuir_decil_por_threshold(score: float, thresholds: dict) -> str:
     # Buscar decil apropriado
     for decil, limits in decis_ordenados:
         if limits['threshold_min'] <= score <= limits['threshold_max']:
-            return formatar_decil(decil)
+            return decil  # Já está formatado
 
     # Fallback: se score > max(D10), retornar D10
-    if score > thresholds['D10']['threshold_max']:
-        return formatar_decil('D10')
+    # Aceitar tanto D10 quanto D1-D9 (normalizar se necessário)
+    d10_key = 'D10' if 'D10' in thresholds else formatar_decil('D10')
+    d1_key = 'D01' if 'D01' in thresholds else 'D1'
+
+    if d10_key in thresholds and score > thresholds[d10_key]['threshold_max']:
+        return d10_key
 
     # Fallback: se score < min(D1), retornar D1
-    if score < thresholds['D1']['threshold_min']:
-        return formatar_decil('D1')
+    if d1_key in thresholds and score < thresholds[d1_key]['threshold_min']:
+        return d1_key
 
     # Caso extremo: buscar decil mais próximo
     logger.warning(f"⚠️  Score {score:.4f} não encontrado em nenhum threshold, usando decil mais próximo")
@@ -153,7 +177,7 @@ def atribuir_decil_por_threshold(score: float, thresholds: dict) -> str:
         distancias.append((decil, abs(score - mid_point)))
 
     decil_mais_proximo = min(distancias, key=lambda x: x[1])[0]
-    return formatar_decil(decil_mais_proximo)
+    return decil_mais_proximo  # Já está formatado
 
 
 def atribuir_decis_batch(scores: np.ndarray, thresholds: dict) -> list:

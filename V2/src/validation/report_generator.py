@@ -42,10 +42,11 @@ class ValidationReportGenerator:
         fair_comparison_info: Optional[Dict] = None,
         matched_df: Optional[pd.DataFrame] = None,
         sales_df: Optional[pd.DataFrame] = None,
+        all_adsets_comparison: Optional[pd.DataFrame] = None,
+        adset_level_comparisons: Optional[Dict] = None,
         ad_level_comparisons: Optional[Dict] = None,
-        ad_level_comparisons_adsets_iguais: Optional[Dict] = None,
-        ad_level_comparisons_todos: Optional[Dict] = None,
-        comparison_level: str = 'both'
+        ad_in_matched_adsets_comparisons: Optional[Dict] = None,
+        matched_ads_in_matched_adsets_comparisons: Optional[Dict] = None
     ) -> str:
         """
         Gera relatório Excel completo com 5-6 abas.
@@ -80,90 +81,86 @@ class ValidationReportGenerator:
         logger.info("   Gerando aba: Performance Geral")
         self._write_performance_geral(writer, overall_stats, matching_stats, campaign_metrics, formats)
 
-        # Aba 2: Performance por Campanha
-        logger.info("   Gerando aba: Performance por Campanha")
-        self._write_performance_campanhas(writer, campaign_metrics, formats)
+        # Aba 2: Performance por Campanha - REMOVIDA conforme solicitação
+        # logger.info("   Gerando aba: Performance por Campanha")
+        # self._write_performance_campanhas(writer, campaign_metrics, formats)
 
-        # Aba 3: Detalhes das Conversões
+        # Aba 2: Comparação por Campanhas (antiga "Comparação Justa")
+        # SEMPRE gerar aba (mesmo se vazia), para ter consistência no relatório
+        logger.info("   Gerando aba: Comparação por Campanhas")
+        self._write_fair_comparison(writer, campaign_metrics, comparison_group_metrics, fair_comparison_info, formats)
+
+        # Guardar o caminho do arquivo para ler de volta as abas formatadas
+        # (para garantir que temos as mesmas colunas, especialmente 'Grupo')
+        temp_output_path = output_path
+
+        # Aba 3: Comparação por Adsets (MOVIDA ANTES DE COMPARAÇÃO ML)
+        # Guardar DataFrames para consolidação na aba Comparação ML
+        # CRÍTICO: Usar comparison_group_metrics para nível de campanhas (não campaign_metrics)
+        campanhas_df = comparison_group_metrics if comparison_group_metrics is not None and not comparison_group_metrics.empty else None
+        adsets_df = None
+        ads_df = None
+
+        try:
+            from src.validation.fair_campaign_comparison import (
+                prepare_adset_comparison_for_excel,
+                prepare_ad_comparison_for_excel
+            )
+
+            # ADSETS - formato similar à aba Campanhas
+            if adset_level_comparisons is not None:
+                logger.info("   Gerando aba: Comparação por Adsets")
+                excel_dfs_adsets = prepare_adset_comparison_for_excel(adset_level_comparisons)
+
+                if 'comparacao_adsets' in excel_dfs_adsets and not excel_dfs_adsets['comparacao_adsets'].empty:
+                    adsets_df = excel_dfs_adsets['comparacao_adsets']
+                    self._write_adsets_comparison(writer, adsets_df, formats)
+
+            # ADS - formato similar à aba Campanhas e Adsets
+            if ad_level_comparisons is not None:
+                logger.info("   Gerando aba: Comparação por Ads")
+                excel_dfs_ads = prepare_ad_comparison_for_excel(ad_level_comparisons)
+
+                if 'comparacao_ads' in excel_dfs_ads and not excel_dfs_ads['comparacao_ads'].empty:
+                    ads_df = excel_dfs_ads['comparacao_ads']
+                    self._write_ads_comparison(writer, ads_df, formats)
+
+            # ADS EM ADSETS MATCHED - nova comparação
+            ads_in_adsets_df = None
+            if ad_in_matched_adsets_comparisons is not None:
+                from src.validation.fair_campaign_comparison import prepare_ad_comparison_for_excel
+                excel_dfs_ads_in_adsets = prepare_ad_comparison_for_excel(ad_in_matched_adsets_comparisons)
+
+                if 'comparacao_ads' in excel_dfs_ads_in_adsets and not excel_dfs_ads_in_adsets['comparacao_ads'].empty:
+                    ads_in_adsets_df = excel_dfs_ads_in_adsets['comparacao_ads']
+
+            # ADS MATCHED EM ADSETS MATCHED - nova comparação (Tabela 6)
+            matched_ads_in_adsets_df = None
+            if matched_ads_in_matched_adsets_comparisons is not None:
+                from src.validation.fair_campaign_comparison import prepare_ad_comparison_for_excel
+                excel_dfs_matched_ads_in_adsets = prepare_ad_comparison_for_excel(matched_ads_in_matched_adsets_comparisons)
+
+                if 'comparacao_ads' in excel_dfs_matched_ads_in_adsets and not excel_dfs_matched_ads_in_adsets['comparacao_ads'].empty:
+                    matched_ads_in_adsets_df = excel_dfs_matched_ads_in_adsets['comparacao_ads']
+
+        except Exception as e:
+            logger.warning(f"   ⚠️ Erro ao gerar abas de comparação (adsets/ads): {e}")
+            import traceback
+            traceback.print_exc()
+
+        # Aba 4: Comparação ML (resumo da comparação com 4 tabelas consolidadas)
+        logger.info("   Gerando aba: Comparação ML")
+        self._write_comparacao_ml(writer, ml_comparison, campanhas_df, all_adsets_comparison, adsets_df, ads_df, ads_in_adsets_df, matched_ads_in_adsets_df, formats)
+
+        # Aba 5: Comparação Faixa A (Eventos ML vs Faixa A - sistema legado)
+        if campaign_metrics is not None and not campaign_metrics.empty and 'comparison_group' in campaign_metrics.columns:
+            logger.info("   Gerando aba: Comparação Faixa A")
+            self._write_comparacao_faixa_a(writer, campaign_metrics, formats)
+
+        # Aba FINAL: Detalhes das Conversões (movida para última posição)
         if sales_df is not None:
             logger.info("   Gerando aba: Detalhes das Conversões")
             self._write_conversions_detail(writer, matched_df, sales_df, formats)
-
-        # Aba 4: Comparação Justa (PENÚLTIMA - detalhes dos matches ML vs Fair Control)
-        # SEMPRE gerar aba (mesmo se vazia), para ter consistência no relatório
-        logger.info("   Gerando aba: Comparação Justa")
-        self._write_fair_comparison(writer, campaign_metrics, comparison_group_metrics, fair_comparison_info, formats)
-
-        # Aba 4: Comparação ML (ÚLTIMA - resumo da comparação)
-        logger.info("   Gerando aba: Comparação ML")
-        self._write_comparacao_ml(writer, ml_comparison, comparison_group_metrics, formats)
-
-        # Abas de comparação por anúncio (se disponíveis)
-        try:
-            from src.validation.fair_campaign_comparison import prepare_ad_comparison_for_excel
-
-            # Se comparison_level == 'both', gerar abas separadas
-            if comparison_level == 'both':
-                # Adsets Iguais
-                if ad_level_comparisons_adsets_iguais is not None:
-                    logger.info("   Gerando abas: Evento ML (adsets iguais)")
-                    excel_dfs_iguais = prepare_ad_comparison_for_excel(ad_level_comparisons_adsets_iguais)
-
-                    if 'aggregated' in excel_dfs_iguais and not excel_dfs_iguais['aggregated'].empty:
-                        logger.info("      - Agregação Matched Pairs (adsets iguais)")
-                        self._write_ad_aggregated(writer, excel_dfs_iguais['aggregated'], formats,
-                                                 sheet_name='📊 Adsets Iguais - Agregação')
-
-                    if 'detailed' in excel_dfs_iguais and not excel_dfs_iguais['detailed'].empty:
-                        logger.info("      - Detalhamento Anúncios (adsets iguais)")
-                        self._write_ad_detailed(writer, excel_dfs_iguais['detailed'], formats,
-                                              sheet_name='📋 Adsets Iguais - Detalhes')
-
-                    if 'all_summary' in excel_dfs_iguais and not excel_dfs_iguais['all_summary'].empty:
-                        logger.info("      - Resumo Todos Anúncios (adsets iguais)")
-                        self._write_ad_all_summary(writer, excel_dfs_iguais['all_summary'], formats,
-                                                  sheet_name='📝 Adsets Iguais - Resumo')
-
-                # Todos
-                if ad_level_comparisons_todos is not None:
-                    logger.info("   Gerando abas: Evento ML (todos)")
-                    excel_dfs_todos = prepare_ad_comparison_for_excel(ad_level_comparisons_todos)
-
-                    if 'aggregated' in excel_dfs_todos and not excel_dfs_todos['aggregated'].empty:
-                        logger.info("      - Agregação Matched Pairs (todos)")
-                        self._write_ad_aggregated(writer, excel_dfs_todos['aggregated'], formats,
-                                                sheet_name='📊 Todos - Agregação')
-
-                    if 'detailed' in excel_dfs_todos and not excel_dfs_todos['detailed'].empty:
-                        logger.info("      - Detalhamento Anúncios (todos)")
-                        self._write_ad_detailed(writer, excel_dfs_todos['detailed'], formats,
-                                             sheet_name='📋 Todos - Detalhes')
-
-                    if 'all_summary' in excel_dfs_todos and not excel_dfs_todos['all_summary'].empty:
-                        logger.info("      - Resumo Todos Anúncios (todos)")
-                        self._write_ad_all_summary(writer, excel_dfs_todos['all_summary'], formats,
-                                                 sheet_name='📝 Todos - Resumo')
-
-            # Se apenas um nível, gerar abas padrão
-            elif ad_level_comparisons is not None:
-                level_name = "Evento ML (adsets iguais)" if comparison_level == 'adsets_iguais' else "Evento ML (todos)"
-                logger.info(f"   Gerando abas: Comparação por Anúncio - {level_name}")
-                excel_dfs = prepare_ad_comparison_for_excel(ad_level_comparisons)
-
-                if 'aggregated' in excel_dfs and not excel_dfs['aggregated'].empty:
-                    logger.info("      - Agregação Matched Pairs")
-                    self._write_ad_aggregated(writer, excel_dfs['aggregated'], formats)
-
-                if 'detailed' in excel_dfs and not excel_dfs['detailed'].empty:
-                    logger.info("      - Detalhamento Anúncios")
-                    self._write_ad_detailed(writer, excel_dfs['detailed'], formats)
-
-                if 'all_summary' in excel_dfs and not excel_dfs['all_summary'].empty:
-                    logger.info("      - Resumo Todos Anúncios")
-                    self._write_ad_all_summary(writer, excel_dfs['all_summary'], formats)
-
-        except Exception as e:
-            logger.warning(f"   ⚠️ Erro ao gerar abas de comparação por anúncio: {e}")
 
         # Salvar Excel
         writer.close()
@@ -295,10 +292,10 @@ class ValidationReportGenerator:
         tracking_rate = (matched_conv / total_conv) if total_conv > 0 else 0
 
         # Métricas conforme definido pelo usuário
-        # 1. Leads Meta - da API do Meta
+        # 1. Leads Meta - eventos "Lead" das campanhas
         total_leads_meta = overall_stats.get('total_leads_meta', 0)
 
-        # 2. Leads no banco CAPI - total no PostgreSQL
+        # 2. Pessoas únicas CAPI - pessoas únicas no banco CAPI
         capi_leads_total = overall_stats.get('capi_leads_total', 0)
 
         # 3. Respostas na pesquisa - da Google Sheets
@@ -315,7 +312,7 @@ class ValidationReportGenerator:
 
         general_data = [
             ['Leads Meta', total_leads_meta],
-            ['Leads no banco CAPI', capi_leads_total],
+            ['Pessoas únicas (CAPI)', capi_leads_total],
             ['Respostas na pesquisa', survey_leads],
             ['Vendas no Período', total_vendas],
             ['Vendas identificadas', vendas_identificadas],
@@ -364,15 +361,13 @@ class ValidationReportGenerator:
 
         # Reorganizar e renomear colunas
         column_mapping = {
-            'ml_type': 'Tipo de campanha',
+            'comparison_group': 'Grupo',
             'campaign': 'Campanha',
             'optimization_goal': 'Evento de conversão',
             'leads_display': 'Leads',
             'LeadQualified': 'LeadQualified',
             'LeadQualifiedHighQuality': 'LeadQualifiedHighQuality',
             'Faixa A': 'Faixa A',
-            'respostas_pesquisa': 'Respostas pesquisa',
-            'taxa_resposta': '% de resposta',
             'conversions': 'Vendas',
             'conversion_rate': 'Taxa de conversão',
             'budget': 'Orçamento',
@@ -383,17 +378,17 @@ class ValidationReportGenerator:
             'contribution_margin': 'Margem de contribuição',
         }
 
-        # Ordem das colunas (campaign após ml_type, custom events após leads)
+        # Ordem das colunas (campaign após comparison_group, custom events após leads)
         # IMPORTANTE: Margem de contribuição vai para o final DEPOIS das colunas restantes
         column_order = [
-            'ml_type', 'campaign', 'optimization_goal', 'leads_display',
+            'comparison_group', 'campaign', 'optimization_goal', 'leads_display',
             'LeadQualified', 'LeadQualifiedHighQuality', 'Faixa A',
-            'respostas_pesquisa', 'taxa_resposta', 'conversions', 'conversion_rate', 'budget',
+            'conversions', 'conversion_rate', 'budget',
             'spend', 'cpl', 'roas', 'total_revenue'
         ]
 
         # Colunas a excluir (incluindo total_conversion_events e num_creatives)
-        exclude_cols = ['comparison_group', 'margin_percent', 'account_id', 'total_conversion_events', 'num_creatives', 'leads']
+        exclude_cols = ['ml_type', 'margin_percent', 'account_id', 'total_conversion_events', 'num_creatives', 'leads']
 
         # Adicionar colunas restantes que não estão na lista (exceto as excluídas)
         remaining_cols = [
@@ -431,18 +426,24 @@ class ValidationReportGenerator:
             # Filtrar campanhas desta conta
             account_campaigns = campaign_metrics[campaign_metrics['account_id'] == account_id].copy()
 
-            # DEBUG: Verificar vendas antes de excluir campanhas EXCLUIR
+            # DEBUG: Verificar vendas antes de excluir campanhas não-captação
             vendas_antes = account_campaigns['conversions'].sum()
-            excluir_campanhas = account_campaigns[account_campaigns['ml_type'] == 'EXCLUIR']
+            # Filtrar apenas campanhas não-captação (VENDA, CPL, BLACK, etc.)
+            excluir_campanhas = account_campaigns[
+                account_campaigns['ml_type'] == 'EXCLUIR'
+            ]
             excluir_vendas = excluir_campanhas['conversions'].sum()
 
             if excluir_vendas > 0:
-                logger.warning(f"   ⚠️  {int(excluir_vendas)} vendas em campanhas EXCLUIR (não mostradas na aba):")
+                logger.warning(f"   ⚠️  {int(excluir_vendas)} vendas em campanhas não-captação (não mostradas na aba):")
                 for _, row in excluir_campanhas[excluir_campanhas['conversions'] > 0].iterrows():
                     logger.warning(f"      • {int(row['conversions'])} vendas: {row['campaign'][:70]}")
 
-            # IMPORTANTE: Excluir campanhas do tipo EXCLUIR (não são campanhas de captação)
-            account_campaigns = account_campaigns[account_campaigns['ml_type'] != 'EXCLUIR'].copy()
+            # IMPORTANTE: Excluir apenas campanhas não-captação (ml_type == 'EXCLUIR')
+            # Isso mantém todas as campanhas de captação (ML e não-ML) independente de serem Fair Control
+            account_campaigns = account_campaigns[
+                account_campaigns['ml_type'] != 'EXCLUIR'
+            ].copy()
 
             vendas_depois = account_campaigns['conversions'].sum()
             if excluir_vendas > 0:
@@ -470,17 +471,22 @@ class ValidationReportGenerator:
                 for col_num, col_name in enumerate(account_campaigns_ordered.columns):
                     value = account_campaigns_ordered.iloc[row_num, col_num]
 
+                    # Tratamento de valores NaN/None/Inf
+                    import math
+                    if pd.isna(value) or (isinstance(value, float) and (math.isnan(value) or math.isinf(value))):
+                        value = '' if col_name in ['Grupo', 'Campanha', 'Evento de conversão'] else 0
+
                     # Escolher formato baseado no nome da coluna
-                    if col_name in ['Taxa de conversão', '% de resposta']:
-                        worksheet.write(current_row, col_num, value / 100, formats['percent'])
+                    if col_name in ['Taxa de conversão']:
+                        worksheet.write(current_row, col_num, value / 100 if value else 0, formats['percent'])
                     elif col_name in ['Valor gasto', 'Orçamento', 'CPL', 'Receita Total', 'Margem de contribuição']:
-                        worksheet.write(current_row, col_num, value, formats['currency'])
+                        worksheet.write(current_row, col_num, value if value else 0, formats['currency'])
                     elif col_name in ['ROAS']:
-                        worksheet.write(current_row, col_num, value, formats['decimal'])
-                    elif col_name in ['Leads', 'Respostas pesquisa', 'Vendas', 'LeadQualified', 'LeadQualifiedHighQuality', 'Faixa A']:
-                        worksheet.write(current_row, col_num, value, formats['number'])
+                        worksheet.write(current_row, col_num, value if value else 0, formats['decimal'])
+                    elif col_name in ['Leads', 'Vendas', 'LeadQualified', 'LeadQualifiedHighQuality', 'Faixa A']:
+                        worksheet.write(current_row, col_num, int(value) if value else 0, formats['number'])
                     else:
-                        worksheet.write(current_row, col_num, value, formats['text'])
+                        worksheet.write(current_row, col_num, str(value) if value else '', formats['text'])
                 current_row += 1
 
             # Espaço entre tabelas
@@ -525,7 +531,7 @@ class ValidationReportGenerator:
                 tracking_data = {
                     'campaign_id': campaign_id,
                     'campaign': campaign_name,
-                    'ml_type': conv.get('ml_type', ''),
+                    'comparison_group': conv.get('comparison_group', ''),
                     'data_captura': conv.get('data_captura', ''),
                     'sale_date': conv.get('sale_date', ''),
                     'sale_origin': conv.get('sale_origin', ''),
@@ -571,7 +577,7 @@ class ValidationReportGenerator:
                 'sale_origin': tracking_data['sale_origin'] if is_tracked else sale.get('origem', ''),
                 'campaign_id': tracking_data['campaign_id'] if is_tracked else '',
                 'campaign': tracking_data['campaign'] if is_tracked else '',
-                'ml_type': tracking_data['ml_type'] if is_tracked else '',
+                'comparison_group': tracking_data['comparison_group'] if is_tracked else '',
                 'data_captura': tracking_data['data_captura'] if is_tracked else ''
             }
             all_sales.append(sale_data)
@@ -590,7 +596,7 @@ class ValidationReportGenerator:
             'telefone',
             'campaign_id',
             'campaign',
-            'ml_type',
+            'comparison_group',
             'data_captura',
             'sale_date',
             'sale_value',
@@ -612,7 +618,7 @@ class ValidationReportGenerator:
             'Telefone',
             'ID Campanha',
             'Nome Campanha',
-            'Tipo ML',
+            'Grupo',
             'Data Captura',
             'Data Venda',
             'Valor Venda',
@@ -629,7 +635,7 @@ class ValidationReportGenerator:
             worksheet.write(row_num, 2, row['telefone'] if row['telefone'] else '', formats['text'])
             worksheet.write(row_num, 3, row['campaign_id'] if row['campaign_id'] else '', formats['text'])
             worksheet.write(row_num, 4, row['campaign'] if row['campaign'] else '', formats['text'])
-            worksheet.write(row_num, 5, row['ml_type'] if row['ml_type'] else '', formats['text'])
+            worksheet.write(row_num, 5, row['comparison_group'] if row['comparison_group'] else '', formats['text'])
             worksheet.write(row_num, 6, str(row['data_captura']) if row['data_captura'] else '', formats['text'])
             worksheet.write(row_num, 7, str(row['sale_date']) if row['sale_date'] else '', formats['text'])
             worksheet.write(row_num, 8, row['sale_value'] if row['sale_value'] else 0, formats['currency'])
@@ -650,34 +656,494 @@ class ValidationReportGenerator:
         self,
         writer: pd.ExcelWriter,
         ml_comparison: Dict,
-        comparison_group_metrics: pd.DataFrame,
+        campanhas_df: pd.DataFrame,
+        all_adsets_df: pd.DataFrame,
+        adsets_matched_df: pd.DataFrame,
+        ads_df: pd.DataFrame,
+        ads_in_adsets_df: pd.DataFrame,
+        matched_ads_in_adsets_df: pd.DataFrame,
         formats: Dict
     ):
         """
-        Escreve aba 'Comparação ML' com tabela de comparação.
-
-        Se comparison_group_metrics estiver disponível, usa comparação justa (ML vs Fair Control).
-        Caso contrário, usa comparação total (COM ML vs SEM ML).
+        Escreve aba 'Comparação ML' com 4 tabelas consolidadas:
+        1. Comparação por Campanhas (todas)
+        2. Comparação por Adsets (todos - Eventos ML vs Controle)
+        3. Comparação por Adsets Matched (apenas matched pairs)
+        4. Comparação por Ads MATCHED em Adsets Matched (interseção mais rigorosa)
         """
         worksheet = writer.book.add_worksheet('Comparação ML')
 
-        # Verificar se temos dados de comparação justa
-        use_fair_comparison = (
-            comparison_group_metrics is not None and
-            not comparison_group_metrics.empty and
-            'Eventos ML' in comparison_group_metrics['comparison_group'].values and
-            'Controle' in comparison_group_metrics['comparison_group'].values
+        current_row = 0
+
+        # TABELA 1: Comparação por Campanhas
+        worksheet.write(current_row, 0, '📊 COMPARAÇÃO POR CAMPANHAS (All vs All)', formats['title'])
+        current_row += 1
+        worksheet.write(current_row, 0, 'Todas as campanhas Eventos ML vs Controle', formats['subtitle'])
+        current_row += 2
+
+        if campanhas_df is not None and not campanhas_df.empty:
+            current_row = self._write_consolidated_table(
+                worksheet, campanhas_df, formats, current_row,
+                label='Campanhas'
+            )
+        else:
+            worksheet.write(current_row, 0, 'Dados indisponíveis', formats['text'])
+            current_row += 1
+
+        current_row += 2  # Espaçamento
+
+        # TABELA 2: Comparação por TODOS os Adsets (Eventos ML vs Controle)
+        worksheet.write(current_row, 0, '📊 COMPARAÇÃO POR ADSETS (All vs All)', formats['title'])
+        current_row += 1
+        worksheet.write(current_row, 0, 'Todos os adsets das campanhas Eventos ML vs Controle (sem filtros)', formats['subtitle'])
+        current_row += 2
+
+        if all_adsets_df is not None and not all_adsets_df.empty:
+            current_row = self._write_consolidated_table(
+                worksheet, all_adsets_df, formats, current_row,
+                label='Adsets (Todos)'
+            )
+        else:
+            worksheet.write(current_row, 0, 'Dados indisponíveis', formats['text'])
+            current_row += 1
+
+        current_row += 2  # Espaçamento
+
+        # TABELA 3: Comparação por Adsets Matched Pairs
+        # Importar lista de matched adsets para exibir no título
+        from src.validation.fair_campaign_comparison import MATCHED_ADSETS
+        matched_adsets_list = ', '.join(MATCHED_ADSETS)
+
+        worksheet.write(current_row, 0, '📊 COMPARAÇÃO POR ADSETS MATCHED (Matched Pairs)', formats['title'])
+        current_row += 1
+        worksheet.write(current_row, 0, 'Apenas adsets que aparecem em Eventos ML E Controle (R$ 200+ gasto)', formats['subtitle'])
+        current_row += 1
+        worksheet.write(current_row, 0, f'Matched Adsets: {matched_adsets_list}', formats['text'])
+        current_row += 2
+
+        if adsets_matched_df is not None and not adsets_matched_df.empty:
+            current_row = self._write_consolidated_table(
+                worksheet, adsets_matched_df, formats, current_row,
+                label='Adsets (Matched)'
+            )
+        else:
+            worksheet.write(current_row, 0, 'Dados indisponíveis', formats['text'])
+            current_row += 1
+
+        current_row += 2  # Espaçamento
+
+        # TABELA 4: Comparação por Ads MATCHED EM Adsets Matched
+        worksheet.write(current_row, 0, '📊 COMPARAÇÃO POR ADS MATCHED EM ADSETS MATCHED', formats['title'])
+        current_row += 1
+        worksheet.write(current_row, 0, 'Apenas ads matched (mesmo ad_code) que pertencem aos adsets matched (R$ 200+ gasto)', formats['subtitle'])
+        current_row += 2
+
+        if matched_ads_in_adsets_df is not None and not matched_ads_in_adsets_df.empty:
+            current_row = self._write_consolidated_table(
+                worksheet, matched_ads_in_adsets_df, formats, current_row,
+                label='Ads Matched em Adsets Matched'
+            )
+        else:
+            worksheet.write(current_row, 0, 'Dados indisponíveis', formats['text'])
+            current_row += 1
+
+        # Ajustar larguras
+        worksheet.set_column(0, 0, 25)
+        worksheet.set_column(1, 3, 18)
+
+    def _write_comparacao_faixa_a(
+        self,
+        writer: pd.ExcelWriter,
+        campaign_metrics: pd.DataFrame,
+        formats: Dict
+    ):
+        """
+        Escreve aba 'Comparação Faixa A' comparando Eventos ML vs Faixa A (sistema legado).
+        Usa o mesmo formato das tabelas da aba 'Comparação ML'.
+
+        Args:
+            writer: Excel writer
+            campaign_metrics: DataFrame com métricas de campanhas
+            formats: Formatos do Excel
+        """
+        worksheet = writer.book.add_worksheet('Comparação Faixa A')
+        current_row = 0
+
+        # Título principal
+        worksheet.write(current_row, 0, '📊 EVENTOS ML vs FAIXA A (Sistema Legado)', formats['title'])
+        current_row += 1
+        worksheet.write(current_row, 0, 'Comparação entre campanhas com eventos customizados CAPI vs sistema legado Faixa A', formats['subtitle'])
+        current_row += 2
+
+        # Verificar qual nome de coluna existe para Faixa A
+        faixa_a_col = None
+        for col in campaign_metrics.columns:
+            if col.lower().replace(' ', '_') == 'faixa_a' or col == 'Faixa A':
+                faixa_a_col = col
+                break
+
+        # Preparar DataFrame para _write_consolidated_table
+        # Filtrar Eventos ML (TODAS as campanhas Eventos ML, independente de ter Faixa A)
+        eventos_ml = campaign_metrics[
+            campaign_metrics['comparison_group'] == 'Eventos ML'
+        ].copy()
+
+        # Faixa A: campanhas com Faixa A > 0
+        if faixa_a_col:
+            faixa_a = campaign_metrics[campaign_metrics[faixa_a_col] > 0].copy()
+        else:
+            faixa_a = pd.DataFrame()
+
+        # Adicionar coluna 'Grupo' com nomes personalizados
+        if not eventos_ml.empty:
+            eventos_ml['Grupo'] = 'Eventos ML'
+        if not faixa_a.empty:
+            faixa_a['Grupo'] = 'Faixa A (Legado)'
+
+        # Combinar
+        df_combined = pd.concat([eventos_ml, faixa_a], ignore_index=True)
+
+        if df_combined.empty:
+            worksheet.write(current_row, 0, 'Sem dados disponíveis para comparação', formats['text'])
+            return
+
+        # Padronizar nomes de colunas
+        column_mapping = {
+            'leads': 'Leads',
+            'conversions': 'Vendas',
+            'spend': 'Valor gasto',
+            'total_revenue': 'Receita Total',
+            'contribution_margin': 'Margem de contribuição'
+        }
+
+        for old_name, new_name in column_mapping.items():
+            if old_name in df_combined.columns and new_name not in df_combined.columns:
+                df_combined[new_name] = df_combined[old_name]
+
+        # Usar função customizada para escrever tabela com labels personalizados
+        current_row = self._write_faixa_a_table(
+            worksheet, df_combined, formats, current_row,
+            label='Campanhas Eventos ML vs Campanhas Faixa A'
         )
 
-        if use_fair_comparison:
-            # COMPARAÇÃO JUSTA: Eventos ML vs Controle (campanhas duplicadas com mesmo setup)
-            worksheet.write(0, 0, '⚖️ COMPARAÇÃO JUSTA: Eventos ML vs Controle', formats['title'])
-            worksheet.write(1, 0, 'Apenas campanhas com MESMO budget e criativos (duplicadas)', formats['subtitle'])
-            self._write_fair_comparison_table(worksheet, comparison_group_metrics, formats, start_row=3)
+        # Ajustar larguras
+        worksheet.set_column(0, 0, 25)
+        worksheet.set_column(1, 3, 18)
+
+    def _write_faixa_a_table(
+        self,
+        worksheet,
+        df: pd.DataFrame,
+        formats: Dict,
+        start_row: int,
+        label: str
+    ) -> int:
+        """
+        Escreve uma tabela consolidada comparando Eventos ML vs Faixa A (Legado).
+        Similar a _write_consolidated_table mas aceita labels personalizados.
+
+        Args:
+            worksheet: Worksheet do Excel
+            df: DataFrame com dados
+            formats: Formatos do Excel
+            start_row: Linha inicial para escrever
+            label: Label para identificação
+
+        Returns:
+            Próxima linha disponível após a tabela
+        """
+        # Identificar coluna de grupo
+        group_col = 'Grupo' if 'Grupo' in df.columns else 'comparison_group'
+
+        # Filtrar apenas Eventos ML e Faixa A (Legado)
+        df_filtered = df[df[group_col].isin(['Eventos ML', 'Faixa A (Legado)'])].copy()
+
+        if df_filtered.empty:
+            worksheet.write(start_row, 0, 'Nenhum dado encontrado', formats['text'])
+            return start_row + 1
+
+        # Preparar colunas para agregação
+        agg_dict = {}
+
+        # Mapear colunas
+        if 'Leads' in df_filtered.columns:
+            agg_dict['Leads'] = 'sum'
+        if 'Vendas' in df_filtered.columns:
+            agg_dict['Vendas'] = 'sum'
+        if 'Valor gasto' in df_filtered.columns:
+            agg_dict['Valor gasto'] = 'sum'
+        if 'Receita Total' in df_filtered.columns:
+            agg_dict['Receita Total'] = 'sum'
+        if 'Margem de contribuição' in df_filtered.columns:
+            agg_dict['Margem de contribuição'] = 'sum'
+
+        if not agg_dict:
+            worksheet.write(start_row, 0, 'Colunas necessárias não encontradas', formats['text'])
+            return start_row + 1
+
+        # Agregar métricas por Grupo
+        aggregated = df_filtered.groupby(group_col).agg(agg_dict).reset_index()
+
+        # Calcular métricas derivadas
+        aggregated['Taxa de conversão'] = (aggregated['Vendas'] / aggregated['Leads']) * 100
+        aggregated['CPL'] = aggregated['Valor gasto'] / aggregated['Leads']
+        aggregated['ROAS'] = aggregated['Receita Total'] / aggregated['Valor gasto']
+
+        # Substituir NaN/Inf por 0
+        aggregated = aggregated.fillna(0)
+        aggregated = aggregated.replace([float('inf'), float('-inf')], 0)
+
+        # Extrair dados de Eventos ML e Faixa A
+        ml_data = aggregated[aggregated[group_col] == 'Eventos ML']
+        faixa_a_data = aggregated[aggregated[group_col] == 'Faixa A (Legado)']
+
+        if ml_data.empty and faixa_a_data.empty:
+            worksheet.write(start_row, 0, 'Sem dados para comparação', formats['text'])
+            return start_row + 1
+
+        # Extrair métricas
+        ml_metrics = {
+            'leads': ml_data['Leads'].iloc[0] if not ml_data.empty else 0,
+            'conversions': ml_data['Vendas'].iloc[0] if not ml_data.empty else 0,
+            'conversion_rate': ml_data['Taxa de conversão'].iloc[0] if not ml_data.empty else 0,
+            'spend': ml_data['Valor gasto'].iloc[0] if not ml_data.empty else 0,
+            'revenue': ml_data['Receita Total'].iloc[0] if not ml_data.empty else 0,
+            'cpl': ml_data['CPL'].iloc[0] if not ml_data.empty else 0,
+            'roas': ml_data['ROAS'].iloc[0] if not ml_data.empty else 0,
+            'margin': ml_data['Margem de contribuição'].iloc[0] if not ml_data.empty else 0,
+        }
+
+        faixa_a_metrics = {
+            'leads': faixa_a_data['Leads'].iloc[0] if not faixa_a_data.empty else 0,
+            'conversions': faixa_a_data['Vendas'].iloc[0] if not faixa_a_data.empty else 0,
+            'conversion_rate': faixa_a_data['Taxa de conversão'].iloc[0] if not faixa_a_data.empty else 0,
+            'spend': faixa_a_data['Valor gasto'].iloc[0] if not faixa_a_data.empty else 0,
+            'revenue': faixa_a_data['Receita Total'].iloc[0] if not faixa_a_data.empty else 0,
+            'cpl': faixa_a_data['CPL'].iloc[0] if not faixa_a_data.empty else 0,
+            'roas': faixa_a_data['ROAS'].iloc[0] if not faixa_a_data.empty else 0,
+            'margin': faixa_a_data['Margem de contribuição'].iloc[0] if not faixa_a_data.empty else 0,
+        }
+
+        # Escrever tabela
+        row = start_row
+
+        # Cabeçalhos
+        headers = ['Métrica', 'Eventos ML', 'Faixa A (Legado)', 'Diferença %']
+        for col, header in enumerate(headers):
+            worksheet.write(row, col, header, formats['header'])
+        row += 1
+
+        # Função auxiliar para calcular diferença %
+        def calc_diff_pct(ml_val, fa_val):
+            if fa_val == 0:
+                return 0
+            return ((ml_val - fa_val) / fa_val) * 100
+
+        # Dados de comparação
+        comparison_data = [
+            ('Leads', ml_metrics['leads'], faixa_a_metrics['leads'], 'number'),
+            ('Vendas', ml_metrics['conversions'], faixa_a_metrics['conversions'], 'number'),
+            ('Taxa de conversão', ml_metrics['conversion_rate'] / 100, faixa_a_metrics['conversion_rate'] / 100, 'percent'),
+            ('Valor gasto', ml_metrics['spend'], faixa_a_metrics['spend'], 'currency'),
+            ('CPL', ml_metrics['cpl'], faixa_a_metrics['cpl'], 'currency'),
+            ('ROAS', ml_metrics['roas'], faixa_a_metrics['roas'], 'decimal'),
+            ('Receita Total', ml_metrics['revenue'], faixa_a_metrics['revenue'], 'currency'),
+            ('Margem Contribuição', ml_metrics['margin'], faixa_a_metrics['margin'], 'currency'),
+        ]
+
+        for metric, ml_value, fa_value, fmt_type in comparison_data:
+            worksheet.write(row, 0, metric, formats['text'])
+            worksheet.write(row, 1, ml_value, formats[fmt_type])
+            worksheet.write(row, 2, fa_value, formats[fmt_type])
+
+            # Calcular diferença %
+            diff_pct = calc_diff_pct(ml_value, fa_value) / 100 if fmt_type != 'percent' else calc_diff_pct(ml_value * 100, fa_value * 100) / 100
+            if diff_pct != 0:
+                cell_format = formats['positive'] if diff_pct > 0 else formats['negative']
+                worksheet.write(row, 3, diff_pct, cell_format)
+            else:
+                worksheet.write(row, 3, '-', formats['text'])
+            row += 1
+
+        # Vencedor
+        row += 1
+        if ml_metrics['roas'] > faixa_a_metrics['roas']:
+            diff_pct = calc_diff_pct(ml_metrics['roas'], faixa_a_metrics['roas'])
+            winner_text = f"🏆 VENCEDOR: Eventos ML (ROAS {diff_pct:.1f}% maior)"
+            worksheet.write(row, 0, winner_text, formats['header_green'])
+        elif faixa_a_metrics['roas'] > ml_metrics['roas']:
+            diff_pct = abs(calc_diff_pct(ml_metrics['roas'], faixa_a_metrics['roas']))
+            winner_text = f"⚠️ VENCEDOR: Faixa A (ROAS {diff_pct:.1f}% maior)"
+            worksheet.write(row, 0, winner_text, formats['header_red'])
         else:
-            # COMPARAÇÃO TOTAL: COM ML vs SEM ML (todas as campanhas)
-            worksheet.write(0, 0, '⚖️ COMPARAÇÃO: COM ML vs SEM ML', formats['title'])
-            self._write_total_comparison_table(worksheet, ml_comparison, formats, start_row=2)
+            worksheet.write(row, 0, "➖ Empate técnico em ROAS", formats['header'])
+
+        return row + 2
+
+    def _write_consolidated_table(
+        self,
+        worksheet,
+        df: pd.DataFrame,
+        formats: Dict,
+        start_row: int,
+        label: str
+    ) -> int:
+        """
+        Escreve uma tabela consolidada agregando por Grupo (Eventos ML vs Controle).
+
+        Args:
+            worksheet: Worksheet do Excel
+            df: DataFrame com dados (pode ser campanhas, adsets ou ads)
+            formats: Formatos do Excel
+            start_row: Linha inicial para escrever
+            label: Label para identificação (Campanhas/Adsets/Ads)
+
+        Returns:
+            Próxima linha disponível após a tabela
+        """
+        # Identificar coluna de grupo (pode ser 'Grupo' ou 'comparison_group')
+        group_col = None
+        if 'Grupo' in df.columns:
+            group_col = 'Grupo'
+        elif 'comparison_group' in df.columns:
+            group_col = 'comparison_group'
+        else:
+            worksheet.write(start_row, 0, f'Coluna de grupo não encontrada', formats['text'])
+            return start_row + 1
+
+        # Filtrar apenas Eventos ML e Controle
+        df_filtered = df[df[group_col].isin(['Eventos ML', 'Controle'])].copy()
+
+        if df_filtered.empty:
+            worksheet.write(start_row, 0, 'Nenhum dado de Eventos ML ou Controle encontrado', formats['text'])
+            return start_row + 1
+
+        # Preparar colunas para agregação (verificar quais existem)
+        agg_dict = {}
+
+        # Mapear: Leads
+        if 'Leads' in df_filtered.columns:
+            agg_dict['Leads'] = 'sum'
+        elif 'leads' in df_filtered.columns:
+            df_filtered['Leads'] = df_filtered['leads']
+            agg_dict['Leads'] = 'sum'
+
+        # Mapear: Vendas/Conversões
+        if 'Vendas' in df_filtered.columns:
+            agg_dict['Vendas'] = 'sum'
+        elif 'conversions' in df_filtered.columns:
+            df_filtered['Vendas'] = df_filtered['conversions']
+            agg_dict['Vendas'] = 'sum'
+
+        # Mapear: Valor gasto
+        if 'Valor gasto' in df_filtered.columns:
+            agg_dict['Valor gasto'] = 'sum'
+        elif 'spend' in df_filtered.columns:
+            df_filtered['Valor gasto'] = df_filtered['spend']
+            agg_dict['Valor gasto'] = 'sum'
+
+        # Mapear: Receita Total
+        if 'Receita Total' in df_filtered.columns:
+            agg_dict['Receita Total'] = 'sum'
+        elif 'total_revenue' in df_filtered.columns:
+            df_filtered['Receita Total'] = df_filtered['total_revenue']
+            agg_dict['Receita Total'] = 'sum'
+        elif 'revenue' in df_filtered.columns:
+            df_filtered['Receita Total'] = df_filtered['revenue']
+            agg_dict['Receita Total'] = 'sum'
+
+        # Mapear: Margem de contribuição
+        if 'Margem de contribuição' in df_filtered.columns:
+            agg_dict['Margem de contribuição'] = 'sum'
+        elif 'contribution_margin' in df_filtered.columns:
+            df_filtered['Margem de contribuição'] = df_filtered['contribution_margin']
+            agg_dict['Margem de contribuição'] = 'sum'
+        elif 'margin' in df_filtered.columns:
+            df_filtered['Margem de contribuição'] = df_filtered['margin']
+            agg_dict['Margem de contribuição'] = 'sum'
+
+        if not agg_dict:
+            worksheet.write(start_row, 0, 'Colunas necessárias não encontradas', formats['text'])
+            return start_row + 1
+
+        # Agregar métricas por Grupo
+        aggregated = df_filtered.groupby(group_col).agg(agg_dict).reset_index()
+
+        # Calcular métricas derivadas
+        aggregated['Taxa de conversão'] = (aggregated['Vendas'] / aggregated['Leads']) * 100
+        aggregated['CPL'] = aggregated['Valor gasto'] / aggregated['Leads']
+        aggregated['ROAS'] = aggregated['Receita Total'] / aggregated['Valor gasto']
+
+        # Substituir NaN/Inf por 0
+        aggregated = aggregated.fillna(0)
+        aggregated = aggregated.replace([float('inf'), float('-inf')], 0)
+
+        # Extrair dados de ML e Controle
+        ml_data = aggregated[aggregated[group_col] == 'Eventos ML']
+        ctrl_data = aggregated[aggregated[group_col] == 'Controle']
+
+        if ml_data.empty or ctrl_data.empty:
+            worksheet.write(start_row, 0, 'Dados incompletos (falta ML ou Controle)', formats['text'])
+            return start_row + 1
+
+        ml_row = ml_data.iloc[0]
+        ctrl_row = ctrl_data.iloc[0]
+
+        # Calcular diferenças percentuais
+        def calc_diff_pct(ml_val, ctrl_val):
+            if ctrl_val == 0:
+                return 0
+            return ((ml_val - ctrl_val) / ctrl_val)
+
+        # Headers
+        row = start_row
+        worksheet.write(row, 0, 'Métrica', formats['header'])
+        worksheet.write(row, 1, 'Eventos ML', formats['header_green'])
+        worksheet.write(row, 2, 'Controle', formats['header_red'])
+        worksheet.write(row, 3, 'Diferença %', formats['header'])
+        row += 1
+
+        # Dados da tabela
+        comparison_data = [
+            ('Total de Leads', ml_row['Leads'], ctrl_row['Leads'], 'number'),
+            ('Conversões', ml_row['Vendas'], ctrl_row['Vendas'], 'number'),
+            ('Taxa Conversão', ml_row['Taxa de conversão'] / 100, ctrl_row['Taxa de conversão'] / 100, 'percent'),
+            ('Receita Total', ml_row['Receita Total'], ctrl_row['Receita Total'], 'currency'),
+            ('Gasto Total', ml_row['Valor gasto'], ctrl_row['Valor gasto'], 'currency'),
+            ('CPL', ml_row['CPL'], ctrl_row['CPL'], 'currency'),
+            ('ROAS', ml_row['ROAS'], ctrl_row['ROAS'], 'decimal'),
+            ('Margem Contribuição', ml_row['Margem de contribuição'], ctrl_row['Margem de contribuição'], 'currency'),
+        ]
+
+        for metric, ml_value, ctrl_value, fmt_type in comparison_data:
+            worksheet.write(row, 0, metric, formats['text'])
+            worksheet.write(row, 1, ml_value, formats[fmt_type])
+            worksheet.write(row, 2, ctrl_value, formats[fmt_type])
+
+            # Calcular diferença %
+            diff_pct = calc_diff_pct(ml_value, ctrl_value)
+            if diff_pct != 0:
+                cell_format = formats['positive'] if diff_pct > 0 else formats['negative']
+                worksheet.write(row, 3, diff_pct, cell_format)
+            else:
+                worksheet.write(row, 3, '-', formats['text'])
+            row += 1
+
+        # Vencedor
+        row += 1
+        if ml_row['ROAS'] > ctrl_row['ROAS']:
+            diff_pct = calc_diff_pct(ml_row['ROAS'], ctrl_row['ROAS']) * 100
+            winner_text = f"🏆 VENCEDOR: Eventos ML (ROAS {diff_pct:.1f}% maior)"
+            worksheet.write(row, 0, winner_text, formats['header_green'])
+        elif ctrl_row['ROAS'] > ml_row['ROAS']:
+            diff_pct = abs(calc_diff_pct(ml_row['ROAS'], ctrl_row['ROAS'])) * 100
+            winner_text = f"⚠️ VENCEDOR: Controle (ROAS {diff_pct:.1f}% maior)"
+            worksheet.write(row, 0, winner_text, formats['header_red'])
+        else:
+            worksheet.write(row, 0, "➖ Empate técnico em ROAS", formats['header'])
+        row += 1
+
+        return row
 
     def _write_total_comparison_table(
         self,
@@ -894,13 +1360,13 @@ class ValidationReportGenerator:
         formats: Dict
     ):
         """
-        Escreve aba 'Comparação Justa' com lista detalhada de campanhas ML vs Fair Control matched.
+        Escreve aba 'Comparação por Campanhas' com lista detalhada de campanhas ML vs Fair Control matched.
         Usa o mesmo matching que já funciona nas outras abas (via comparison_group).
         """
-        worksheet = writer.book.add_worksheet('Comparação Justa')
+        worksheet = writer.book.add_worksheet('Comparação por Campanhas')
 
         # Título
-        worksheet.write(0, 0, '🎯 COMPARAÇÃO JUSTA - EVENTOS ML vs CONTROLE', formats['title'])
+        worksheet.write(0, 0, '🎯 COMPARAÇÃO POR CAMPANHAS - EVENTOS ML vs CONTROLE', formats['title'])
         worksheet.write(1, 0, 'Lista de campanhas matched com MESMO budget e criativos', formats['subtitle'])
 
         row = 3
@@ -911,11 +1377,16 @@ class ValidationReportGenerator:
             worksheet.write(row, 0, 'Nenhuma campanha de controle encontrada no período.', formats['text'])
             return
 
-        # Cabeçalhos (ordem consistente com aba Performance por Campanha)
+        # Mapear account_id para nomes amigáveis
+        account_names = {
+            'act_188005769808959': 'Rodolfo Mori',
+            'act_786790755803474': 'Gestor de IA'
+        }
+
+        # Cabeçalhos (Conta como primeira coluna, removida "Evento de conversão")
         headers = [
-            'Campanha', 'Grupo', 'Evento de conversão',
+            'Conta', 'Campanha', 'Grupo',
             'Leads', 'LeadQualified', 'LeadQualifiedHighQuality', 'Faixa A',
-            'Respostas pesquisa', '% de resposta',
             'Vendas', 'Taxa de conversão',
             'Orçamento', 'Valor gasto', 'CPL', 'ROAS', 'Receita Total', 'Margem de contribuição'
         ]
@@ -923,7 +1394,8 @@ class ValidationReportGenerator:
             worksheet.write(row, col, header, formats['header'])
         row += 1
 
-        # Filtrar apenas campanhas ML (Eventos ML + Otimização ML) e Controle, e ordenar por grupo e nome
+        # Filtrar campanhas ML (Eventos ML + Otimização ML) e Controle
+        # Incluir AMBOS os tipos de ML para comparação completa
         fair_campaigns = campaign_metrics[
             campaign_metrics['comparison_group'].isin(['Eventos ML', 'Otimização ML', 'Controle'])
         ].sort_values(['comparison_group', 'campaign'])
@@ -931,20 +1403,22 @@ class ValidationReportGenerator:
         # Escrever linhas das campanhas
         for _, campaign_row in fair_campaigns.iterrows():
             col_idx = 0
+            # Conta (primeira coluna)
+            account_id = campaign_row.get('account_id', '')
+            account_name = account_names.get(account_id, account_id if account_id else 'N/A')
+            worksheet.write(row, col_idx, account_name, formats['text'])
+            col_idx += 1
+            # Campanha
             worksheet.write(row, col_idx, campaign_row['campaign'], formats['text'])
             col_idx += 1
+            # Grupo
             worksheet.write(row, col_idx, campaign_row['comparison_group'], formats['text'])
             col_idx += 1
-            worksheet.write(row, col_idx, campaign_row.get('optimization_goal', '-'), formats['text'])
-            col_idx += 1
 
-            # Leads - usar total_conversion_events para campanhas com eventos customizados
-            # Isso mostra o total correto (ex: 612 em vez de apenas 4)
-            total_events = campaign_row.get('total_conversion_events', 0)
-            standard_leads = campaign_row.get('leads', 0)
-            # Se total_events existe e é maior que leads, usar total_events
-            leads_to_show = int(total_events) if total_events > 0 else int(standard_leads)
-            worksheet.write(row, col_idx, leads_to_show, formats['number'])
+            # Leads - usar diretamente o campo 'leads'
+            # Este valor já foi ajustado com leads artificiais para a campanha especial
+            leads = int(campaign_row.get('leads', 0))
+            worksheet.write(row, col_idx, leads, formats['number'])
             col_idx += 1
 
             # Custom events
@@ -955,11 +1429,6 @@ class ValidationReportGenerator:
             worksheet.write(row, col_idx, int(campaign_row.get('Faixa A', 0)), formats['number'])
             col_idx += 1
 
-            worksheet.write(row, col_idx, int(campaign_row.get('respostas_pesquisa', 0)), formats['number'])
-            col_idx += 1
-            # taxa_resposta vem como número (65.67), dividir por 100 antes do formato percent
-            worksheet.write(row, col_idx, campaign_row.get('taxa_resposta', 0) / 100, formats['percent'])
-            col_idx += 1
             worksheet.write(row, col_idx, int(campaign_row['conversions']), formats['number'])
             col_idx += 1
             worksheet.write(row, col_idx, campaign_row['conversion_rate'] / 100, formats['percent'])
@@ -977,21 +1446,290 @@ class ValidationReportGenerator:
             worksheet.write(row, col_idx, campaign_row.get('contribution_margin', 0), formats['currency'])
             row += 1
 
+        # Ajustar larguras (ajustado para nova estrutura de colunas)
+        worksheet.set_column(0, 0, 18)  # Conta
+        worksheet.set_column(1, 1, 60)  # Campanha
+        worksheet.set_column(2, 2, 18)  # Grupo
+        worksheet.set_column(3, 16, 15)  # Outras métricas (Leads, LeadQualified, etc.)
+
+    def _write_adsets_comparison(
+        self,
+        writer: pd.ExcelWriter,
+        adsets_df: pd.DataFrame,
+        formats: Dict
+    ):
+        """
+        Escreve aba 'Comparação por Adsets' com formato similar à aba Campanhas.
+        """
+        worksheet = writer.book.add_worksheet('Comparação por Adsets')
+
+        # Título
+        worksheet.write(0, 0, '📊 COMPARAÇÃO POR ADSETS - MATCHED', formats['title'])
+        worksheet.write(1, 0, 'Adsets com mesmo targeting e criativos', formats['subtitle'])
+
+        row = 3
+
+        # Cabeçalhos
+        headers = [
+            'Conta', 'Campanha', 'Adset', 'Adset ID', 'Grupo',
+            'Leads', 'Vendas', 'Taxa de conversão',
+            'Valor gasto', 'CPL', 'ROAS',
+            'Receita Total', 'Margem de contribuição'
+        ]
+        for col, header in enumerate(headers):
+            worksheet.write(row, col, header, formats['header'])
+        row += 1
+
+        # Escrever linhas dos adsets
+        for _, adset_row in adsets_df.iterrows():
+            col_idx = 0
+
+            # Conta
+            worksheet.write(row, col_idx, adset_row.get('Conta', ''), formats['text'])
+            col_idx += 1
+
+            # Campanha
+            worksheet.write(row, col_idx, adset_row.get('Campanha', ''), formats['text'])
+            col_idx += 1
+
+            # Adset
+            worksheet.write(row, col_idx, adset_row.get('Adset', ''), formats['text'])
+            col_idx += 1
+
+            # Adset ID
+            worksheet.write(row, col_idx, str(adset_row.get('Adset ID', '')), formats['text'])
+            col_idx += 1
+
+            # Grupo
+            worksheet.write(row, col_idx, adset_row.get('Grupo', ''), formats['text'])
+            col_idx += 1
+
+            # Leads
+            worksheet.write(row, col_idx, int(adset_row.get('Leads', 0)), formats['number'])
+            col_idx += 1
+
+            # Vendas
+            worksheet.write(row, col_idx, int(adset_row.get('Vendas', 0)), formats['number'])
+            col_idx += 1
+
+            # Taxa de conversão
+            # IMPORTANTE: O valor vem como percentual (1.5 = 1.5%)
+            # Para formato Excel percent, sempre dividir por 100
+            taxa = adset_row.get('Taxa de conversão', 0)
+            worksheet.write(row, col_idx, taxa / 100 if taxa else 0, formats['percent'])
+            col_idx += 1
+
+            # Valor gasto
+            worksheet.write(row, col_idx, adset_row.get('Valor gasto', 0), formats['currency'])
+            col_idx += 1
+
+            # CPL
+            worksheet.write(row, col_idx, adset_row.get('CPL', 0), formats['currency'])
+            col_idx += 1
+
+            # ROAS
+            worksheet.write(row, col_idx, adset_row.get('ROAS', 0), formats['decimal'])
+            col_idx += 1
+
+            # Receita Total
+            worksheet.write(row, col_idx, adset_row.get('Receita Total', 0), formats['currency'])
+            col_idx += 1
+
+            # Margem de contribuição
+            worksheet.write(row, col_idx, adset_row.get('Margem de contribuição', 0), formats['currency'])
+            row += 1
+
         # Ajustar larguras
-        worksheet.set_column(0, 0, 60)  # Campanha
-        worksheet.set_column(1, 1, 15)  # Grupo
-        worksheet.set_column(2, 2, 30)  # Evento de conversão
-        worksheet.set_column(3, 12, 15)  # Outras métricas
+        worksheet.set_column(0, 0, 18)  # Conta
+        worksheet.set_column(1, 1, 50)  # Campanha
+        worksheet.set_column(2, 2, 40)  # Adset
+        worksheet.set_column(3, 3, 20)  # Adset ID
+        worksheet.set_column(4, 4, 18)  # Grupo
+        worksheet.set_column(5, 12, 15)  # Outras métricas
+
+    def _write_ads_comparison(
+        self,
+        writer: pd.ExcelWriter,
+        ads_df: pd.DataFrame,
+        formats: Dict
+    ):
+        """
+        Escreve aba 'Comparação por Ads' com formato similar à aba Adsets.
+        """
+        worksheet = writer.book.add_worksheet('Comparação por Ads')
+
+        # Título
+        worksheet.write(0, 0, '📊 COMPARAÇÃO POR ADS - MATCHED', formats['title'])
+        worksheet.write(1, 0, 'Anúncios (criativos) com mesmo ad_code', formats['subtitle'])
+
+        row = 3
+
+        # Cabeçalhos (removidas: Conta, Campanha, Adset)
+        headers = [
+            'Ad Code', 'Nome do Anúncio', 'Grupo',
+            'Leads', 'Vendas', 'Taxa de conversão',
+            'Valor gasto', 'CPL', 'ROAS',
+            'Receita Total', 'Margem de contribuição'
+        ]
+        for col, header in enumerate(headers):
+            worksheet.write(row, col, header, formats['header'])
+        row += 1
+
+        # Escrever linhas dos ads
+        for _, ad_row_series in ads_df.iterrows():
+            # Convert Series to dict for safer access
+            ad_row = ad_row_series.to_dict()
+
+            col_idx = 0
+
+            # Ad Code
+            worksheet.write(row, col_idx, ad_row.get('Ad Code', ''), formats['text'])
+            col_idx += 1
+
+            # Nome do Anúncio
+            worksheet.write(row, col_idx, ad_row.get('Nome do Anúncio', ''), formats['text'])
+            col_idx += 1
+
+            # Grupo
+            worksheet.write(row, col_idx, ad_row.get('Grupo', ''), formats['text'])
+            col_idx += 1
+
+            # Leads
+            worksheet.write(row, col_idx, int(ad_row.get('Leads', 0)), formats['number'])
+            col_idx += 1
+
+            # Vendas
+            worksheet.write(row, col_idx, int(ad_row.get('Vendas', 0)), formats['number'])
+            col_idx += 1
+
+            # Taxa de conversão
+            taxa = ad_row.get('Taxa de conversão', 0)
+            worksheet.write(row, col_idx, taxa / 100 if taxa else 0, formats['percent'])
+            col_idx += 1
+
+            # Valor gasto
+            worksheet.write(row, col_idx, ad_row.get('Valor gasto', 0), formats['currency'])
+            col_idx += 1
+
+            # CPL
+            worksheet.write(row, col_idx, ad_row.get('CPL', 0), formats['currency'])
+            col_idx += 1
+
+            # ROAS
+            worksheet.write(row, col_idx, ad_row.get('ROAS', 0), formats['decimal'])
+            col_idx += 1
+
+            # Receita Total
+            worksheet.write(row, col_idx, ad_row.get('Receita Total', 0), formats['currency'])
+            col_idx += 1
+
+            # Margem de contribuição
+            worksheet.write(row, col_idx, ad_row.get('Margem de contribuição', 0), formats['currency'])
+            row += 1
+
+        # Ajustar larguras (Conta, Campanha, Adset removidas)
+        worksheet.set_column(0, 0, 12)  # Ad Code
+        worksheet.set_column(1, 1, 40)  # Nome do Anúncio
+        worksheet.set_column(2, 2, 18)  # Grupo
+        worksheet.set_column(3, 10, 15)  # Outras métricas
+
+    def _write_adset_aggregated(
+        self,
+        writer: pd.ExcelWriter,
+        aggregated_df: pd.DataFrame,
+        formats: Dict,
+        sheet_name: str = 'Comparação Adsets'
+    ):
+        """
+        Escreve aba 'Comparação Adsets' com comparação agregada de adsets matched.
+        """
+        worksheet = writer.book.add_worksheet(sheet_name)
+
+        # Título
+        worksheet.write(0, 0, '📊 COMPARAÇÃO AGREGADA - ADSETS MATCHED', formats['title'])
+        worksheet.write(1, 0, 'Apenas adsets que aparecem em ML E controle (R$ 200+ gasto)', formats['subtitle'])
+
+        # Cabeçalhos
+        row = 3
+        for col_num, col_name in enumerate(aggregated_df.columns):
+            worksheet.write(row, col_num, col_name, formats['header'])
+        row += 1
+
+        # Dados
+        for _, data_row in aggregated_df.iterrows():
+            for col_num, col_name in enumerate(aggregated_df.columns):
+                value = data_row[col_name]
+
+                # Aplicar formato baseado no nome da coluna
+                if 'Taxa Conversão' in col_name or '%' in col_name:
+                    worksheet.write(row, col_num, value / 100 if value > 0 else 0, formats['percent'])
+                elif any(term in col_name for term in ['Gasto', 'CPL', 'CPA', 'R$', 'Margem']):
+                    worksheet.write(row, col_num, value if value else 0, formats['currency'])
+                elif 'ROAS' in col_name:
+                    worksheet.write(row, col_num, value if value else 0, formats['decimal'])
+                elif any(term in col_name for term in ['Adsets', 'Leads', 'Vendas']):
+                    worksheet.write(row, col_num, int(value) if value else 0, formats['number'])
+                else:
+                    worksheet.write(row, col_num, value, formats['text'])
+            row += 1
+
+        # Ajustar larguras
+        worksheet.set_column(0, 0, 20)  # Tipo
+        worksheet.set_column(1, len(aggregated_df.columns) - 1, 18)
+
+    def _write_adset_detailed(
+        self,
+        writer: pd.ExcelWriter,
+        detailed_df: pd.DataFrame,
+        formats: Dict,
+        sheet_name: str = 'Detalhes Adsets'
+    ):
+        """
+        Escreve aba 'Detalhes Adsets' com comparação adset-a-adset.
+        """
+        worksheet = writer.book.add_worksheet(sheet_name)
+
+        # Título
+        worksheet.write(0, 0, '🔬 COMPARAÇÃO DETALHADA - ADSETS', formats['title'])
+        worksheet.write(1, 0, 'Comparação lado-a-lado (ML vs Controle)', formats['subtitle'])
+
+        # Cabeçalhos
+        row = 3
+        for col_num, col_name in enumerate(detailed_df.columns):
+            worksheet.write(row, col_num, col_name, formats['header'])
+        row += 1
+
+        # Dados
+        for _, data_row in detailed_df.iterrows():
+            for col_num, col_name in enumerate(detailed_df.columns):
+                value = data_row[col_name]
+
+                # Aplicar formato baseado no nome da coluna
+                if 'Taxa Conversão' in col_name or 'Conv %' in col_name or '%' in col_name:
+                    worksheet.write(row, col_num, value / 100 if pd.notna(value) and value > 0 else 0, formats['percent'])
+                elif any(term in col_name for term in ['Gasto', 'CPL', 'CPA', 'R$', 'Margem']):
+                    worksheet.write(row, col_num, value if pd.notna(value) else 0, formats['currency'])
+                elif 'ROAS' in col_name:
+                    worksheet.write(row, col_num, value if pd.notna(value) else 0, formats['decimal'])
+                elif any(term in col_name for term in ['Vendas', 'Leads']):
+                    worksheet.write(row, col_num, int(value) if pd.notna(value) else 0, formats['number'])
+                else:
+                    worksheet.write(row, col_num, value if pd.notna(value) else '', formats['text'])
+            row += 1
+
+        # Ajustar larguras
+        worksheet.set_column(0, 0, 60)  # Adset name
+        worksheet.set_column(1, len(detailed_df.columns) - 1, 16)
 
     def _write_ad_aggregated(
         self,
         writer: pd.ExcelWriter,
         aggregated_df: pd.DataFrame,
         formats: Dict,
-        sheet_name: str = 'Agregação Matched Pairs'
+        sheet_name: str = 'Comparação Anúncios'
     ):
         """
-        Escreve aba 'Agregação Matched Pairs' com comparação agregada de anúncios matched.
+        Escreve aba 'Comparação Anúncios' com comparação agregada de anúncios matched.
         """
         worksheet = writer.book.add_worksheet(sheet_name)
 

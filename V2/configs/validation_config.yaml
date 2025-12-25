@@ -30,72 +30,16 @@ paths:
   vendas: "files/validation/vendas"    # Excel Guru + TMB
 
 # ============================================================================
-# LÓGICA DE PERÍODOS DE ANÁLISE
-# ============================================================================
-#
-# Cada análise possui 3 períodos distintos:
-#
-# SEMANA 1 - CAPTAÇÃO DE LEADS (7 dias):
-#   - Início: Terça-feira
-#   - Fim: Segunda-feira (7 dias depois)
-#   - Objetivo: Período de geração de leads pelas campanhas
-#
-# SEMANA 2 - ANÁLISE DE CPL (6 dias):
-#   - Início: Terça-feira (dia seguinte ao fim da captação)
-#   - Fim: Domingo (6 dias depois)
-#   - Objetivo: Análise de custo por lead antes da abertura do carrinho
-#   - Nota: Este período é opcional para análises específicas de CPL
-#
-# SEMANA 3 - VENDAS (7 dias):
-#   - Início: Segunda-feira (abertura do carrinho)
-#   - Fim: Domingo (fechamento do carrinho - 7 dias depois)
-#   - Objetivo: Período de matching leads → vendas
-#
-# EXEMPLO:
-#   Captação: 28/10 (Ter) a 03/11 (Seg) = 7 dias
-#   CPL:      04/11 (Ter) a 09/11 (Dom) = 6 dias
-#   Vendas:   10/11 (Seg) a 16/11 (Dom) = 7 dias
-#
-# IMPORTANTE: Sempre usar --sales-start-date e --sales-end-date para
-# especificar o período de vendas separadamente do período de captação!
+# PERÍODOS DE ANÁLISE
 # ============================================================================
 
 periodos:
-  periodo_1:
-    name: "Lançamento 11/11"
-    # Captação de leads
-    start_date: "2025-11-11"
-    end_date: "2025-12-01"
-    # Vendas (matching) - 7 dias após o fim da captação
-    sales_start_date: "2025-12-02"
-    sales_end_date: "2025-12-08"
-
-  periodo_2:
-    name: "Lançamento 18/11"
-    start_date: "2025-11-18"
+  periodo_atual:
+    name: "Dezembro 2025"
+    start_date: "2025-12-02"      # Captação: 02/12 a 08/12
     end_date: "2025-12-08"
-    sales_start_date: "2025-12-09"
-    sales_end_date: "2025-12-15"
-
-  periodo_3:
-    name: "Lançamento 25/11"
-    start_date: "2025-11-25"
-    end_date: "2025-12-15"
-    sales_start_date: "2025-12-16"
-    sales_end_date: "2025-12-22"
-
-  # Exemplo do período problemático (28/10 a 03/11)
-  periodo_exemplo_28_10:
-    name: "Exemplo 28/10"
-    # Captação: Terça 28/10 a Segunda 03/11 (7 dias)
-    start_date: "2025-10-28"
-    end_date: "2025-11-03"
-    # CPL: Terça 04/11 a Domingo 09/11 (6 dias)
-    cpl_start_date: "2025-11-04"
-    cpl_end_date: "2025-11-09"
-    # Vendas: Segunda 10/11 a Domingo 16/11 (7 dias)
-    sales_start_date: "2025-11-10"
-    sales_end_date: "2025-11-16"
+    sales_start_date: "2025-12-15"  # Vendas: 15/12 a 21/12
+    sales_end_date: "2025-12-21"
 
 # ============================================================================
 # TAXAS DE CONVERSÃO ESPERADAS (CORRIGIDAS POR RECALL)

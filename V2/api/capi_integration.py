@@ -420,15 +420,16 @@ def send_lead_qualified_high_quality(
     Returns:
         Dict com resultado do envio (ou skipped se não for D9-D10)
     """
-    # Filtro: só envia D9, D10
-    if decil not in ['D9', 'D10']:
-        logger.debug(f"⏭️  Lead {decil} ignorado (estratégia D9-D10 only)")
+    # Filtro: só envia D09, D10 (formato normalizado com zeros)
+    # Nota: thresholds foram normalizados em prediction.py para garantir formato D01-D10
+    if decil not in ['D09', 'D10']:
+        logger.debug(f"⏭️  Lead {decil} ignorado (estratégia D09-D10 only)")
         return {
             "status": "skipped",
             "event_id": event_id,
             "email": email,
             "decil": decil,
-            "reason": "Decil abaixo de D9 (filtrado)"
+            "reason": "Decil abaixo de D09 (filtrado)"
         }
 
     if not ACCESS_TOKEN:

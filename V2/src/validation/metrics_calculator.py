@@ -346,10 +346,11 @@ class CampaignMetricsCalculator:
         logger.info("📊 Calculando métricas por campanha...")
 
         # 0. FILTRAR respostas apenas de leads captados NO PERÍODO
-        logger.info("   🔧 Filtrando respostas por período de captura...")
+        # TEMPORARIAMENTE DESATIVADO - usando todos os dados
+        logger.info("   ⚠️ Filtro temporal DESATIVADO - usando todos os dados do matched_df")
         original_count = len(matched_df)
 
-        if 'data_captura' in matched_df.columns:
+        if False and 'data_captura' in matched_df.columns:  # DESATIVADO
             # Converter period_start e period_end para datetime
             period_start_dt = pd.to_datetime(period_start)
             period_end_dt = pd.to_datetime(period_end)
@@ -422,8 +423,18 @@ class CampaignMetricsCalculator:
             base_name = self._normalize_campaign_name(campaign_name)
 
             # 1. Se tem ID, usar mapping por ID (mais preciso)
-            if camp_id and camp_id in campaign_id_to_best_name:
-                return campaign_id_to_best_name[camp_id]
+            if camp_id:
+                # Match exato
+                if camp_id in campaign_id_to_best_name:
+                    return campaign_id_to_best_name[camp_id]
+
+                # FALLBACK: Match pelos primeiros 15 dígitos
+                # Isso garante que TODAS as variações com mesmo ID sejam consolidadas
+                camp_id_prefix = camp_id[:15] if len(camp_id) >= 15 else camp_id
+                for mapped_id, best_name in campaign_id_to_best_name.items():
+                    mapped_id_prefix = mapped_id[:15] if len(mapped_id) >= 15 else mapped_id
+                    if camp_id_prefix == mapped_id_prefix:
+                        return best_name
 
             # 2. Se não tem ID, tentar match por nome base normalizado
             # Isso consolida respostas órfãs (sem ID) com campanhas COM ID
@@ -452,7 +463,8 @@ class CampaignMetricsCalculator:
 
         # DEBUG: Verificar vendas antes da agregação
         vendas_antes_groupby = matched_df['converted'].sum()
-        logger.info(f"   🔍 DEBUG - Vendas antes do groupby: {int(vendas_antes_groupby)}")
+        vendas_unicas_antes = matched_df[matched_df['converted'] == True]['email'].nunique()
+        logger.info(f"   🔍 DEBUG - matched_df: {len(matched_df)} total de linhas, {int(vendas_antes_groupby)} conversões, {vendas_unicas_antes} emails únicos convertidos")
 
         # Verificar se há vendas com campaign_consolidated inválido
         vendas_df = matched_df[matched_df['converted'] == True]
@@ -461,14 +473,30 @@ class CampaignMetricsCalculator:
             logger.warning(f"   ⚠️ {len(invalid_campaigns)} vendas com campaign_consolidated NULO!")
 
         # Groupby usando nome consolidado
-        campaign_stats = matched_df.groupby(['ml_type', 'campaign_consolidated']).agg({
+        # CRÍTICO: Contar emails únicos para conversões, não somar linhas (evita duplicatas)
+
+        # 1. Agregar respostas e receita (podem usar sum)
+        # IMPORTANTE: dropna=False para incluir campanhas com nome NULL/estranho
+        campaign_stats = matched_df.groupby(['ml_type', 'campaign_consolidated'], dropna=False).agg({
             'email': 'count',  # respostas na pesquisa (leads que responderam)
-            'converted': 'sum',  # conversions
             'sale_value': 'sum'  # revenue total
         }).reset_index()
+        campaign_stats.columns = ['ml_type', 'campaign', 'respostas_pesquisa', 'total_revenue']
 
-        # Renomear coluna de volta para 'campaign'
-        campaign_stats.columns = ['ml_type', 'campaign', 'respostas_pesquisa', 'conversions', 'total_revenue']
+        # 2. Contar conversões únicas (por email, não agregação de linhas)
+        # IMPORTANTE: dropna=False para incluir campanhas com nome NULL/estranho
+        conversions_df = matched_df[matched_df['converted'] == True].groupby(
+            ['ml_type', 'campaign_consolidated'], dropna=False
+        )['email'].nunique().reset_index(name='conversions')
+        conversions_df.columns = ['ml_type', 'campaign', 'conversions']
+
+        # 3. Merge: conversions pode estar vazio se campanha não tem vendas
+        campaign_stats = campaign_stats.merge(
+            conversions_df,
+            on=['ml_type', 'campaign'],
+            how='left'
+        )
+        campaign_stats['conversions'] = campaign_stats['conversions'].fillna(0).astype(int)
 
         # DEBUG: Verificar vendas depois da agregação
         vendas_depois_groupby = campaign_stats['conversions'].sum()
@@ -476,13 +504,17 @@ class CampaignMetricsCalculator:
         if vendas_antes_groupby != vendas_depois_groupby:
             logger.warning(f"   ⚠️ PERDA DE VENDAS NO GROUPBY: {int(vendas_antes_groupby - vendas_depois_groupby)} vendas perdidas!")
 
+        # DEBUG: Verificar se comparison_group já existe no matched_df
+        if 'comparison_group' in matched_df.columns:
+            eventos_ml_matched = matched_df[matched_df['comparison_group'] == 'Eventos ML']
+            total_leads_eventos_ml_matched = len(eventos_ml_matched)
+            total_vendas_eventos_ml_matched = eventos_ml_matched['converted'].sum()
+            logger.info(f"   🔍 DEBUG - Eventos ML no matched_df: {total_leads_eventos_ml_matched} leads, {int(total_vendas_eventos_ml_matched)} vendas")
+
         # Limpar colunas auxiliares do matched_df
         matched_df = matched_df.drop(['campaign_id_extracted', 'campaign_base_normalized', 'campaign_consolidated'], axis=1)
 
-        # Calcular taxa de conversão (baseada em respostas da pesquisa)
-        campaign_stats['conversion_rate'] = (
-            campaign_stats['conversions'] / campaign_stats['respostas_pesquisa'] * 100
-        ).round(2)
+        # Nota: conversion_rate será calculado DEPOIS de carregar leads do Excel e ajustar campanha especial
 
         # Se sale_value não estava disponível, calcular receita baseado em product_value
         if campaign_stats['total_revenue'].sum() == 0:
@@ -491,176 +523,128 @@ class CampaignMetricsCalculator:
         logger.info(f"   {len(campaign_stats)} campanhas agregadas")
         logger.info(f"   Conversões totais em campaign_stats: {int(campaign_stats['conversions'].sum())}")
 
-        # 1.5. Buscar leads e eventos personalizados da Meta API
-        logger.info("   Buscando eventos 'lead' e eventos personalizados da Meta API...")
-        try:
-            campaign_events_meta = self._get_campaign_leads_from_meta(
-                account_id=account_id,
-                period_start=period_start,
-                period_end=period_end
-            )
-        except Exception as e:
-            logger.error(f"   ❌ Erro ao buscar leads da Meta: {e}")
-            campaign_events_meta = {}
+        # Usar dados dos relatórios Excel (não usar Meta API)
+        logger.info("   📊 Carregando leads dos relatórios Excel...")
 
-        # DIAGNÓSTICO: Verificar total real de leads da Meta API
-        total_leads_meta_raw = sum(events.get('lead', 0) for events in campaign_events_meta.values())
-        total_lq = sum(events.get('LeadQualified', 0) for events in campaign_events_meta.values())
-        total_lqhq = sum(events.get('LeadQualifiedHighQuality', 0) for events in campaign_events_meta.values())
-        total_campaigns_meta = len([cid for cid, events in campaign_events_meta.items() if events.get('lead', 0) > 0])
-        logger.info(f"   📊 Meta API retornou:")
-        logger.info(f"      'lead' padrão: {total_leads_meta_raw} leads em {total_campaigns_meta} campanhas")
-        logger.info(f"      'LeadQualified': {total_lq} eventos")
-        logger.info(f"      'LeadQualifiedHighQuality': {total_lqhq} eventos")
-        logger.info(f"      Total combinado (lead + LQ + LQHQ): {total_leads_meta_raw + total_lq + total_lqhq}")
+        # Usar costs_hierarchy_consolidated que foi passado como parâmetro
+        costs = costs_hierarchy_consolidated if costs_hierarchy_consolidated else {}
 
-        # CORREÇÃO: Adicionar campanhas com leads na Meta mas sem respostas na pesquisa
-        # Isso garante que o total de leads Meta seja correto
-        if campaign_events_meta and costs_hierarchy_consolidated:
-            # Extrair IDs de campanhas já em campaign_stats
-            existing_campaign_ids = set()
-            for camp_name in campaign_stats['campaign'].unique():
-                camp_id = self._extract_campaign_id(camp_name)
-                if camp_id:
-                    existing_campaign_ids.add(camp_id)
+        # DEBUG: Verificar IDs disponíveis
+        if costs and costs.get('campaigns'):
+            available_ids = list(costs['campaigns'].keys())
+            logger.info(f"   🔍 DEBUG - IDs disponíveis em costs_hierarchy: {len(available_ids)}")
+            logger.info(f"   🔍 DEBUG - Primeiros 3 IDs: {available_ids[:3]}")
+            logger.info(f"   🔍 DEBUG - Primeiras 3 campanhas em campaign_stats:")
+            for camp in campaign_stats['campaign'].head(3):
+                extracted_id = self._extract_campaign_id(camp)
+                logger.info(f"      • {camp[:60]}... → ID: {extracted_id}")
 
-            # Identificar campanhas com leads Meta mas não em campaign_stats
-            meta_only_campaigns = []
-            for camp_id, events in campaign_events_meta.items():
-                if events.get('lead', 0) > 0 and camp_id not in existing_campaign_ids:
-                    # Buscar nome da campanha do costs_hierarchy
-                    camp_info = costs_hierarchy_consolidated.get('campaigns', {}).get(camp_id)
-                    if camp_info:
-                        camp_name = camp_info.get('name', f'Unknown|{camp_id}')
-                        # Adicionar | campaign_id ao nome para manter padrão
-                        if not camp_name.endswith(f'|{camp_id}'):
-                            camp_name = f"{camp_name}|{camp_id}"
-
-                        # Determinar ml_type baseado no nome
-                        ml_type = 'EXCLUIR'  # Default
-                        if 'MACHINE LEARNING' in camp_name.upper():
-                            # Verificar se usa eventos customizados (CAPI)
-                            optimization_goals = camp_info.get('optimization_goals', set())
-                            uses_custom_events = any('custom' in str(goal).lower() for goal in optimization_goals)
-                            ml_type = 'COM_ML' if uses_custom_events else 'EXCLUIR'
-                        elif any(pattern in camp_name.upper() for pattern in ['ESCALA SCORE', 'FAIXA A', 'FAIXA B', 'FAIXA C', 'FAIXA D']):
-                            ml_type = 'SEM_ML'
-
-                        meta_only_campaigns.append({
-                            'ml_type': ml_type,
-                            'campaign': camp_name,
-                            'respostas_pesquisa': 0,
-                            'conversions': 0,
-                            'total_revenue': 0,
-                            'conversion_rate': 0.0
-                        })
-
-            if meta_only_campaigns:
-                logger.info(f"   📝 Adicionando {len(meta_only_campaigns)} campanhas com leads Meta mas sem respostas na pesquisa")
-                # Adicionar ao campaign_stats
-                meta_only_df = pd.DataFrame(meta_only_campaigns)
-                campaign_stats = pd.concat([campaign_stats, meta_only_df], ignore_index=True)
-
-        # Mapear leads da Meta para campanhas
-        # IMPORTANTE: Manter 'leads' apenas com eventos 'lead' padrão para taxa de resposta correta
-        # Eventos customizados (LQHQ) vêm do CAPI e não aparecem na pesquisa
         campaign_stats['leads'] = campaign_stats['campaign'].apply(
-            lambda camp: self._get_campaign_lead_count(camp, campaign_events_meta)
+            lambda camp: self._get_campaign_leads_from_costs(camp, costs)
         )
-
-        # Mapear eventos personalizados para campanhas
         campaign_stats['LeadQualified'] = campaign_stats['campaign'].apply(
-            lambda camp: self._get_campaign_custom_event_count(camp, campaign_events_meta, 'LeadQualified')
+            lambda camp: self._get_campaign_custom_event_from_costs(camp, costs, 'LeadQualified')
         )
         campaign_stats['LeadQualifiedHighQuality'] = campaign_stats['campaign'].apply(
-            lambda camp: self._get_campaign_custom_event_count(camp, campaign_events_meta, 'LeadQualifiedHighQuality')
+            lambda camp: self._get_campaign_custom_event_from_costs(camp, costs, 'LeadQualifiedHighQuality')
         )
         campaign_stats['Faixa A'] = campaign_stats['campaign'].apply(
-            lambda camp: self._get_campaign_custom_event_count(camp, campaign_events_meta, 'Faixa A')
+            lambda camp: self._get_campaign_custom_event_from_costs(camp, costs, 'Faixa A')
         )
 
-        # DEBUG: Verificar campanha específica 120224064762600390
-        debug_campaign_id = '120224064762600390'
-        debug_campaigns = campaign_stats[campaign_stats['campaign'].str.contains(debug_campaign_id, na=False)]
-        if len(debug_campaigns) > 0:
-            logger.info(f"   🔍 DEBUG - Campanha {debug_campaign_id}:")
-            for _, row in debug_campaigns.iterrows():
-                logger.info(f"      Nome: {row['campaign'][:70]}")
-                logger.info(f"      Respostas: {row['respostas_pesquisa']}")
-                logger.info(f"      Leads (Meta): {row['leads']}")
-        else:
-            logger.warning(f"   ⚠️  Campanha {debug_campaign_id} NÃO encontrada no campaign_stats")
-            logger.warning(f"   Isso significa que não há respostas da pesquisa para esta campanha.")
-            # Verificar se está nos campaign_events_meta
-            if debug_campaign_id in campaign_events_meta:
-                lead_count = campaign_events_meta[debug_campaign_id].get('lead', 0)
-                logger.warning(f"   Mas a Meta API retornou {lead_count} leads para ela!")
+        total_leads_excel = campaign_stats['leads'].sum()
+        total_lq = campaign_stats['LeadQualified'].sum()
+        total_lqhq = campaign_stats['LeadQualifiedHighQuality'].sum()
+        total_faixa_a = campaign_stats['Faixa A'].sum()
+        logger.info(f"   ✅ Leads carregados do Excel: {total_leads_excel}")
+        logger.info(f"      'lead' padrão: {total_leads_excel}")
+        logger.info(f"      LeadQualified: {total_lq}")
+        logger.info(f"      LeadQualifiedHighQuality: {total_lqhq}")
+        logger.info(f"      Faixa A: {total_faixa_a}")
 
-        # Detectar duplicação: múltiplas campanhas com o mesmo ID
-        campaign_stats['campaign_id_extracted'] = campaign_stats['campaign'].apply(
-            lambda camp: self._extract_campaign_id(camp)
-        )
+        # AJUSTE ESPECIAL: Campanha com evento Lead não disparando corretamente
+        # Calcular proporção média LQ/Leads das campanhas normais (excluindo a especial)
+        # Usando MÉDIA PONDERADA (Total LQ / Total Leads) para dar peso correto a cada campanha
+        campaign_special_id_prefix = '120234062599950'  # Primeiros 15 dígitos
+        total_leads_normal = 0
+        total_lq_normal = 0
 
-        # Verificar se há IDs duplicados
-        id_counts = campaign_stats['campaign_id_extracted'].value_counts()
-        duplicated_ids = id_counts[id_counts > 1]
+        for idx, row in campaign_stats.iterrows():
+            camp_id = self._extract_campaign_id(row['campaign'])
+            # Excluir campanha especial do cálculo da proporção
+            if camp_id and not camp_id.startswith(campaign_special_id_prefix):
+                leads = row['leads']
+                lq = row['LeadQualified']
+                # Somar apenas campanhas que geram LQ (excluir FAIXA A com LQ=0)
+                if leads > 0 and lq > 0:
+                    total_leads_normal += leads
+                    total_lq_normal += lq
 
-        if len(duplicated_ids) > 0:
-            logger.warning(f"   ⚠️  ATENÇÃO: {len(duplicated_ids)} IDs de campanha aparecem múltiplas vezes!")
-            logger.warning(f"   Isso causa DUPLICAÇÃO de leads. IDs afetados:")
-            for camp_id, count in duplicated_ids.items():
-                if camp_id:  # Ignorar None
-                    campaigns_with_id = campaign_stats[campaign_stats['campaign_id_extracted'] == camp_id]['campaign'].tolist()
-                    leads_for_id = campaign_events_meta.get(camp_id, {}).get('lead', 0)
-                    total_leads_duplicated = leads_for_id * count
-                    logger.warning(f"      • ID {camp_id}: aparece {count}x, {leads_for_id} leads cada = {total_leads_duplicated} total")
-                    for camp_name in campaigns_with_id:
-                        logger.warning(f"         - {camp_name[:80]}")
+        # Ajustar campanha especial com leads artificiais
+        if total_leads_normal > 0 and total_lq_normal > 0:
+            avg_ratio = total_lq_normal / total_leads_normal
+            logger.info(f"   📊 Proporção média LQ/Leads (campanhas normais): {avg_ratio:.2%}")
+            logger.info(f"      Total leads: {int(total_leads_normal)}, Total LQ: {int(total_lq_normal)}")
 
-        # Remover coluna auxiliar
-        campaign_stats = campaign_stats.drop('campaign_id_extracted', axis=1)
+            # Identificar e ajustar campanha especial
+            for idx, row in campaign_stats.iterrows():
+                camp_id = self._extract_campaign_id(row['campaign'])
+                if camp_id and camp_id.startswith(campaign_special_id_prefix):
+                    leads_original = row['leads']
+                    lq = row['LeadQualified']
 
-        # Calcular total de eventos de conversão (leads + eventos customizados)
-        # IMPORTANTE: Para campanhas com eventos customizados (LeadQualified, LQHQ, Faixa A),
-        # precisamos somar TODOS os eventos para ter o total correto de conversões
-        campaign_stats['total_conversion_events'] = (
-            campaign_stats['leads'] +
-            campaign_stats['LeadQualified'] +
-            campaign_stats['LeadQualifiedHighQuality'] +
-            campaign_stats['Faixa A']
-        )
+                    # Calcular leads artificiais baseado na proporção média
+                    if lq > 0 and avg_ratio > 0:
+                        leads_artificial = int(lq / avg_ratio)
+                        campaign_stats.at[idx, 'leads'] = leads_artificial
+                        logger.info(f"   🔧 Campanha especial ajustada ({camp_id[:15]}...):")
+                        logger.info(f"      Leads original: {leads_original}")
+                        logger.info(f"      LeadQualified: {lq}")
+                        logger.info(f"      Leads artificial: {leads_artificial} (baseado em proporção {avg_ratio:.2%})")
 
-        # Calcular taxa de resposta usando TOTAL de eventos de conversão
-        # Isso evita taxas absurdas (ex: 11750%) quando a campanha usa eventos customizados
-        # Taxa de resposta:
-        # - REGRA: Sempre usar 'leads' (padrão) no denominador
-        # - EXCEÇÃO: Se respostas > leads (indica que respondentes são eventos CAPI), usar total_conversion_events
-        # - Eventos customizados (LQ, LQHQ) não responderam pesquisa - são eventos server-side posteriores
+        # NOTA: Não calcular total_conversion_events como soma
+        # Eventos customizados (LQ, LQHQ, Faixa A) são SUBSETS dos leads, não adicionais
+        # O campo 'leads' já contém o valor correto (incluindo ajuste para campanha especial)
+        # Manter coluna para compatibilidade, mas igual a 'leads'
+        campaign_stats['total_conversion_events'] = campaign_stats['leads']
+
+        # Calcular taxa de resposta usando 'leads' no denominador
+        # Nota: 'leads' já foi ajustado acima para incluir leads artificiais na campanha especial
+        # que não dispara o evento Lead corretamente (usando proporção LQ/Leads média)
         campaign_stats['taxa_resposta'] = campaign_stats.apply(
-            lambda row: (
-                (row['respostas_pesquisa'] / row['total_conversion_events'] * 100)
-                if row['respostas_pesquisa'] > row['leads'] and row['total_conversion_events'] > 0
-                else (row['respostas_pesquisa'] / row['leads'] * 100) if row['leads'] > 0
-                else 0
-            ),
+            lambda row: (row['respostas_pesquisa'] / row['leads'] * 100) if row['leads'] > 0 else 0,
+            axis=1
+        ).round(2)
+
+        # Calcular taxa de conversão (baseada em leads)
+        # Usa 'leads' ajustado que inclui leads artificiais para campanha especial
+        campaign_stats['conversion_rate'] = campaign_stats.apply(
+            lambda row: (row['conversions'] / row['leads'] * 100) if row['leads'] > 0 else 0,
             axis=1
         ).round(2)
 
         # IMPORTANTE: Salvar total de leads ANTES de filtrar campanhas com spend=0
-        # Incluir eventos customizados no total (mas não no campo 'leads' individual)
+        # NÃO somar eventos customizados - eles são subsets dos leads, não adicionais
         total_leads_standard = campaign_stats['leads'].sum()
         total_lq = campaign_stats['LeadQualified'].sum()
         total_lqhq = campaign_stats['LeadQualifiedHighQuality'].sum()
-        self.total_leads_meta_before_filter = total_leads_standard + total_lq + total_lqhq
+        total_faixa_a = campaign_stats['Faixa A'].sum()
+
+        # Usar apenas total de leads (que já inclui ajuste da campanha especial)
+        self.total_leads_meta_before_filter = total_leads_standard
+
+        # Salvar também total de respostas ANTES do filtro para comparação
+        self.total_respostas_before_filter = campaign_stats['respostas_pesquisa'].sum()
 
         logger.info(f"   ✅ Total de leads (Meta): {self.total_leads_meta_before_filter}")
         logger.info(f"      'lead' padrão: {total_leads_standard}")
         logger.info(f"      LeadQualified: {total_lq}")
         logger.info(f"      LeadQualifiedHighQuality: {total_lqhq}")
-        logger.info(f"   ✅ Total de respostas: {campaign_stats['respostas_pesquisa'].sum()}")
-        # Usar total de eventos de conversão para taxa média correta
-        total_events = campaign_stats['total_conversion_events'].sum()
-        taxa_media = campaign_stats['respostas_pesquisa'].sum() / total_events * 100 if total_events > 0 else 0
+        logger.info(f"      Faixa A: {total_faixa_a}")
+        logger.info(f"   ✅ Total de respostas (antes do filtro): {self.total_respostas_before_filter}")
+        # Calcular taxa de resposta média usando leads no denominador
+        total_leads = campaign_stats['leads'].sum()
+        taxa_media = campaign_stats['respostas_pesquisa'].sum() / total_leads * 100 if total_leads > 0 else 0
         logger.info(f"   ✅ Taxa de resposta média: {taxa_media:.2f}%")
 
         # 2. Buscar custos via Meta API (se não fornecidos)
@@ -694,6 +678,24 @@ class CampaignMetricsCalculator:
                 lambda camp: self._get_campaign_num_creatives(camp, costs_hierarchy)
             )
 
+            # DEBUG: Verificar quais IDs estamos tentando buscar
+            logger.info("   🔍 DEBUG - Tentando buscar optimization_goals para:")
+            ml_campaigns = campaign_stats[campaign_stats['ml_type'] == 'COM_ML']
+            for idx, row in ml_campaigns.head(3).iterrows():
+                camp_name = row['campaign']
+                camp_id = self._extract_campaign_id(camp_name)
+                logger.info(f"      • {camp_name[:70]}...")
+                logger.info(f"        Extracted ID: {camp_id}")
+                logger.info(f"        First 15: {camp_id[:15] if camp_id else 'None'}")
+
+            # Listar IDs disponíveis em costs_hierarchy
+            if costs_hierarchy and costs_hierarchy.get('campaigns'):
+                logger.info("   🔍 DEBUG - IDs disponíveis em costs_hierarchy (primeiros 5):")
+                for camp_id in list(costs_hierarchy['campaigns'].keys())[:5]:
+                    camp_data = costs_hierarchy['campaigns'][camp_id]
+                    logger.info(f"      • {camp_id} (first 15: {camp_id[:15]})")
+                    logger.info(f"        Name: {camp_data.get('name', 'N/A')[:70]}")
+
             # Adicionar optimization_goals (eventos de conversão customizados)
             campaign_stats['optimization_goal'] = campaign_stats['campaign'].apply(
                 lambda camp: self._get_campaign_optimization_goals(camp, costs_hierarchy)
@@ -703,6 +705,10 @@ class CampaignMetricsCalculator:
             campaign_stats['account_id'] = campaign_stats['campaign'].apply(
                 lambda camp: self._get_campaign_account_id(camp, costs_hierarchy)
             )
+
+            # optimization_goal já é retornado como string por _get_campaign_optimization_goals()
+            # Não precisa converter, apenas garantir que "-" vire ""
+            campaign_stats['optimization_goal'] = campaign_stats['optimization_goal'].replace('-', '')
 
             total_spend = campaign_stats['spend'].sum()
             logger.info(f"   ✅ Custos obtidos: R$ {total_spend:,.2f}")
@@ -714,18 +720,22 @@ class CampaignMetricsCalculator:
             campaign_stats['account_id'] = ""
 
         # 2.5. Filtrar campanhas sem spend (não ativas no período)
-        # IMPORTANTE: Só remover se temos leads=0 E spend=0
-        # Se temos leads mas spend=0, pode ser erro na Meta API - manter campanha
+        # IMPORTANTE: NUNCA remover campanhas com conversões > 0!
+        # Só remover se: spend=0 AND leads=0 AND conversions=0
         campaigns_before_filter = len(campaign_stats)
         conversions_before_filter = campaign_stats['conversions'].sum()
 
         # Identificar campanhas que serão removidas
         removed_campaigns = campaign_stats[
-            (campaign_stats['spend'] == 0) & (campaign_stats['leads'] == 0)
+            (campaign_stats['spend'] == 0) &
+            (campaign_stats['leads'] == 0) &
+            (campaign_stats['conversions'] == 0)
         ].copy()
 
         campaign_stats = campaign_stats[
-            (campaign_stats['spend'] > 0) | (campaign_stats['leads'] > 0)
+            (campaign_stats['spend'] > 0) |
+            (campaign_stats['leads'] > 0) |
+            (campaign_stats['conversions'] > 0)
         ]
         campaigns_filtered = campaigns_before_filter - len(campaign_stats)
         conversions_after_filter = campaign_stats['conversions'].sum()
@@ -737,7 +747,16 @@ class CampaignMetricsCalculator:
                 logger.warning(f"   ⚠️ {int(conversions_removed)} vendas removidas junto com essas campanhas!")
                 logger.warning(f"   ⚠️ Campanhas removidas com vendas:")
                 for _, row in removed_campaigns[removed_campaigns['conversions'] > 0].iterrows():
-                    logger.warning(f"      • {int(row['conversions'])} vendas: {row['campaign'][:70]}")
+                    grupo = row.get('comparison_group', 'N/A')
+                    logger.warning(f"      • {int(row['conversions'])} vendas [{grupo}]: {row['campaign'][:70]}")
+
+        # DEBUG: Verificar Eventos ML no campaign_stats após filtro
+        if 'comparison_group' in campaign_stats.columns:
+            eventos_ml_stats = campaign_stats[campaign_stats['comparison_group'] == 'Eventos ML']
+            if len(eventos_ml_stats) > 0:
+                total_leads_eventos_ml_stats = eventos_ml_stats['leads'].sum()
+                total_vendas_eventos_ml_stats = eventos_ml_stats['conversions'].sum()
+                logger.info(f"   🔍 DEBUG - Eventos ML no campaign_stats (após filtro): {len(eventos_ml_stats)} campanhas, {int(total_leads_eventos_ml_stats)} leads, {int(total_vendas_eventos_ml_stats)} vendas")
 
         # 3. Calcular métricas finais
         logger.info("   Calculando CPL, ROAS e Margem...")
@@ -753,10 +772,10 @@ class CampaignMetricsCalculator:
             if col in campaign_stats.columns:
                 campaign_stats[col] = pd.to_numeric(campaign_stats[col], errors='coerce').fillna(0)
 
-        # CPL - usar total de eventos de conversão, não apenas leads padrão
-        # Isso evita CPLs absurdos (ex: R$ 526) quando a campanha usa eventos customizados
+        # CPL - usar 'leads' no denominador
+        # Nota: 'leads' já foi ajustado para incluir leads artificiais na campanha especial
         campaign_stats['cpl'] = campaign_stats.apply(
-            lambda row: calculate_cpl(row['spend'], row['total_conversion_events']) if row['total_conversion_events'] > 0 else 0,
+            lambda row: calculate_cpl(row['spend'], row['leads']) if row['leads'] > 0 else 0,
             axis=1
         ).round(2)
 
@@ -875,34 +894,40 @@ class CampaignMetricsCalculator:
         # MÉTODO 1: Tentar match por Campaign ID (mais preciso)
         campaign_id = self._extract_campaign_id(campaign_name)
 
-        if campaign_id and campaign_id in campaigns:
-            spend = float(campaigns[campaign_id].get('spend', 0))
-            logger.debug(f"   ✅ Match por ID: {campaign_id} → R$ {spend:.2f}")
-            return spend
+        if campaign_id:
+            # Match exato primeiro
+            if campaign_id in campaigns:
+                spend = float(campaigns[campaign_id].get('spend', 0))
+                logger.debug(f"   ✅ Match por ID: {campaign_id} → R$ {spend:.2f}")
+                return spend
 
-        # MÉTODO 2: Fallback - match por nome (para campanhas sem ID no nome)
+            # FALLBACK: Match pelos primeiros 15 dígitos (ignora últimos 3 dígitos)
+            # Isso resolve o problema de IDs que terminam em 390 vs 000
+            campaign_id_prefix = campaign_id[:15] if len(campaign_id) >= 15 else campaign_id
+
+            for cost_id, cost_data in campaigns.items():
+                cost_id_prefix = cost_id[:15] if len(cost_id) >= 15 else cost_id
+                if campaign_id_prefix == cost_id_prefix:
+                    spend = float(cost_data.get('spend', 0))
+                    logger.debug(f"   ✅ Match por ID (15 dígitos): {campaign_id_prefix} → R$ {spend:.2f}")
+                    return spend
+
+        # MÉTODO 2: Fallback - match por nome EXATO (para campanhas sem ID no nome)
         # Remover ID do final para comparação
         campaign_name_clean = campaign_name
         if campaign_id:
             campaign_name_clean = '|'.join(campaign_name.split('|')[:-1]).strip()
 
-        # Procurar por nome exato
+        # Procurar por nome exato (case-insensitive)
+        campaign_lower = campaign_name_clean.lower().strip()
         for camp_id, camp_data in campaigns.items():
-            if camp_data.get('name', '').strip() == campaign_name_clean.strip():
+            camp_name_lower = camp_data.get('name', '').lower().strip()
+            if campaign_lower == camp_name_lower:
                 spend = float(camp_data.get('spend', 0))
                 logger.debug(f"   ✅ Match por nome: {campaign_name_clean} → R$ {spend:.2f}")
                 return spend
 
-        # Se não encontrou exato, tentar match parcial (normalizado)
-        campaign_lower = campaign_name_clean.lower().strip()
-        for camp_id, camp_data in campaigns.items():
-            camp_name_lower = camp_data.get('name', '').lower().strip()
-            if campaign_lower in camp_name_lower or camp_name_lower in campaign_lower:
-                spend = float(camp_data.get('spend', 0))
-                logger.debug(f"   ⚠️ Match parcial: {campaign_name_clean} → R$ {spend:.2f}")
-                return spend
-
-        # Não encontrou
+        # Não encontrou - retornar 0 (REMOVIDO match parcial que causava duplicatas)
         logger.debug(f"   ❌ Campanha não encontrada: {campaign_name}")
         return 0.0
 
@@ -1048,11 +1073,27 @@ class CampaignMetricsCalculator:
         # MÉTODO 1: Tentar match por Campaign ID (mais preciso)
         campaign_id = self._extract_campaign_id(campaign_name)
         camp_data = None
+        match_method = None
 
-        if campaign_id and campaign_id in campaigns:
-            camp_data = campaigns[campaign_id]
-        else:
-            # MÉTODO 2: Fallback - match por nome
+        if campaign_id:
+            # Match exato primeiro
+            if campaign_id in campaigns:
+                camp_data = campaigns[campaign_id]
+                match_method = "exact_id"
+            else:
+                # FALLBACK: Match pelos primeiros 15 dígitos (ignora últimos 3)
+                # Isso resolve o problema de IDs que terminam em 390 vs 000
+                campaign_id_prefix = campaign_id[:15] if len(campaign_id) >= 15 else campaign_id
+
+                for cost_id, cost_data in campaigns.items():
+                    cost_id_prefix = cost_id[:15] if len(cost_id) >= 15 else cost_id
+                    if campaign_id_prefix == cost_id_prefix:
+                        camp_data = cost_data
+                        match_method = f"prefix_id ({campaign_id_prefix})"
+                        break
+
+        # MÉTODO 2: Fallback - match por nome (se ainda não achou)
+        if not camp_data:
             campaign_name_clean = campaign_name
             if campaign_id:
                 campaign_name_clean = '|'.join(campaign_name.split('|')[:-1]).strip()
@@ -1061,7 +1102,14 @@ class CampaignMetricsCalculator:
             for camp_id, data in campaigns.items():
                 if data.get('name', '').strip() == campaign_name_clean.strip():
                     camp_data = data
+                    match_method = "name"
                     break
+
+        if not camp_data:
+            # DEBUG: Campanha não encontrada em costs_hierarchy
+            logger.debug(f"   ⚠️ Campanha não encontrada em costs_hierarchy: {campaign_name[:60]}")
+            logger.debug(f"      Extracted ID: {campaign_id}")
+            return "-"
 
         if camp_data:
             # Coletar optimization_goals únicos de todos os adsets
@@ -1079,6 +1127,11 @@ class CampaignMetricsCalculator:
             if optimization_goals:
                 # Ordenar para consistência e retornar como string
                 return ", ".join(sorted(optimization_goals))
+            else:
+                # DEBUG: Se não encontrou goals, logar informação
+                logger.debug(f"   ⚠️ Nenhum optimization_goal encontrado para campanha: {campaign_name[:60]}")
+                logger.debug(f"      Campaign ID: {campaign_id}")
+                logger.debug(f"      Adsets encontrados: {len(adsets)}")
 
         return "-"
 
@@ -1122,6 +1175,86 @@ class CampaignMetricsCalculator:
             return camp_data.get('account_id', '')
 
         return ""
+
+    def _get_campaign_leads_from_costs(self, campaign_name: str, costs_hierarchy: Dict) -> int:
+        """
+        Busca o número de leads de uma campanha específica do costs_hierarchy (dados Excel).
+
+        Args:
+            campaign_name: Nome da campanha (pode incluir |ID no final)
+            costs_hierarchy: Dicionário retornado por build_costs_hierarchy()
+
+        Returns:
+            Número de leads (int)
+        """
+        if not costs_hierarchy:
+            return 0
+
+        campaigns = costs_hierarchy.get('campaigns', {})
+        if not campaigns:
+            return 0
+
+        # MÉTODO 1: Tentar match por Campaign ID (mais preciso)
+        campaign_id = self._extract_campaign_id(campaign_name)
+
+        if campaign_id:
+            # Match exato primeiro
+            if campaign_id in campaigns:
+                return campaigns[campaign_id].get('leads', 0)
+
+            # FALLBACK: Match pelos primeiros 15 dígitos (ignora últimos 3 dígitos)
+            # Isso resolve o problema de IDs que terminam em 390 vs 000
+            campaign_id_prefix = campaign_id[:15] if len(campaign_id) >= 15 else campaign_id
+
+            for cost_id, cost_data in campaigns.items():
+                cost_id_prefix = cost_id[:15] if len(cost_id) >= 15 else cost_id
+                if campaign_id_prefix == cost_id_prefix:
+                    return cost_data.get('leads', 0)
+
+        return 0
+
+    def _get_campaign_custom_event_from_costs(
+        self,
+        campaign_name: str,
+        costs_hierarchy: Dict,
+        event_name: str
+    ) -> int:
+        """
+        Busca a contagem de um evento customizado do costs_hierarchy (dados Excel).
+
+        Args:
+            campaign_name: Nome da campanha (pode incluir |ID no final)
+            costs_hierarchy: Dicionário retornado por build_costs_hierarchy()
+            event_name: Nome do evento (ex: 'LeadQualified', 'LeadQualifiedHighQuality')
+
+        Returns:
+            Contagem do evento (int)
+        """
+        if not costs_hierarchy:
+            return 0
+
+        campaigns = costs_hierarchy.get('campaigns', {})
+        if not campaigns:
+            return 0
+
+        # MÉTODO 1: Tentar match por Campaign ID (mais preciso)
+        campaign_id = self._extract_campaign_id(campaign_name)
+
+        if campaign_id:
+            # Match exato primeiro
+            if campaign_id in campaigns:
+                return campaigns[campaign_id].get(event_name, 0)
+
+            # FALLBACK: Match pelos primeiros 15 dígitos (ignora últimos 3 dígitos)
+            # Isso resolve o problema de IDs que terminam em 390 vs 000
+            campaign_id_prefix = campaign_id[:15] if len(campaign_id) >= 15 else campaign_id
+
+            for cost_id, cost_data in campaigns.items():
+                cost_id_prefix = cost_id[:15] if len(cost_id) >= 15 else cost_id
+                if campaign_id_prefix == cost_id_prefix:
+                    return cost_data.get(event_name, 0)
+
+        return 0
 
 
 class DecileMetricsCalculator:
@@ -1474,9 +1607,21 @@ def calculate_overall_stats(
 
     # Adicionar estatísticas de fonte de leads se fornecidas
     if lead_source_stats:
-        result['survey_leads'] = lead_source_stats.get('survey_leads', 0)
         result['capi_leads_total'] = lead_source_stats.get('capi_leads_total', 0)
         result['capi_leads_extras'] = lead_source_stats.get('capi_leads_extras', 0)
+
+    # IMPORTANTE: Usar total de respostas DO PERÍODO (survey_leads do data loader)
+    # Este é o número de pessoas que responderam a pesquisa no período de captação
+    if lead_source_stats:
+        # Priorizar: usar total do período (métrica independente)
+        result['survey_leads'] = lead_source_stats.get('survey_leads', 0)
+        logger.info(f"   📊 Respostas na pesquisa (período): {result['survey_leads']}")
+    elif campaign_calc and hasattr(campaign_calc, 'total_respostas_before_filter'):
+        # Fallback: usar respostas das campanhas analisadas
+        result['survey_leads'] = campaign_calc.total_respostas_before_filter
+        logger.warning(f"   ⚠️ Usando respostas das campanhas analisadas (não do período todo): {result['survey_leads']}")
+    else:
+        result['survey_leads'] = 0
 
     # Adicionar períodos se fornecidos
     if lead_period:
@@ -1517,7 +1662,11 @@ def calculate_comparison_group_metrics(
         logger.warning("⚠️ Coluna 'comparison_group' não encontrada. Retornando DataFrame vazio.")
         return pd.DataFrame()
 
-    logger.info("📊 Calculando métricas por grupo de comparação...")
+    # DEBUG: Verificar quantas conversões existem no matched_df
+    total_conversoes_linhas = len(matched_df[matched_df['converted'] == True])
+    total_conversoes_unicas = matched_df[matched_df['converted'] == True]['email'].nunique()
+    logger.info(f"📊 Calculando métricas por grupo de comparação...")
+    logger.info(f"   🔍 DEBUG - matched_df: {len(matched_df)} total de linhas, {total_conversoes_linhas} conversões, {total_conversoes_unicas} emails únicos convertidos")
 
     # Criar mapeamento campaign → spend
     campaign_spend_map = dict(zip(
@@ -1535,9 +1684,17 @@ def calculate_comparison_group_metrics(
 
         # Métricas básicas
         leads = len(group_df)
-        conversions = len(group_df[group_df['converted'] == True])
+        # IMPORTANTE: Contar emails únicos para conversões (consistente com campaign_metrics)
+        converted_df = group_df[group_df['converted'] == True]
+        conversions = converted_df['email'].nunique()
+
+        # DEBUG: Ver total de linhas vs emails únicos
+        total_converted_rows = len(converted_df)
+        if total_converted_rows != conversions:
+            logger.info(f"   🔍 DEBUG [{group}]: {total_converted_rows} linhas convertidas → {conversions} emails únicos")
+
         conversion_rate = (conversions / leads * 100) if leads > 0 else 0
-        total_revenue = group_df[group_df['converted'] == True]['sale_value'].sum()
+        total_revenue = converted_df['sale_value'].sum()
 
         # Calcular spend total do grupo
         group_campaigns = group_df['campaign'].unique()

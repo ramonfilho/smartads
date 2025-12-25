@@ -135,6 +135,8 @@ def classify_campaign(campaign_name: str) -> str:
         'COM_ML'
         >>> classify_campaign("DEVLF | CAP | FRIO | FASE 04 | ADV | ESCALA SCORE | PG2")
         'SEM_ML'
+        >>> classify_campaign("PÓS DEV | CAP | FRIO | FASE 01")
+        'EXCLUIR'
         >>> classify_campaign("DEVLF | AQUECIMENTO | FASE 01 | ...")
         'EXCLUIR'
         >>> classify_campaign(None)
@@ -146,7 +148,7 @@ def classify_campaign(campaign_name: str) -> str:
     campaign_lower = str(campaign_name).lower()
 
     # 1. Verificar se é campanha de captação
-    if 'devlf | cap | frio' not in campaign_lower:
+    if not is_captacao_campaign(campaign_name):
         return 'EXCLUIR'
 
     # 2. Classificar COM_ML vs SEM_ML
