@@ -835,8 +835,17 @@ def compare_adset_performance(
 
         conversions_by_campaign_adset.columns = ['campaign_name', 'adset_name', 'conversions', 'revenue']
 
+        # NOVO: Calcular LEADS (todos, não só convertidos) por campanha + adset
+        # IMPORTANTE: Usar TODOS os leads do matched_df para garantir consistência
+        leads_by_campaign_adset = matched_df.groupby(
+            ['campaign', 'medium']
+        ).size().reset_index(name='leads_matched_df')
+
+        leads_by_campaign_adset.columns = ['campaign_name', 'adset_name', 'leads_matched_df']
+
         # CRÍTICO: Normalizar whitespace em adset_name (UTMs podem ter espaçamento inconsistente)
         conversions_by_campaign_adset['adset_name'] = conversions_by_campaign_adset['adset_name'].apply(normalize_whitespace)
+        leads_by_campaign_adset['adset_name'] = leads_by_campaign_adset['adset_name'].apply(normalize_whitespace)
 
         # IMPORTANTE: Extrair Campaign ID do final do nome para fazer matching preciso
         # Exemplo: "CAMPAIGN | 2025-04-15|120220370119870390" → ID = "120220370119870390"
@@ -853,12 +862,15 @@ def compare_adset_performance(
             return None
 
         conversions_by_campaign_adset['campaign_id_from_utm'] = conversions_by_campaign_adset['campaign_name'].apply(extract_campaign_id)
+        leads_by_campaign_adset['campaign_id_from_utm'] = leads_by_campaign_adset['campaign_name'].apply(extract_campaign_id)
 
         # DEBUG: Verificar quantos IDs foram extraídos
         ids_extracted = conversions_by_campaign_adset['campaign_id_from_utm'].notna().sum()
         logger.info(f"   ✅ Conversões calculadas por campanha + adset (via 'campaign' + 'medium')")
         logger.info(f"   Total de combinações campanha+adset com conversões: {len(conversions_by_campaign_adset)}")
         logger.info(f"   Campaign IDs extraídos dos UTMs: {ids_extracted}/{len(conversions_by_campaign_adset)}")
+        logger.info(f"   ✅ Leads calculados por campanha + adset (via 'campaign' + 'medium')")
+        logger.info(f"   Total de combinações campanha+adset com leads: {len(leads_by_campaign_adset)}")
 
         if ids_extracted < len(conversions_by_campaign_adset):
             logger.warning(f"   ⚠️ {len(conversions_by_campaign_adset) - ids_extracted} conversões SEM Campaign ID no UTM")
@@ -869,6 +881,7 @@ def compare_adset_performance(
                 logger.warning(f"        Adset: {row['adset_name'][:50]}")
     else:
         conversions_by_campaign_adset = pd.DataFrame(columns=['campaign_name', 'adset_name', 'conversions', 'revenue'])
+        leads_by_campaign_adset = pd.DataFrame(columns=['campaign_name', 'adset_name', 'leads_matched_df'])
         if 'medium' not in matched_df.columns:
             logger.warning("   ⚠️ Coluna 'medium' não encontrada em matched_df - conversões não podem ser atribuídas aos adsets!")
 
@@ -880,6 +893,7 @@ def compare_adset_performance(
     # UTMs têm 18 dígitos, Excel tem 21 (18 + "000"), primeiros 15 são a parte comum
     adsets_metrics_df['campaign_id_clean'] = adsets_metrics_df['campaign_id'].astype(str).str[:15]
     conversions_by_campaign_adset['campaign_id_clean'] = conversions_by_campaign_adset['campaign_id_from_utm'].astype(str).str[:15]
+    leads_by_campaign_adset['campaign_id_clean'] = leads_by_campaign_adset['campaign_id_from_utm'].astype(str).str[:15]
 
     # DEBUG: Verificar matching antes do merge
     logger.info(f"\n   🔍 DEBUG - Preparando merge:")
@@ -954,6 +968,28 @@ def compare_adset_performance(
 
     if before_dedup != after_dedup:
         logger.info(f"   🔧 Removidas {before_dedup - after_dedup} linhas duplicadas (mesmo campaign_id + adset_id)")
+
+    # NOVO: Merge com leads do matched_df
+    # IMPORTANTE: Isso sobrescreve o 'leads' vindo do Excel com o contagem real do matched_df
+    adsets_full = adsets_full.merge(
+        leads_by_campaign_adset[['campaign_id_clean', 'adset_name', 'leads_matched_df']],
+        on=['campaign_id_clean', 'adset_name'],
+        how='left'
+    )
+
+    # Substituir 'leads' do Excel por 'leads_matched_df' onde disponível
+    if 'leads_matched_df' in adsets_full.columns and 'leads' in adsets_full.columns:
+        leads_before = adsets_full['leads'].sum()
+        # Manter leads do Excel se leads_matched_df estiver vazio
+        adsets_full['leads'] = adsets_full['leads_matched_df'].fillna(adsets_full['leads'])
+        leads_after = adsets_full['leads'].sum()
+        logger.info(f"   ✅ Leads atualizados com contagem do matched_df")
+        logger.info(f"      Leads (Excel): {leads_before:.0f} → Leads (matched_df): {leads_after:.0f}")
+    elif 'leads_matched_df' in adsets_full.columns and 'leads' not in adsets_full.columns:
+        # Se não temos 'leads' do Excel, criar a partir do matched_df
+        adsets_full['leads'] = adsets_full['leads_matched_df']
+        logger.info(f"   ✅ Leads criados a partir do matched_df (Excel não tinha 'leads')")
+        logger.info(f"      Total de leads: {adsets_full['leads'].sum():.0f}")
 
     # 2. Para conversões que não tiveram match exato, tentar matching flexível
     # (útil quando nomes no UTM são truncados)
@@ -1281,6 +1317,53 @@ def compare_adset_performance(
 
     logger.info("   ✅ Comparações de adsets calculadas")
     logger.info(f"      Adsets após filtro (Eventos ML + Controle): {len(detailed)}")
+
+    # CRÍTICO: Para matched pairs, agregar por (adset_name, comparison_group)
+    # Detectamos matched pairs quando há poucos adset_names únicos (<< total de linhas)
+    unique_adset_names = detailed['adset_name'].nunique()
+    is_matched_pairs = unique_adset_names < 20 and len(detailed) > unique_adset_names * 2
+
+    if is_matched_pairs:
+        logger.info(f"\n   🔍 MATCHED PAIRS detectado ({unique_adset_names} adsets únicos, {len(detailed)} linhas)")
+        logger.info(f"   🔧 Agregando por (adset_name, comparison_group) para evitar duplicação...")
+
+        # Agregar métricas por (adset_name, comparison_group)
+        detailed_aggregated = detailed.groupby(['adset_name', 'comparison_group'], as_index=False).agg({
+            'leads': 'sum',
+            'conversions': 'sum',
+            'spend': 'sum',
+            'revenue': 'sum',
+            'campaign_name': 'first',  # Manter primeiro nome de campanha
+            'campaign_id': 'first',    # Manter primeiro ID de campanha
+            'adset_id': 'first'        # Manter primeiro ID de adset
+        })
+
+        # Recalcular métricas derivadas
+        detailed_aggregated['cpl'] = detailed_aggregated['spend'] / detailed_aggregated['leads'].replace(0, 1)
+        detailed_aggregated['cpa'] = detailed_aggregated['spend'] / detailed_aggregated['conversions'].replace(0, 1)
+        detailed_aggregated['conversion_rate'] = (detailed_aggregated['conversions'] / detailed_aggregated['leads'].replace(0, 1)) * 100
+        detailed_aggregated['roas'] = detailed_aggregated['revenue'] / detailed_aggregated['spend'].replace(0, 1)
+        detailed_aggregated['margin'] = detailed_aggregated['revenue'] - detailed_aggregated['spend']
+        detailed_aggregated['margin_pct'] = (detailed_aggregated['margin'] / detailed_aggregated['revenue'].replace(0, 1)) * 100
+
+        # Preservar colunas opcionais se existirem
+        if 'account_id' in detailed.columns:
+            account_map = detailed.groupby('adset_name')['account_id'].first().to_dict()
+            detailed_aggregated['account_id'] = detailed_aggregated['adset_name'].map(account_map)
+
+        if 'optimization_goal' in detailed.columns:
+            opt_map = detailed.groupby('adset_name')['optimization_goal'].first().to_dict()
+            detailed_aggregated['optimization_goal'] = detailed_aggregated['adset_name'].map(opt_map)
+
+        if 'ml_type' in detailed.columns:
+            ml_map = detailed.groupby('adset_name')['ml_type'].first().to_dict()
+            detailed_aggregated['ml_type'] = detailed_aggregated['adset_name'].map(ml_map)
+
+        logger.info(f"   ✅ Agregação completa: {len(detailed)} linhas → {len(detailed_aggregated)} linhas")
+        logger.info(f"      Leads: {detailed['leads'].sum():.0f} → {detailed_aggregated['leads'].sum():.0f}")
+        logger.info(f"      Conversões: {detailed['conversions'].sum():.0f} → {detailed_aggregated['conversions'].sum():.0f}")
+
+        detailed = detailed_aggregated
 
     return {
         'aggregated': aggregated,
