@@ -214,22 +214,31 @@ def identify_matched_adset_pairs(
     # Adsets em campanhas ML - AGREGAR primeiro, DEPOIS filtrar
     ml_adsets_all = adsets_df[adsets_df['campaign_id'].isin(ml_campaign_ids)]
     if not ml_adsets_all.empty:
+        # MUDANÇA: Usar 'total_spend' (histórico) em vez de 'spend' (filtrado por período)
+        # Isso permite identificar matched adsets que têm gasto histórico, mesmo que não no período atual
+        spend_col = 'total_spend' if 'total_spend' in ml_adsets_all.columns else 'spend'
         # Agregar spend por adset_name
-        ml_adsets_agg = ml_adsets_all.groupby('adset_name')['spend'].sum().reset_index()
+        ml_adsets_agg = ml_adsets_all.groupby('adset_name')[spend_col].sum().reset_index()
         # Filtrar por gasto mínimo agregado
-        ml_adsets_filtered = ml_adsets_agg[ml_adsets_agg['spend'] >= min_spend]
+        ml_adsets_filtered = ml_adsets_agg[ml_adsets_agg[spend_col] >= min_spend]
         ml_adsets = set(ml_adsets_filtered['adset_name'].dropna().unique().tolist())
+        total_spend_sum = ml_adsets_agg[spend_col].sum()
+        logger.info(f"   📊 ML: {len(ml_adsets)} adsets com {spend_col} >= R$ {min_spend:.0f}")
+        logger.info(f"      Total {spend_col}: R$ {total_spend_sum:.2f}")
     else:
         ml_adsets = set()
 
     # Adsets em campanhas controle - AGREGAR primeiro, DEPOIS filtrar
     ctrl_adsets_all = adsets_df[adsets_df['campaign_id'].isin(control_campaign_ids)]
     if not ctrl_adsets_all.empty:
+        # MUDANÇA: Usar 'total_spend' (histórico) em vez de 'spend' (filtrado por período)
+        spend_col = 'total_spend' if 'total_spend' in ctrl_adsets_all.columns else 'spend'
         # Agregar spend por adset_name
-        ctrl_adsets_agg = ctrl_adsets_all.groupby('adset_name')['spend'].sum().reset_index()
+        ctrl_adsets_agg = ctrl_adsets_all.groupby('adset_name')[spend_col].sum().reset_index()
         # Filtrar por gasto mínimo agregado
-        ctrl_adsets_filtered = ctrl_adsets_agg[ctrl_adsets_agg['spend'] >= min_spend]
+        ctrl_adsets_filtered = ctrl_adsets_agg[ctrl_adsets_agg[spend_col] >= min_spend]
         control_adsets = set(ctrl_adsets_filtered['adset_name'].dropna().unique().tolist())
+        logger.info(f"   📊 Controle: {len(control_adsets)} adsets com {spend_col} >= R$ {min_spend:.0f}")
     else:
         control_adsets = set()
 
@@ -241,26 +250,25 @@ def identify_matched_adset_pairs(
     for adset in sorted(matched):
         logger.info(f"      • {repr(adset)}")
 
-    # Filtrar apenas adsets na lista MATCHED_ADSETS
-    matched_final = [adset for adset in matched if adset in MATCHED_ADSETS]
+    # MUDANÇA: Usar TODOS os matched adsets identificados, não filtrar por MATCHED_ADSETS
+    # A lista MATCHED_ADSETS pode estar desatualizada ou com nomes que não batem com o Excel
+    matched_final = matched
 
-    # DEBUG: Mostrar adsets que não estão na lista MATCHED_ADSETS
+    # DEBUG: Mostrar comparação com lista esperada (apenas informativo)
+    in_list = [adset for adset in matched if adset in MATCHED_ADSETS]
     not_in_list = [adset for adset in matched if adset not in MATCHED_ADSETS]
+
+    if in_list:
+        logger.info(f"   ✅ {len(in_list)} adsets matched estão na lista MATCHED_ADSETS")
+
     if not_in_list:
-        logger.info(f"   ⚠️ DEBUG - Adsets matched mas NÃO na lista MATCHED_ADSETS:")
-        for adset in sorted(not_in_list):
+        logger.info(f"   ℹ️  {len(not_in_list)} adsets matched NÃO estão na lista MATCHED_ADSETS:")
+        for adset in sorted(not_in_list)[:5]:  # Mostrar apenas primeiros 5
             logger.info(f"      • {repr(adset)}")
+        if len(not_in_list) > 5:
+            logger.info(f"      ... e mais {len(not_in_list) - 5}")
 
-    # DEBUG: Mostrar adsets esperados mas não matched
-    not_matched = [adset for adset in MATCHED_ADSETS if adset not in matched]
-    if not_matched:
-        logger.info(f"   ⚠️ DEBUG - Adsets na lista MATCHED_ADSETS mas NÃO matched:")
-        for adset in sorted(not_matched):
-            in_ml = '✓' if adset in ml_adsets else '✗'
-            in_ctrl = '✓' if adset in control_adsets else '✗'
-            logger.info(f"      • {repr(adset)} (ML:{in_ml}, Ctrl:{in_ctrl})")
-
-    logger.info(f"   ✅ {len(matched_final)} adsets matched (de {len(MATCHED_ADSETS)} esperados)")
+    logger.info(f"   ✅ {len(matched_final)} adsets matched identificados (Eventos ML vs Controle)")
     logger.info(f"      ML adsets: {len(ml_adsets)}, Controle adsets: {len(control_adsets)}")
 
     # Criar DataFrame com métricas por adset
@@ -1327,16 +1335,28 @@ def compare_adset_performance(
         logger.info(f"\n   🔍 MATCHED PAIRS detectado ({unique_adset_names} adsets únicos, {len(detailed)} linhas)")
         logger.info(f"   🔧 Agregando por (adset_name, comparison_group) para evitar duplicação...")
 
+        # Decidir qual coluna de spend usar para agregação
+        # Para matched pairs, preferir total_spend (histórico) se disponível
+        spend_column = 'total_spend' if 'total_spend' in detailed.columns else 'spend'
+
         # Agregar métricas por (adset_name, comparison_group)
-        detailed_aggregated = detailed.groupby(['adset_name', 'comparison_group'], as_index=False).agg({
+        agg_dict = {
             'leads': 'sum',
             'conversions': 'sum',
-            'spend': 'sum',
+            spend_column: 'sum',  # Usar total_spend se disponível
             'revenue': 'sum',
             'campaign_name': 'first',  # Manter primeiro nome de campanha
             'campaign_id': 'first',    # Manter primeiro ID de campanha
             'adset_id': 'first'        # Manter primeiro ID de adset
-        })
+        }
+
+        detailed_aggregated = detailed.groupby(['adset_name', 'comparison_group'], as_index=False).agg(agg_dict)
+
+        # Renomear spend_column para 'spend' para compatibilidade
+        if spend_column != 'spend':
+            detailed_aggregated['spend'] = detailed_aggregated[spend_column]
+            detailed_aggregated = detailed_aggregated.drop(columns=[spend_column])
+            logger.info(f"   📊 Usando {spend_column} (histórico) para matched pairs")
 
         # Recalcular métricas derivadas
         detailed_aggregated['cpl'] = detailed_aggregated['spend'] / detailed_aggregated['leads'].replace(0, 1)
@@ -1362,6 +1382,16 @@ def compare_adset_performance(
         logger.info(f"   ✅ Agregação completa: {len(detailed)} linhas → {len(detailed_aggregated)} linhas")
         logger.info(f"      Leads: {detailed['leads'].sum():.0f} → {detailed_aggregated['leads'].sum():.0f}")
         logger.info(f"      Conversões: {detailed['conversions'].sum():.0f} → {detailed_aggregated['conversions'].sum():.0f}")
+        logger.info(f"      Spend: R$ {detailed['spend'].sum():.2f} → R$ {detailed_aggregated['spend'].sum():.2f}")
+
+        # DEBUG: Verificar se há spend por grupo
+        for group in ['Eventos ML', 'Controle']:
+            group_data = detailed_aggregated[detailed_aggregated['comparison_group'] == group]
+            if not group_data.empty:
+                total_spend = group_data['spend'].sum()
+                logger.info(f"      {group}: R$ {total_spend:.2f} spend total")
+                if total_spend == 0:
+                    logger.warning(f"         ⚠️ {group} tem spend = 0! Verificar filtro de período")
 
         detailed = detailed_aggregated
 

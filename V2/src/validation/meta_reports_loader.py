@@ -407,6 +407,9 @@ class MetaReportsLoader:
         # Criar cópia para não modificar original
         df = df.copy()
 
+        # NOVO: Preservar spend total ANTES de zerar (para matched pairs)
+        df['total_spend'] = df['spend']
+
         # Identificar linhas FORA do período
         # Linha está fora se NÃO há sobreposição:
         # - Término do relatório < start_date (relatório terminou antes do período)
@@ -420,7 +423,7 @@ class MetaReportsLoader:
         spend_outside = df.loc[outside_period, 'spend'].sum() if outside_period.any() else 0
         spend_total = df['spend'].sum()
 
-        # Zerar spend fora do período
+        # Zerar spend fora do período (mas manter total_spend intacto)
         df.loc[outside_period, 'spend'] = 0
 
         if spend_outside > 0:
