@@ -77,3 +77,329 @@ expected_conversion_rates:
   D8: 0.018636   # 1.86% | Corrigido de 1.04% (×1.795)
   D9: 0.025207   # 2.52% | Corrigido de 1.40% (×1.795)
   D10: 0.034551  # 3.45% | Corrigido de 1.92% (×1.795)
+
+# ============================================================================
+# CAMPANHAS E ADSETS - EVENTOS ML (Período: Dezembro 2025)
+# ============================================================================
+#
+# Lista de campanhas Eventos ML e seus respectivos adsets
+# Atualizado: 2025-12-26
+#
+# Total: 4 campanhas | 9 adsets únicos
+# ============================================================================
+
+eventos_ml_campaigns:
+  # Rodolfo Mori - Campanha 1
+  - campaign_id: "120236428684090"
+    campaign_name: "DEVLF | CAP | FRIO | FASE 04 | ADV | MACHINE LEARNING | PG2 | 2025-11-27"
+    account: "Rodolfo Mori"
+    adsets:
+      - adset_id: "120236428684680000"
+        adset_name: "ABERTO | AD0043"
+      - adset_id: "120236428684690000"
+        adset_name: "ABERTO | AD0027"
+      - adset_id: "120236428684710000"
+        adset_name: "ABERTO | AD0022"
+
+  # Rodolfo Mori - Campanha 2
+  - campaign_id: "120236428684840"
+    campaign_name: "DEVLF | CAP | FRIO | FASE 04 | ADV | MACHINE LEARNING | PG2 | 2025-11-27"
+    account: "Rodolfo Mori"
+    adsets:
+      - adset_id: "120236428684380000"
+        adset_name: "ADV | Lookalike 2% Cadastrados - DEV 2.0 + Interesses"
+
+  # Rodolfo Mori - Campanha 3
+  - campaign_id: "120236428684850"
+    campaign_name: "DEVLF | CAP | FRIO | FASE 04 | ADV | MACHINE LEARNING | PG2 | 2025-11-27"
+    account: "Rodolfo Mori"
+    adsets:
+      - adset_id: "120236428684120000"
+        adset_name: "ADV | Lookalike 2% Cadastrados - DEV 2.0 + Interesses"
+      - adset_id: "120236428684130000"
+        adset_name: "ADV | Lookalike 1% Cadastrados - DEV 2.0 + Interesse Ciência da Computação"
+      - adset_id: "120236428684240000"
+        adset_name: "ADV | Linguagem de programação"
+
+  # Gestor de IA - Campanha 4
+  - campaign_id: "120234062599950"
+    campaign_name: "DEVLF | CAP | FRIO | FASE 04 | ADV | ML | S/ ABERTO | PG2 | 2025-11-11"
+    account: "Gestor de IA"
+    adsets:
+      - adset_id: "120234062599910000"
+        adset_name: "ADV | Lookalike 1% Cadastrados - DEV 2.0 + Interesse Ciência da Computação"
+      - adset_id: "120234062599980000"
+        adset_name: "ADV | Linguagem de programação"
+
+# ============================================================================
+# CAMPANHAS E ADSETS - CONTROLE (Período: Dezembro 2025)
+# ============================================================================
+#
+# Lista de campanhas Controle e seus respectivos adsets
+# Atualizado: 2025-12-26
+#
+# Total: 10 campanhas | 42 adsets únicos
+# ============================================================================
+
+controle_campaigns:
+  # Rodolfo Mori - Campanha 1 (ABERTO - SCORE)
+  - campaign_id: "120220370119870"
+    campaign_name: "DEVLF | CAP | FRIO | FASE 01 | ABERTO ADV+ | PG2 | SCORE | 2025-04-15"
+    account: "Rodolfo Mori"
+    adsets:
+      - adset_id: "120224713940020000"
+        adset_name: "ABERTO | AD0027"
+      - adset_id: "120229309350630000"
+        adset_name: "ABERTO | AD0022"
+      - adset_id: "120229582299160000"
+        adset_name: "ABERTO | AD0046"
+      - adset_id: "120231731369010000"
+        adset_name: "ABERTO | AD0065"
+      - adset_id: "120235542072360000"
+        adset_name: "ABERTO | AD0095"
+      - adset_id: "120235543061080000"
+        adset_name: "ABERTO | AD0096"
+      - adset_id: "120235543793400000"
+        adset_name: "ABERTO | AD0098"
+      - adset_id: "120235544902750000"
+        adset_name: "ABERTO | AD0101"
+      - adset_id: "120235906690790000"
+        adset_name: "ABERTO | AD0104"
+      - adset_id: "120236864407460000"
+        adset_name: "ABERTO | AD0106"
+      - adset_id: "120236864736440000"
+        adset_name: "ABERTO | AD0107"
+      - adset_id: "120236864988010000"
+        adset_name: "ABERTO | AD0109"
+      - adset_id: "120236865005080000"
+        adset_name: "ABERTO | AD0110"
+      - adset_id: "120236865195540000"
+        adset_name: "ABERTO | AD0111"
+      - adset_id: "120236865399320000"
+        adset_name: "ABERTO | AD0112"
+      - adset_id: "120236865409140000"
+        adset_name: "ABERTO | AD0113"
+      - adset_id: "120236865561110000"
+        adset_name: "ABERTO | AD0114"
+      - adset_id: "120236865581770000"
+        adset_name: "ABERTO | AD0115"
+      - adset_id: "120236865595440000"
+        adset_name: "ABERTO | AD0116"
+      - adset_id: "120236865600860000"
+        adset_name: "ABERTO | AD0117"
+      - adset_id: "120236865747370000"
+        adset_name: "ABERTO | AD0118"
+      - adset_id: "120236865794170000"
+        adset_name: "ABERTO | AD0119"
+      - adset_id: "120236865831880000"
+        adset_name: "ABERTO | AD0120"
+      - adset_id: "120236865849800000"
+        adset_name: "ABERTO | AD0121"
+
+  # Rodolfo Mori - Campanha 2
+  - campaign_id: "120224064761980"
+    campaign_name: "DEVLF | CAP | FRIO | FASE 04 | ADV | ESCALA SCORE | PG2 | 2025-05-13"
+    account: "Rodolfo Mori"
+    adsets:
+      - adset_id: "120224064761970000"
+        adset_name: "ADV | Lookalike 2% Cadastrados - DEV 2.0 + Interesses"
+      - adset_id: "120224064762460000"
+        adset_name: "ADV | Linguagem de programação"
+      - adset_id: "120224064763040000"
+        adset_name: "ADV | Lookalike 1% Cadastrados - DEV 2.0 + Interesse Ciência da Computação"
+
+  # Rodolfo Mori - Campanha 2
+  - campaign_id: "120224064762010"
+    campaign_name: "DEVLF | CAP | FRIO | FASE 04 | ADV | ESCALA SCORE | PG2 | 2025-05-13"
+    account: "Rodolfo Mori"
+    adsets:
+      - adset_id: "120224064762480000"
+        adset_name: "ADV | Lookalike 2% Cadastrados - DEV 2.0 + Interesses"
+
+  # Rodolfo Mori - Campanha 3
+  - campaign_id: "120224064762600"
+    campaign_name: "DEVLF | CAP | FRIO | FASE 04 | ADV | ESCALA SCORE | PG2 | 2025-05-13"
+    account: "Rodolfo Mori"
+    adsets:
+      - adset_id: "120224064762530000"
+        adset_name: "ADV | Lookalike 1% Cadastrados - DEV 2.0 + Interesse Ciência da Computação"
+      - adset_id: "120224064762830000"
+        adset_name: "ADV | Lookalike 2% Cadastrados - DEV 2.0 + Interesses"
+      - adset_id: "120224064762850000"
+        adset_name: "ADV | Linguagem de programação"
+
+  # Rodolfo Mori - Campanha 4
+  - campaign_id: "120224064762630"
+    campaign_name: "DEVLF | CAP | FRIO | FASE 04 | ADV | ESCALA SCORE | PG2 | 2025-04-13"
+    account: "Rodolfo Mori"
+    adsets:
+      - adset_id: "120224064762060000"
+        adset_name: "ADV | Lookalike 2% Alunos + Interesse Linguagem de Programação"
+      - adset_id: "120224064762510000"
+        adset_name: "ADV | Lookalike 2% Cadastrados - DEV 2.0 + Interesses"
+
+  # Rodolfo Mori - Campanha 5
+  - campaign_id: "120228073033890"
+    campaign_name: "DEVLF | CAP | FRIO | FASE 04 | ADV | ESCALA SCORE | PG2 | 2025-07-08"
+    account: "Rodolfo Mori"
+    adsets:
+      - adset_id: "120228073033800000"
+        adset_name: "ADV | Lookalike 2% Cadastrados - DEV 2.0 + Interesses"
+
+  # Rodolfo Mori - Campanha 6
+  - campaign_id: "120230454190910"
+    campaign_name: "DEVLF | CAP | FRIO | FASE 04 | ADV | FAIXA A | PG2 | 2025-08-13"
+    account: "Rodolfo Mori"
+    adsets:
+      - adset_id: "120230454190970000"
+        adset_name: "ADV | Linguagem de programação"
+      - adset_id: "120230454190980000"
+        adset_name: "ADV | Lookalike 1% Cadastrados - DEV 2.0 + Interesse Ciência da Computação"
+
+  # Gestor de IA - Campanha 7
+  - campaign_id: "120232220702050"
+    campaign_name: "DEVLF | CAP | FRIO | FASE 04 | ADV | FAIXA A | S/ ABERTO | PG2 | 2025-10-14"
+    account: "Gestor de IA"
+    adsets:
+      - adset_id: "120232220702070000"
+        adset_name: "ADV | Lookalike 1% Cadastrados - DEV 2.0 + Interesse Ciência da Computação"
+      - adset_id: "120232223086860000"
+        adset_name: "ADV | Linguagem de programação"
+
+  # Gestor de IA - Campanha 8
+  - campaign_id: "120232666823120"
+    campaign_name: "DEVLF | CAP | FRIO | FASE 04 | ADV | FAIXA A | S/ ABERTO | PG2 | 2025-10-22"
+    account: "Gestor de IA"
+    adsets:
+      - adset_id: "120232666823260000"
+        adset_name: "ADV | Linguagem de programação"
+      - adset_id: "120232666823310000"
+        adset_name: "ADV | Lookalike 1% Cadastrados - DEV 2.0 + Interesse Ciência da Computação"
+
+  # Gestor de IA - Campanha 9
+  - campaign_id: "120232666823150"
+    campaign_name: "DEVLF | CAP | FRIO | FASE 04 | ADV | FAIXA A | S/ ABERTO | PG2 | 2025-10-22"
+    account: "Gestor de IA"
+    adsets:
+      - adset_id: "120232666823140000"
+        adset_name: "ADV | Linguagem de programação"
+      - adset_id: "120232666823200000"
+        adset_name: "ADV | Lookalike 1% Cadastrados - DEV 2.0 + Interesse Ciência da Computação"
+
+# ============================================================================
+# ADSETS MATCHED - EVENTOS ML vs CONTROLE (Período: Dezembro 2025)
+# ============================================================================
+#
+# Adsets que aparecem TANTO em campanhas Eventos ML QUANTO em Controle
+# Permite comparação justa de performance (mesmo targeting/criativo)
+# Atualizado: 2025-12-26
+#
+# Total: 5 adsets matched
+# ============================================================================
+
+matched_adsets:
+  # Matched Adset 1
+  - adset_name: "ADV | Lookalike 2% Cadastrados - DEV 2.0 + Interesses"
+    eventos_ml:
+      - campaign_id: "120236428684840"
+        adset_id: "120236428684380000"
+        account: "Rodolfo Mori"
+      - campaign_id: "120236428684850"
+        adset_id: "120236428684120000"
+        account: "Rodolfo Mori"
+    controle:
+      - campaign_id: "120224064761980"
+        adset_id: "120224064761970000"
+        account: "Rodolfo Mori"
+      - campaign_id: "120224064762010"
+        adset_id: "120224064762480000"
+        account: "Rodolfo Mori"
+      - campaign_id: "120224064762600"
+        adset_id: "120224064762830000"
+        account: "Rodolfo Mori"
+      - campaign_id: "120224064762630"
+        adset_id: "120224064762510000"
+        account: "Rodolfo Mori"
+      - campaign_id: "120228073033890"
+        adset_id: "120228073033800000"
+        account: "Rodolfo Mori"
+
+  # Matched Adset 2
+  - adset_name: "ADV | Lookalike 1% Cadastrados - DEV 2.0 + Interesse Ciência da Computação"
+    eventos_ml:
+      - campaign_id: "120236428684850"
+        adset_id: "120236428684130000"
+        account: "Rodolfo Mori"
+      - campaign_id: "120234062599950"
+        adset_id: "120234062599910000"
+        account: "Gestor de IA"
+    controle:
+      - campaign_id: "120224064761980"
+        adset_id: "120224064763040000"
+        account: "Rodolfo Mori"
+      - campaign_id: "120224064762600"
+        adset_id: "120224064762530000"
+        account: "Rodolfo Mori"
+      - campaign_id: "120230454190910"
+        adset_id: "120230454190980000"
+        account: "Rodolfo Mori"
+      - campaign_id: "120232220702050"
+        adset_id: "120232220702070000"
+        account: "Gestor de IA"
+      - campaign_id: "120232666823120"
+        adset_id: "120232666823310000"
+        account: "Gestor de IA"
+      - campaign_id: "120232666823150"
+        adset_id: "120232666823200000"
+        account: "Gestor de IA"
+
+  # Matched Adset 3
+  - adset_name: "ADV | Linguagem de programação"
+    eventos_ml:
+      - campaign_id: "120236428684850"
+        adset_id: "120236428684240000"
+        account: "Rodolfo Mori"
+      - campaign_id: "120234062599950"
+        adset_id: "120234062599980000"
+        account: "Gestor de IA"
+    controle:
+      - campaign_id: "120224064761980"
+        adset_id: "120224064762460000"
+        account: "Rodolfo Mori"
+      - campaign_id: "120224064762600"
+        adset_id: "120224064762850000"
+        account: "Rodolfo Mori"
+      - campaign_id: "120230454190910"
+        adset_id: "120230454190970000"
+        account: "Rodolfo Mori"
+      - campaign_id: "120232220702050"
+        adset_id: "120232223086860000"
+        account: "Gestor de IA"
+      - campaign_id: "120232666823120"
+        adset_id: "120232666823260000"
+        account: "Gestor de IA"
+      - campaign_id: "120232666823150"
+        adset_id: "120232666823140000"
+        account: "Gestor de IA"
+
+  # Matched Adset 4
+  - adset_name: "ABERTO | AD0022"
+    eventos_ml:
+      - campaign_id: "120236428684090"
+        adset_id: "120236428684710000"
+        account: "Rodolfo Mori"
+    controle:
+      - campaign_id: "120220370119870"
+        adset_id: "120229309350630000"
+        account: "Rodolfo Mori"
+
+  # Matched Adset 5
+  - adset_name: "ABERTO | AD0027"
+    eventos_ml:
+      - campaign_id: "120236428684090"
+        adset_id: "120236428684690000"
+        account: "Rodolfo Mori"
+    controle:
+      - campaign_id: "120220370119870"
+        adset_id: "120224713940020000"
+        account: "Rodolfo Mori"

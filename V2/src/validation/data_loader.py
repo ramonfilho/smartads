@@ -99,6 +99,30 @@ class LeadDataLoader:
         df_norm['term'] = df.get('Term', np.nan)
         df_norm['content'] = df.get('Content', np.nan)
 
+        # LIMPEZA DE UTMs: Detectar e limpar casos problemáticos
+
+        # 1. Limpar variáveis não substituídas ({{...}})
+        # Exemplo: "{{adset.name}}", "{{campaign.id}}"
+        template_vars_medium = df_norm['medium'].astype(str).str.contains(r'\{\{', na=False)
+        template_vars_campaign = df_norm['campaign'].astype(str).str.contains(r'\{\{', na=False)
+
+        if template_vars_medium.sum() > 0:
+            logger.warning(f"   ⚠️ {template_vars_medium.sum()} leads com variáveis não substituídas em 'medium' (removidas)")
+            df_norm.loc[template_vars_medium, 'medium'] = np.nan
+
+        if template_vars_campaign.sum() > 0:
+            logger.warning(f"   ⚠️ {template_vars_campaign.sum()} leads com variáveis não substituídas em 'campaign' (removidas)")
+            df_norm.loc[template_vars_campaign, 'campaign'] = np.nan
+
+        # 2. Identificar leads de outras fontes (não facebook-ads)
+        # NOTA: Não removemos, apenas logamos para awareness
+        non_facebook = df_norm['source'].notna() & (df_norm['source'] != 'facebook-ads')
+        if non_facebook.sum() > 0:
+            sources_count = df_norm[non_facebook]['source'].value_counts()
+            logger.info(f"   ℹ️  {non_facebook.sum()} leads de outras fontes (não facebook-ads):")
+            for source, count in sources_count.head(5).items():
+                logger.info(f"      - {source}: {count} leads")
+
         # Lead Score e Decil
         df_norm['lead_score'] = df.get('lead_score', np.nan)
 

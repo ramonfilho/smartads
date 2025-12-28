@@ -8,6 +8,7 @@ manualmente do Meta Ads Manager.
 import os
 import sys
 import logging
+import re
 import unicodedata
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
@@ -26,6 +27,27 @@ def normalize_unicode(text: str) -> str:
     - NFD: "u" + "´" (2 caracteres: base + combining accent)
     """
     return unicodedata.normalize('NFC', text)
+
+
+def normalize_whitespace(text: str) -> str:
+    """
+    Normaliza espaços em branco em nomes para matching consistente.
+
+    - Colapsa múltiplos espaços em um único espaço
+    - Remove espaços no início e fim
+
+    Args:
+        text: Texto a normalizar
+
+    Returns:
+        Texto normalizado
+    """
+    if pd.isna(text):
+        return text
+    # Colapsar múltiplos espaços em um único
+    normalized = re.sub(r'\s+', ' ', str(text))
+    # Remover espaços no início e fim
+    return normalized.strip()
 
 
 class MetaReportsLoader:
@@ -94,6 +116,27 @@ class MetaReportsLoader:
         campaigns_df = self._load_and_consolidate(campaign_files, 'campaign')
         adsets_df = self._load_and_consolidate(adset_files, 'adset')
         ads_df = self._load_and_consolidate(ad_files, 'ad')
+
+        # CRÍTICO: Carregar edge cases (adsets e ads que não aparecem nos relatórios normais)
+        adsets_df = self._load_edge_cases(adsets_df, 'adset')
+        ads_df = self._load_edge_cases(ads_df, 'ad')
+
+        # IMPORTANTE: NÃO filtrar campanhas e adsets por período (manter todas as linhas)!
+        # Motivo: Conversões podem ter sido atribuídas a campanhas/adsets que foram pausados/deletados
+        # antes do período atual. Precisamos manter todos históricos para:
+        # 1. Construir comparison_group_map completo (usado em fair_campaign_comparison.py)
+        # 2. Fazer matching de conversões com adsets históricos
+        logger.info(f"   ℹ️  Campanhas e Adsets: mantendo histórico completo para matching")
+
+        # CRÍTICO: Filtrar APENAS o spend por período (zerando spend fora do período)
+        # Isso garante que conversões históricas sejam atribuídas, mas gasto seja apenas do período
+        campaigns_df = self._filter_spend_by_period(campaigns_df, start_date, end_date, 'Campanhas')
+        adsets_df = self._filter_spend_by_period(adsets_df, start_date, end_date, 'Adsets')
+
+        # NOTA: Deduplicação de adsets é feita em compare_all_adsets_performance() e compare_adset_performance()
+        # para evitar duplicação de conversões no matching (linhas 402-409 e 641-648 em fair_campaign_comparison.py)
+
+        ads_df = self._filter_by_period(ads_df, start_date, end_date, 'Ads')
 
         return {
             'campaigns': campaigns_df,
@@ -220,6 +263,12 @@ class MetaReportsLoader:
 
         df = df.rename(columns=column_mapping)
 
+        # CRÍTICO: Normalizar whitespace em nomes (adset_name, ad_name, campaign_name)
+        # Isso garante matching consistente mesmo com variações de espaçamento
+        for name_col in ['campaign_name', 'adset_name', 'ad_name']:
+            if name_col in df.columns:
+                df[name_col] = df[name_col].apply(normalize_whitespace)
+
         # Converter spend para numérico
         if 'spend' in df.columns:
             df['spend'] = pd.to_numeric(df['spend'].astype(str).str.replace(',', ''), errors='coerce')
@@ -236,6 +285,12 @@ class MetaReportsLoader:
         for id_col in ['campaign_id', 'adset_id', 'ad_id']:
             if id_col in df.columns:
                 df[id_col] = df[id_col].astype(str).str.replace('.0', '', regex=False)
+
+                # CRÍTICO: Normalizar IDs para os primeiros 15 dígitos
+                # Isso resolve o problema de edge_cases terem sufixo "390" enquanto relatórios normais têm "000"
+                # Exemplo: 120234898385570390 → 120234898385570
+                # Isso garante que a mesma campanha não seja duplicada
+                df[id_col] = df[id_col].apply(lambda x: str(x)[:15] if pd.notna(x) and str(x) != 'nan' else x)
 
         # Converter colunas de eventos para numérico
         for event_col in ['leads_standard', 'lead_qualified', 'lead_qualified_hq', 'faixa_a']:
@@ -271,6 +326,230 @@ class MetaReportsLoader:
 
         return df
 
+    def _filter_by_period(
+        self,
+        df: pd.DataFrame,
+        start_date: str,
+        end_date: str,
+        report_type: str
+    ) -> pd.DataFrame:
+        """
+        Filtra DataFrame por período usando as colunas de data do relatório.
+
+        Args:
+            df: DataFrame a filtrar
+            start_date: Data início (YYYY-MM-DD)
+            end_date: Data fim (YYYY-MM-DD)
+            report_type: Nome do tipo de relatório (para log)
+
+        Returns:
+            DataFrame filtrado
+        """
+        if df.empty:
+            return df
+
+        # Verificar se as colunas de período existem
+        if 'Início dos relatórios' not in df.columns or 'Término dos relatórios' not in df.columns:
+            logger.warning(f"   ⚠️  Colunas de período não encontradas em {report_type}, não foi possível filtrar")
+            return df
+
+        before_count = len(df)
+
+        # Filtrar: manter apenas registros onde o período do relatório SE SOBREPÕE ao período solicitado
+        # Sobreposição ocorre quando:
+        # - Início do relatório <= end_date (relatório começa antes ou durante o período)
+        # - Término do relatório >= start_date (relatório termina depois ou durante o período)
+        df_filtered = df[
+            (df['Início dos relatórios'] <= end_date) &
+            (df['Término dos relatórios'] >= start_date)
+        ].copy()
+
+        after_count = len(df_filtered)
+
+        if before_count != after_count:
+            logger.info(f"   🗓️  {report_type} filtrados por período: {after_count}/{before_count} ({after_count/before_count*100:.1f}%)")
+            logger.info(f"      Período solicitado: {start_date} a {end_date}")
+        else:
+            logger.info(f"   ✅ {report_type}: {after_count} registros (100% no período)")
+
+        return df_filtered
+
+    def _filter_spend_by_period(
+        self,
+        df: pd.DataFrame,
+        start_date: str,
+        end_date: str,
+        report_type: str
+    ) -> pd.DataFrame:
+        """
+        Zera o spend de registros FORA do período, mas mantém todas as linhas.
+
+        Isso permite que conversões históricas sejam atribuídas a campanhas/adsets antigos,
+        mas garante que o gasto considerado seja apenas do período de análise.
+
+        Args:
+            df: DataFrame a processar
+            start_date: Data início (YYYY-MM-DD)
+            end_date: Data fim (YYYY-MM-DD)
+            report_type: Nome do tipo de relatório (para log)
+
+        Returns:
+            DataFrame com spend zerado fora do período
+        """
+        if df.empty or 'spend' not in df.columns:
+            return df
+
+        # Verificar se as colunas de período existem
+        if 'Início dos relatórios' not in df.columns or 'Término dos relatórios' not in df.columns:
+            logger.warning(f"   ⚠️  Colunas de período não encontradas em {report_type}, não foi possível filtrar spend")
+            return df
+
+        # Criar cópia para não modificar original
+        df = df.copy()
+
+        # Identificar linhas FORA do período
+        # Linha está fora se NÃO há sobreposição:
+        # - Término do relatório < start_date (relatório terminou antes do período)
+        # - Início do relatório > end_date (relatório começou depois do período)
+        outside_period = (
+            (df['Término dos relatórios'] < start_date) |
+            (df['Início dos relatórios'] > end_date)
+        )
+
+        # Contar spend que será zerado
+        spend_outside = df.loc[outside_period, 'spend'].sum() if outside_period.any() else 0
+        spend_total = df['spend'].sum()
+
+        # Zerar spend fora do período
+        df.loc[outside_period, 'spend'] = 0
+
+        if spend_outside > 0:
+            logger.info(f"   💰 {report_type}: Spend filtrado por período")
+            logger.info(f"      Total: R$ {spend_total:,.2f}")
+            logger.info(f"      Fora do período (zerado): R$ {spend_outside:,.2f}")
+            logger.info(f"      No período: R$ {spend_total - spend_outside:,.2f}")
+
+        return df
+
+    def _load_edge_cases(
+        self,
+        df: pd.DataFrame,
+        report_type: str
+    ) -> pd.DataFrame:
+        """
+        Carrega edge cases (adsets/ads) que não aparecem nos relatórios normais devido a bugs da Meta.
+
+        Edge cases são registros que:
+        - Aparecem na interface da Meta com gasto e métricas
+        - MAS não são incluídos nas exportações de relatórios
+        - Precisam ser exportados individualmente e colocados na pasta edge_cases/
+
+        Args:
+            df: DataFrame já carregado (adsets ou ads)
+            report_type: 'adset' ou 'ad'
+
+        Returns:
+            DataFrame com edge cases adicionados
+        """
+        edge_case_dir = self.reports_dir / 'edge_cases'
+
+        if not edge_case_dir.exists():
+            # Pasta edge_cases não existe, retornar dados normais
+            return df
+
+        # IMPORTANTE: Usar apenas arquivos CSV (mais confiáveis e rápidos)
+        all_edge_files = list(edge_case_dir.glob('*.csv'))
+
+        # Filtrar arquivos baseado no tipo
+        if report_type == 'adset':
+            # Arquivos de Conjuntos de anúncios
+            edge_case_files = [f for f in all_edge_files
+                              if 'Conjuntos' in f.name or 'conjunto' in f.name.lower()]
+        elif report_type == 'ad':
+            # Arquivos de Anúncios (mas NÃO Conjuntos)
+            edge_case_files = [f for f in all_edge_files
+                              if ('Anúncios' in f.name or 'anuncio' in f.name.lower())
+                              and 'Conjuntos' not in f.name]
+        else:
+            edge_case_files = []
+
+        if not edge_case_files:
+            # Nenhum edge case encontrado para este tipo
+            return df
+
+        logger.info(f"   🔧 Carregando {report_type} edge cases de {edge_case_dir.name}/...")
+
+        edge_case_dfs = []
+
+        for file_path in edge_case_files:
+            try:
+                # Ler arquivo CSV
+                df_edge = pd.read_csv(file_path)
+
+                # Verificar colunas esperadas baseado no tipo
+                if report_type == 'adset':
+                    expected_col = 'Nome do conjunto de anúncios'
+                else:  # ad
+                    expected_col = 'Nome do anúncio'
+
+                # Pular se estiver vazio ou sem colunas esperadas
+                if df_edge.empty or expected_col not in df_edge.columns:
+                    continue
+
+                # Adicionar metadados
+                df_edge['_source_file'] = file_path.name
+                df_edge['_account_name'] = self._extract_account_name(file_path.name)
+                df_edge['_is_edge_case'] = True  # Marcar como edge case
+
+                # Normalizar nomes de colunas usando o mesmo processo
+                df_edge = self._normalize_column_names(df_edge, report_type)
+
+                edge_case_dfs.append(df_edge)
+
+                logger.info(f"      ✅ Edge case: {file_path.name} ({len(df_edge)} {report_type}(s))")
+
+                # Log dos registros carregados
+                for idx, row in df_edge.iterrows():
+                    if report_type == 'adset':
+                        name = row.get('adset_name', 'Unknown')
+                        id_val = row.get('adset_id', 'Unknown')
+                    else:  # ad
+                        name = row.get('ad_name', 'Unknown')
+                        id_val = row.get('ad_id', 'Unknown')
+
+                    campaign_id = row.get('campaign_id', 'Unknown')
+                    spend = row.get('spend', 0)
+                    logger.info(f"         • {name} (ID: {str(id_val)[:15]}..., Campaign: {str(campaign_id)[:15]}..., R$ {spend:.2f})")
+
+            except Exception as e:
+                logger.warning(f"      ⚠️ Erro ao ler {file_path.name}: {e}")
+
+        if not edge_case_dfs:
+            # Nenhum edge case válido carregado
+            return df
+
+        # Consolidar edge cases
+        edge_cases_consolidated = pd.concat(edge_case_dfs, ignore_index=True)
+
+        # Combinar com dados normais
+        # IMPORTANTE: Edge cases têm prioridade (adicionar no final para sobrescrever duplicatas)
+        if df.empty:
+            combined_df = edge_cases_consolidated
+        else:
+            # Remover duplicatas baseado no ID (edge case tem prioridade)
+            id_col = 'adset_id' if report_type == 'adset' else 'ad_id'
+
+            if id_col in edge_cases_consolidated.columns:
+                edge_case_ids = edge_cases_consolidated[id_col].astype(str).unique()
+                df_filtered = df[~df[id_col].astype(str).isin(edge_case_ids)]
+                combined_df = pd.concat([df_filtered, edge_cases_consolidated], ignore_index=True)
+            else:
+                combined_df = pd.concat([df, edge_cases_consolidated], ignore_index=True)
+
+        logger.info(f"   ✅ Total {report_type}s com edge cases: {len(combined_df)} (+{len(edge_cases_consolidated)} edge case(s))")
+
+        return combined_df
+
     def build_costs_hierarchy(
         self,
         start_date: str,
@@ -298,10 +577,14 @@ class MetaReportsLoader:
                 }
             }
         """
+        # Carregar relatórios já filtrados por período
         reports = self.load_all_reports(start_date, end_date)
         campaigns_df = reports['campaigns']
         adsets_df = reports['adsets']
         ads_df = reports['ads']
+
+        # NOTA: O filtro por período já foi aplicado em load_all_reports()
+        # Não é necessário filtrar novamente aqui
 
         costs_hierarchy = {'campaigns': {}}
 

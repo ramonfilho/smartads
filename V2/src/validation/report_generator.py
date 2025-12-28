@@ -110,20 +110,28 @@ class ValidationReportGenerator:
             # ADSETS - formato similar à aba Campanhas
             if adset_level_comparisons is not None:
                 logger.info("   Gerando aba: Comparação por Adsets")
+                logger.info(f"   🔍 DEBUG - adset_level_comparisons keys: {list(adset_level_comparisons.keys())}")
                 excel_dfs_adsets = prepare_adset_comparison_for_excel(adset_level_comparisons)
+
+                logger.info(f"   🔍 DEBUG - excel_dfs_adsets keys: {list(excel_dfs_adsets.keys())}")
+                if 'comparacao_adsets' in excel_dfs_adsets:
+                    logger.info(f"   🔍 DEBUG - comparacao_adsets shape: {excel_dfs_adsets['comparacao_adsets'].shape}")
 
                 if 'comparacao_adsets' in excel_dfs_adsets and not excel_dfs_adsets['comparacao_adsets'].empty:
                     adsets_df = excel_dfs_adsets['comparacao_adsets']
                     self._write_adsets_comparison(writer, adsets_df, formats)
+            else:
+                logger.warning("   ⚠️ adset_level_comparisons is None, pulando aba Comparação por Adsets")
 
-            # ADS - formato similar à aba Campanhas e Adsets
-            if ad_level_comparisons is not None:
-                logger.info("   Gerando aba: Comparação por Ads")
-                excel_dfs_ads = prepare_ad_comparison_for_excel(ad_level_comparisons)
-
-                if 'comparacao_ads' in excel_dfs_ads and not excel_dfs_ads['comparacao_ads'].empty:
-                    ads_df = excel_dfs_ads['comparacao_ads']
-                    self._write_ads_comparison(writer, ads_df, formats)
+            # COMENTADO: Aba de comparação por ads desabilitada temporariamente
+            # # ADS - formato similar à aba Campanhas e Adsets
+            # if ad_level_comparisons is not None:
+            #     logger.info("   Gerando aba: Comparação por Ads")
+            #     excel_dfs_ads = prepare_ad_comparison_for_excel(ad_level_comparisons)
+            #
+            #     if 'comparacao_ads' in excel_dfs_ads and not excel_dfs_ads['comparacao_ads'].empty:
+            #         ads_df = excel_dfs_ads['comparacao_ads']
+            #         self._write_ads_comparison(writer, ads_df, formats)
 
             # ADS EM ADSETS MATCHED - nova comparação
             ads_in_adsets_df = None
@@ -150,6 +158,13 @@ class ValidationReportGenerator:
 
         # Aba 4: Comparação ML (resumo da comparação com 4 tabelas consolidadas)
         logger.info("   Gerando aba: Comparação ML")
+        logger.info(f"   🔍 DEBUG - DataFrames status:")
+        logger.info(f"      campanhas_df: {'OK' if campanhas_df is not None else 'None'}")
+        logger.info(f"      all_adsets_comparison: {'OK' if all_adsets_comparison is not None else 'None'} {f'({len(all_adsets_comparison)} rows)' if all_adsets_comparison is not None else ''}")
+        logger.info(f"      adsets_df (matched): {'OK' if adsets_df is not None else 'None'} {f'({len(adsets_df)} rows)' if adsets_df is not None else ''}")
+        logger.info(f"      ads_df: {'OK' if ads_df is not None else 'None'}")
+        logger.info(f"      ads_in_adsets_df: {'OK' if ads_in_adsets_df is not None else 'None'}")
+        logger.info(f"      matched_ads_in_adsets_df: {'OK' if matched_ads_in_adsets_df is not None else 'None'}")
         self._write_comparacao_ml(writer, ml_comparison, campanhas_df, all_adsets_comparison, adsets_df, ads_df, ads_in_adsets_df, matched_ads_in_adsets_df, formats)
 
         # Aba 5: Comparação Faixa A (Eventos ML vs Faixa A - sistema legado)
@@ -585,6 +600,15 @@ class ValidationReportGenerator:
         # Converter para DataFrame
         all_sales_df = pd.DataFrame(all_sales)
 
+        # CRÍTICO: Remover duplicatas por email (manter apenas primeira ocorrência)
+        # Isso garante consistência com as outras abas que usam deduplicação
+        all_sales_df_original_count = len(all_sales_df)
+        all_sales_df = all_sales_df.drop_duplicates(subset=['email'], keep='first')
+        duplicates_removed = all_sales_df_original_count - len(all_sales_df)
+
+        if duplicates_removed > 0:
+            logger.info(f"   🧹 Duplicatas removidas na aba Detalhes das Conversões: {duplicates_removed}")
+
         # Ordenar: Trackeados primeiro (Sim antes de Não), depois por data de venda
         all_sales_df['sort_key'] = all_sales_df['trackeado'].map({'Sim': 0, 'Não': 1})
         all_sales_df = all_sales_df.sort_values(['sort_key', 'sale_date']).drop('sort_key', axis=1)
@@ -732,20 +756,21 @@ class ValidationReportGenerator:
 
         current_row += 2  # Espaçamento
 
-        # TABELA 4: Comparação por Ads MATCHED EM Adsets Matched
-        worksheet.write(current_row, 0, '📊 COMPARAÇÃO POR ADS MATCHED EM ADSETS MATCHED', formats['title'])
-        current_row += 1
-        worksheet.write(current_row, 0, 'Apenas ads matched (mesmo ad_code) que pertencem aos adsets matched (R$ 200+ gasto)', formats['subtitle'])
-        current_row += 2
-
-        if matched_ads_in_adsets_df is not None and not matched_ads_in_adsets_df.empty:
-            current_row = self._write_consolidated_table(
-                worksheet, matched_ads_in_adsets_df, formats, current_row,
-                label='Ads Matched em Adsets Matched'
-            )
-        else:
-            worksheet.write(current_row, 0, 'Dados indisponíveis', formats['text'])
-            current_row += 1
+        # COMENTADO: Tabela de ads matched desabilitada temporariamente
+        # # TABELA 4: Comparação por Ads MATCHED EM Adsets Matched
+        # worksheet.write(current_row, 0, '📊 COMPARAÇÃO POR ADS MATCHED EM ADSETS MATCHED', formats['title'])
+        # current_row += 1
+        # worksheet.write(current_row, 0, 'Apenas ads matched (mesmo ad_code) que pertencem aos adsets matched (R$ 200+ gasto)', formats['subtitle'])
+        # current_row += 2
+        #
+        # if matched_ads_in_adsets_df is not None and not matched_ads_in_adsets_df.empty:
+        #     current_row = self._write_consolidated_table(
+        #         worksheet, matched_ads_in_adsets_df, formats, current_row,
+        #         label='Ads Matched em Adsets Matched'
+        #     )
+        # else:
+        #     worksheet.write(current_row, 0, 'Dados indisponíveis', formats['text'])
+        #     current_row += 1
 
         # Ajustar larguras
         worksheet.set_column(0, 0, 25)
@@ -1383,9 +1408,9 @@ class ValidationReportGenerator:
             'act_786790755803474': 'Gestor de IA'
         }
 
-        # Cabeçalhos (Conta como primeira coluna, removida "Evento de conversão")
+        # Cabeçalhos (Conta como primeira coluna, adicionar Campaign ID)
         headers = [
-            'Conta', 'Campanha', 'Grupo',
+            'Conta', 'Campanha', 'Campaign ID', 'Grupo',
             'Leads', 'LeadQualified', 'LeadQualifiedHighQuality', 'Faixa A',
             'Vendas', 'Taxa de conversão',
             'Orçamento', 'Valor gasto', 'CPL', 'ROAS', 'Receita Total', 'Margem de contribuição'
@@ -1410,6 +1435,18 @@ class ValidationReportGenerator:
             col_idx += 1
             # Campanha
             worksheet.write(row, col_idx, campaign_row['campaign'], formats['text'])
+            col_idx += 1
+            # Campaign ID (extrair do nome da campanha que tem formato "NOME|ID")
+            campaign_name = campaign_row['campaign']
+            campaign_id = 'N/A'
+            if '|' in campaign_name:
+                parts = campaign_name.split('|')
+                # O ID está na última parte (após o último |)
+                potential_id = parts[-1].strip()
+                # Verificar se é um número de 18 dígitos
+                if potential_id.isdigit() and len(potential_id) == 18:
+                    campaign_id = potential_id
+            worksheet.write(row, col_idx, campaign_id, formats['text'])
             col_idx += 1
             # Grupo
             worksheet.write(row, col_idx, campaign_row['comparison_group'], formats['text'])
@@ -1449,8 +1486,9 @@ class ValidationReportGenerator:
         # Ajustar larguras (ajustado para nova estrutura de colunas)
         worksheet.set_column(0, 0, 18)  # Conta
         worksheet.set_column(1, 1, 60)  # Campanha
-        worksheet.set_column(2, 2, 18)  # Grupo
-        worksheet.set_column(3, 16, 15)  # Outras métricas (Leads, LeadQualified, etc.)
+        worksheet.set_column(2, 2, 20)  # Campaign ID
+        worksheet.set_column(3, 3, 18)  # Grupo
+        worksheet.set_column(4, 17, 15)  # Outras métricas (Leads, LeadQualified, etc.)
 
     def _write_adsets_comparison(
         self,
@@ -1471,7 +1509,7 @@ class ValidationReportGenerator:
 
         # Cabeçalhos
         headers = [
-            'Conta', 'Campanha', 'Adset', 'Adset ID', 'Grupo',
+            'Conta', 'Campanha', 'Campaign ID', 'Adset', 'Adset ID', 'Grupo',
             'Leads', 'Vendas', 'Taxa de conversão',
             'Valor gasto', 'CPL', 'ROAS',
             'Receita Total', 'Margem de contribuição'
@@ -1490,6 +1528,10 @@ class ValidationReportGenerator:
 
             # Campanha
             worksheet.write(row, col_idx, adset_row.get('Campanha', ''), formats['text'])
+            col_idx += 1
+
+            # Campaign ID
+            worksheet.write(row, col_idx, str(adset_row.get('Campaign ID', '')), formats['text'])
             col_idx += 1
 
             # Adset
@@ -1542,10 +1584,11 @@ class ValidationReportGenerator:
         # Ajustar larguras
         worksheet.set_column(0, 0, 18)  # Conta
         worksheet.set_column(1, 1, 50)  # Campanha
-        worksheet.set_column(2, 2, 40)  # Adset
-        worksheet.set_column(3, 3, 20)  # Adset ID
-        worksheet.set_column(4, 4, 18)  # Grupo
-        worksheet.set_column(5, 12, 15)  # Outras métricas
+        worksheet.set_column(2, 2, 20)  # Campaign ID
+        worksheet.set_column(3, 3, 40)  # Adset
+        worksheet.set_column(4, 4, 20)  # Adset ID
+        worksheet.set_column(5, 5, 18)  # Grupo
+        worksheet.set_column(6, 13, 15)  # Outras métricas
 
     def _write_ads_comparison(
         self,
@@ -1564,9 +1607,9 @@ class ValidationReportGenerator:
 
         row = 3
 
-        # Cabeçalhos (removidas: Conta, Campanha, Adset)
+        # Cabeçalhos (adicionar Campaign ID e Adset ID)
         headers = [
-            'Ad Code', 'Nome do Anúncio', 'Grupo',
+            'Campaign ID', 'Adset ID', 'Ad Code', 'Nome do Anúncio', 'Grupo',
             'Leads', 'Vendas', 'Taxa de conversão',
             'Valor gasto', 'CPL', 'ROAS',
             'Receita Total', 'Margem de contribuição'
@@ -1581,6 +1624,14 @@ class ValidationReportGenerator:
             ad_row = ad_row_series.to_dict()
 
             col_idx = 0
+
+            # Campaign ID
+            worksheet.write(row, col_idx, str(ad_row.get('Campaign ID', '')), formats['text'])
+            col_idx += 1
+
+            # Adset ID
+            worksheet.write(row, col_idx, str(ad_row.get('Adset ID', '')), formats['text'])
+            col_idx += 1
 
             # Ad Code
             worksheet.write(row, col_idx, ad_row.get('Ad Code', ''), formats['text'])
@@ -1627,11 +1678,13 @@ class ValidationReportGenerator:
             worksheet.write(row, col_idx, ad_row.get('Margem de contribuição', 0), formats['currency'])
             row += 1
 
-        # Ajustar larguras (Conta, Campanha, Adset removidas)
-        worksheet.set_column(0, 0, 12)  # Ad Code
-        worksheet.set_column(1, 1, 40)  # Nome do Anúncio
-        worksheet.set_column(2, 2, 18)  # Grupo
-        worksheet.set_column(3, 10, 15)  # Outras métricas
+        # Ajustar larguras (adicionar Campaign ID e Adset ID)
+        worksheet.set_column(0, 0, 20)  # Campaign ID
+        worksheet.set_column(1, 1, 20)  # Adset ID
+        worksheet.set_column(2, 2, 12)  # Ad Code
+        worksheet.set_column(3, 3, 40)  # Nome do Anúncio
+        worksheet.set_column(4, 4, 18)  # Grupo
+        worksheet.set_column(5, 12, 15)  # Outras métricas
 
     def _write_adset_aggregated(
         self,
