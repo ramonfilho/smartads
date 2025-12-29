@@ -410,13 +410,19 @@ class MetaReportsLoader:
         # NOVO: Preservar spend total ANTES de zerar (para matched pairs)
         df['total_spend'] = df['spend']
 
+        # CRÍTICO: Converter datas para datetime para comparação correta
+        df['Início dos relatórios'] = pd.to_datetime(df['Início dos relatórios'])
+        df['Término dos relatórios'] = pd.to_datetime(df['Término dos relatórios'])
+        start_date_dt = pd.to_datetime(start_date)
+        end_date_dt = pd.to_datetime(end_date)
+
         # Identificar linhas FORA do período
         # Linha está fora se NÃO há sobreposição:
         # - Término do relatório < start_date (relatório terminou antes do período)
         # - Início do relatório > end_date (relatório começou depois do período)
         outside_period = (
-            (df['Término dos relatórios'] < start_date) |
-            (df['Início dos relatórios'] > end_date)
+            (df['Término dos relatórios'] < start_date_dt) |
+            (df['Início dos relatórios'] > end_date_dt)
         )
 
         # Contar spend que será zerado
@@ -426,11 +432,12 @@ class MetaReportsLoader:
         # Zerar spend fora do período (mas manter total_spend intacto)
         df.loc[outside_period, 'spend'] = 0
 
-        if spend_outside > 0:
+        if spend_outside > 0 or spend_total > 0:
             logger.info(f"   💰 {report_type}: Spend filtrado por período")
             logger.info(f"      Total: R$ {spend_total:,.2f}")
             logger.info(f"      Fora do período (zerado): R$ {spend_outside:,.2f}")
             logger.info(f"      No período: R$ {spend_total - spend_outside:,.2f}")
+            logger.info(f"      Linhas outside: {outside_period.sum()} de {len(df)}")
 
         return df
 
@@ -689,6 +696,12 @@ class MetaReportsLoader:
             # Total de leads = apenas leads padrão (não somar eventos customizados, pois são subsets)
             # Eventos customizados (LQ, LQHQ, Faixa A) são subconjuntos dos leads, não leads adicionais
             total_leads = total_leads_standard
+
+            # EDGE CASE: Campanha 120234062599950 usa LeadQualified como leads
+            # Esta campanha não reporta "Leads" padrão, apenas eventos customizados
+            if campaign_id == '120234062599950' and (total_leads_standard == 0 or pd.isna(total_leads_standard)):
+                total_leads = lead_qualified
+                logger.info(f"   ⚙️  Edge case: Campanha {campaign_id} usando LeadQualified como leads ({int(lead_qualified)})")
 
             # Coletar optimization_goals únicos dos adsets desta campanha
             # Agora usa a coluna "Indicador de resultados" (já simplificada para "optimization_goal")

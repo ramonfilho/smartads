@@ -290,9 +290,28 @@ def identify_matched_adset_pairs(
     # Criar DataFrame com métricas por adset
     adsets_metrics = adsets_df[adsets_df['adset_name'].isin(matched_final)].copy()
 
-    # Renomear 'leads_standard' para 'leads' (vem do MetaReportsLoader)
+    # DEBUG: Verificar quais colunas existem
+    logger.info(f"   🔍 DEBUG - Colunas disponíveis em adsets_df: {list(adsets_df.columns)[:20]}")
+    logger.info(f"   🔍 DEBUG - Tem 'leads_standard'? {'leads_standard' in adsets_df.columns}")
+    logger.info(f"   🔍 DEBUG - Tem 'leads'? {'leads' in adsets_df.columns}")
+
+    # Criar coluna 'leads' a partir dos relatórios Meta
     if 'leads_standard' in adsets_metrics.columns:
         adsets_metrics['leads'] = adsets_metrics['leads_standard']
+        logger.info(f"   ✅ Criado coluna 'leads' a partir de 'leads_standard' ({adsets_metrics['leads'].sum():.0f} leads)")
+
+        # EDGE CASE: Campanha 120234062599950 usa LeadQualified como leads
+        if 'lead_qualified' in adsets_metrics.columns and 'campaign_id' in adsets_metrics.columns:
+            edge_case_mask = (
+                (adsets_metrics['campaign_id'].str.startswith('120234062599950')) &
+                ((adsets_metrics['leads_standard'] == 0) | (adsets_metrics['leads_standard'].isna()))
+            )
+            if edge_case_mask.any():
+                adsets_metrics.loc[edge_case_mask, 'leads'] = adsets_metrics.loc[edge_case_mask, 'lead_qualified']
+                logger.info(f"   ⚙️  Edge case: Aplicado LeadQualified para campanha 120234062599950")
+    elif 'leads' not in adsets_metrics.columns:
+        logger.warning(f"   ⚠️ 'leads_standard' não encontrado em adsets_df, criando coluna 'leads' com 0")
+        adsets_metrics['leads'] = 0
 
     return matched_final, adsets_metrics
 
@@ -562,6 +581,9 @@ def compare_all_adsets_performance(
     # Adicionar colunas opcionais se existirem
     if 'campaign_name' in adsets_full.columns:
         agg_dict['campaign_name'] = 'first'
+    # IMPORTANTE: Incluir leads_standard dos relatórios Meta
+    if 'leads_standard' in adsets_full.columns:
+        agg_dict['leads_standard'] = 'sum'  # Somar leads de diferentes períodos
     if 'lead_qualified' in adsets_full.columns:
         agg_dict['lead_qualified'] = 'sum'
     if 'lead_qualified_hq' in adsets_full.columns:
@@ -606,11 +628,25 @@ def compare_all_adsets_performance(
         if convs_before_dedup != convs_after_dedup:
             logger.warning(f"      ⚠️ Conversões afetadas: {convs_before_dedup:.0f} → {convs_after_dedup:.0f} (-{convs_before_dedup - convs_after_dedup:.0f})")
 
-    # Renomear 'leads_count' para 'leads' (vem do matched_df)
-    if 'leads_count' in adsets_full.columns:
-        adsets_full['leads'] = adsets_full['leads_count']
+    # Criar coluna 'leads' a partir dos relatórios Meta
+    # Usar 'leads_standard' como fonte oficial de leads
+    if 'leads_standard' in adsets_full.columns:
+        adsets_full['leads'] = adsets_full['leads_standard']
+
+        # EDGE CASE: Campanha 120234062599950 usa LeadQualified como leads
+        # quando leads_standard está vazio ou zero
+        if 'lead_qualified' in adsets_full.columns and 'campaign_id' in adsets_full.columns:
+            edge_case_mask = (
+                (adsets_full['campaign_id'].str.startswith('120234062599950')) &
+                ((adsets_full['leads_standard'] == 0) | (adsets_full['leads_standard'].isna()))
+            )
+            if edge_case_mask.any():
+                adsets_full.loc[edge_case_mask, 'leads'] = adsets_full.loc[edge_case_mask, 'lead_qualified']
+                edge_count = edge_case_mask.sum()
+                edge_leads = adsets_full.loc[edge_case_mask, 'leads'].sum()
+                logger.info(f"   ⚙️  Edge case: {edge_count} adsets da campanha 120234062599950 usando LeadQualified como leads ({int(edge_leads)} leads)")
     elif 'leads' not in adsets_full.columns:
-        logger.warning("   ⚠️ Coluna 'leads' não encontrada, usando 0")
+        logger.warning("   ⚠️ Coluna 'leads' e 'leads_standard' não encontradas, usando 0")
         adsets_full['leads'] = 0
 
     # CRÍTICO: Remover adsets "fantasma" (0 leads E 0 gasto) DEPOIS do merge e renomeação
@@ -1010,6 +1046,13 @@ def compare_adset_performance(
     # 1. Tentar merge exato primeiro
     # NOVO: Usar ID completo ou truncado baseado em detecção de colisões (definido acima)
 
+    # DEBUG: Verificar spend ANTES do merge
+    if 'spend' in adsets_metrics_df.columns:
+        logger.info(f"   🔍 DEBUG - ANTES do merge:")
+        logger.info(f"      adsets_metrics_df spend sum: R$ {adsets_metrics_df['spend'].sum():,.2f}")
+        if 'total_spend' in adsets_metrics_df.columns:
+            logger.info(f"      adsets_metrics_df total_spend sum: R$ {adsets_metrics_df['total_spend'].sum():,.2f}")
+
     adsets_full = adsets_metrics_df.merge(
         conversions_by_campaign_adset,
         on=[merge_id_col, 'adset_name'],
@@ -1017,36 +1060,76 @@ def compare_adset_performance(
         suffixes=('', '_conv')
     )
 
-    # CRÍTICO: Remover duplicatas por (campaign_id, adset_id)
+
+    # CRÍTICO: Agregar duplicatas por (campaign_id, adset_id)
     # Pode haver duplicatas no adsets_metrics_df devido a múltiplos relatórios ou períodos
+    # IMPORTANTE: SOMAR spend de linhas duplicadas, não descartar!
     before_dedup = len(adsets_full)
-    adsets_full = adsets_full.drop_duplicates(subset=['campaign_id', 'adset_id'], keep='first')
+
+    # DEBUG: Verificar se 'leads' existe ANTES da agregação
+    logger.info(f"   🔍 DEBUG - ANTES da agregação:")
+    logger.info(f"      'leads' in columns? {'leads' in adsets_full.columns}")
+    if 'leads' in adsets_full.columns:
+        logger.info(f"      'leads' sum: {adsets_full['leads'].sum():.0f}")
+
+    # CRÍTICO: Definir como agregar cada tipo de coluna
+    # - spend/total_spend/leads_standard: SOMAR (representa diferentes períodos ou adsets)
+    # - conversions/revenue: MAX ou FIRST (vêm do matched_df, já contabilizados)
+    #   Se há duplicatas do mesmo adset, esses valores são REPLICADOS pelo merge, não somados
+    numeric_cols_to_sum = ['spend']
+    if 'total_spend' in adsets_full.columns:
+        numeric_cols_to_sum.append('total_spend')
+
+    # IMPORTANTE: 'leads' vem dos relatórios Meta (leads_standard), deve ser SOMADO
+    # Apenas conversions/revenue vêm do matched_df e devem usar MAX
+    if 'leads_standard' in adsets_full.columns:
+        numeric_cols_to_sum.append('leads_standard')
+    if 'leads' in adsets_full.columns:
+        numeric_cols_to_sum.append('leads')
+    if 'lead_qualified' in adsets_full.columns:
+        numeric_cols_to_sum.append('lead_qualified')
+    if 'lead_qualified_hq' in adsets_full.columns:
+        numeric_cols_to_sum.append('lead_qualified_hq')
+
+    # Colunas que vêm do matched_df - NÃO somar (usar max para pegar maior valor)
+    numeric_cols_to_max = ['conversions', 'revenue', 'leads_matched_df']
+
+    # Colunas de identificação para agrupar
+    group_cols = ['campaign_id', 'adset_id']
+
+    # Preparar dicionário de agregação
+    agg_dict = {}
+
+    # Para cada coluna, definir função de agregação apropriada
+    for col in adsets_full.columns:
+        if col in group_cols:
+            continue  # Estas são as chaves de agrupamento
+        elif col in numeric_cols_to_sum:
+            agg_dict[col] = 'sum'  # Somar spend (representa períodos diferentes)
+        elif col in numeric_cols_to_max:
+            agg_dict[col] = 'max'  # MAX para evitar somar valores replicados pelo merge
+        else:
+            agg_dict[col] = 'first'  # Manter primeiro valor para outras colunas
+
+    # Agregar linhas duplicadas
+    adsets_full = adsets_full.groupby(group_cols, as_index=False).agg(agg_dict)
     after_dedup = len(adsets_full)
 
     if before_dedup != after_dedup:
-        logger.info(f"   🔧 Removidas {before_dedup - after_dedup} linhas duplicadas (mesmo campaign_id + adset_id)")
+        logger.info(f"   🔧 Agregadas {before_dedup - after_dedup} linhas duplicadas (mesmo campaign_id + adset_id)")
+        logger.info(f"      Spend foi SOMADO para duplicatas (não descartado)")
 
-    # NOVO: Merge com leads do matched_df
-    # IMPORTANTE: Isso sobrescreve o 'leads' vindo do Excel com o contagem real do matched_df
-    adsets_full = adsets_full.merge(
-        leads_by_campaign_adset[[merge_id_col, 'adset_name', 'leads_matched_df']],
-        on=[merge_id_col, 'adset_name'],
-        how='left'
-    )
+    # REMOVIDO: Não substituir leads do Meta com matched_df
+    # Os relatórios Meta são a fonte oficial de leads
+    # matched_df é usado apenas para identificar conversões (vendas)
+    #
+    # NOTA: Para campanha edge case 120234062599950, os leads são calculados
+    # separadamente e já estão presentes nos relatórios Meta
 
-    # Substituir 'leads' do Excel por 'leads_matched_df' onde disponível
-    if 'leads_matched_df' in adsets_full.columns and 'leads' in adsets_full.columns:
-        leads_before = adsets_full['leads'].sum()
-        # Manter leads do Excel se leads_matched_df estiver vazio
-        adsets_full['leads'] = adsets_full['leads_matched_df'].fillna(adsets_full['leads'])
-        leads_after = adsets_full['leads'].sum()
-        logger.info(f"   ✅ Leads atualizados com contagem do matched_df")
-        logger.info(f"      Leads (Excel): {leads_before:.0f} → Leads (matched_df): {leads_after:.0f}")
-    elif 'leads_matched_df' in adsets_full.columns and 'leads' not in adsets_full.columns:
-        # Se não temos 'leads' do Excel, criar a partir do matched_df
-        adsets_full['leads'] = adsets_full['leads_matched_df']
-        logger.info(f"   ✅ Leads criados a partir do matched_df (Excel não tinha 'leads')")
-        logger.info(f"      Total de leads: {adsets_full['leads'].sum():.0f}")
+    # Manter leads do Meta como estão (não fazer merge com leads_matched_df)
+    logger.info(f"   ℹ️  Mantendo leads dos relatórios Meta (não substituído por matched_df)")
+    if 'leads' in adsets_full.columns:
+        logger.info(f"      Total de leads (Meta): {adsets_full['leads'].sum():.0f}")
 
     # 2. Para conversões que não tiveram match exato, tentar matching flexível
     # (útil quando nomes no UTM são truncados)
@@ -1136,6 +1219,13 @@ def compare_adset_performance(
     # Calcular métricas de negócio
     # IMPORTANTE: NÃO sobrescrever 'leads' - o valor já vem correto do Excel!
     # Apenas garantir que leads esteja preenchido (fallback para casos sem dados)
+    logger.info(f"   🔍 DEBUG - Verificando coluna 'leads' após aggregation:")
+    logger.info(f"      'leads' in columns? {'leads' in adsets_full.columns}")
+    if 'leads' in adsets_full.columns:
+        logger.info(f"      'leads' sum: {adsets_full['leads'].sum():.0f}")
+        logger.info(f"      'leads' isna().all()? {adsets_full['leads'].isna().all()}")
+        logger.info(f"      'leads' count non-zero: {(adsets_full['leads'] > 0).sum()}")
+
     if 'leads' not in adsets_full.columns or adsets_full['leads'].isna().all():
         logger.warning("   ⚠️ Coluna 'leads' não encontrada ou vazia, usando count como fallback")
         adsets_full['leads'] = adsets_full.groupby(['campaign_id', 'adset_name'])['adset_id'].transform('count')
@@ -1192,7 +1282,7 @@ def compare_adset_performance(
                         logger.info(f"      LeadQualified: {lq:.0f} → Leads artificial: {leads_artificial} (proporção {avg_ratio:.2%})")
 
     # Filtrar adsets com gasto 0 E leads 0 (sem atividade)
-    # IMPORTANTE: Manter adsets com conversões mesmo se spend/leads = 0
+    # IMPORTANTE: Manter adsets com conversões mesmo if spend/leads = 0
     adsets_full = adsets_full[
         (adsets_full['spend'] > 0) |
         (adsets_full['leads'] > 0) |
@@ -1236,7 +1326,6 @@ def compare_adset_performance(
 
     if 'total_spend' in adsets_full.columns:
         detail_columns.append('total_spend')
-        logger.info(f"   📊 DEBUG: total_spend existe em adsets_full, incluindo em detailed")
 
     detailed = adsets_full[detail_columns].copy()
 
@@ -1411,9 +1500,9 @@ def compare_adset_performance(
         logger.info(f"\n   🔍 MATCHED PAIRS detectado ({unique_adset_names} adsets únicos, {len(detailed)} linhas)")
         logger.info(f"   🔧 Agregando por (campaign_id, adset_id, comparison_group) para preservar instâncias por campanha...")
 
-        # Decidir qual coluna de spend usar para agregação
-        # Para matched pairs, preferir total_spend (histórico) se disponível
-        spend_column = 'total_spend' if 'total_spend' in detailed.columns else 'spend'
+        # CRÍTICO: Para matched pairs, usar SEMPRE 'spend' (período filtrado)
+        # NÃO usar total_spend porque queremos apenas o gasto do período de análise
+        spend_column = 'spend'
 
         # Agregar métricas por (campaign_id, adset_id, comparison_group)
         # IMPORTANTE: Isso preserva cada combinação única de campanha+adset
@@ -1460,15 +1549,6 @@ def compare_adset_performance(
         logger.info(f"      Leads: {detailed['leads'].sum():.0f} → {detailed_aggregated['leads'].sum():.0f}")
         logger.info(f"      Conversões: {detailed['conversions'].sum():.0f} → {detailed_aggregated['conversions'].sum():.0f}")
         logger.info(f"      Spend: R$ {detailed['spend'].sum():.2f} → R$ {detailed_aggregated['spend'].sum():.2f}")
-
-        # DEBUG: Verificar se há spend por grupo
-        for group in ['Eventos ML', 'Controle']:
-            group_data = detailed_aggregated[detailed_aggregated['comparison_group'] == group]
-            if not group_data.empty:
-                total_spend = group_data['spend'].sum()
-                logger.info(f"      {group}: R$ {total_spend:.2f} spend total")
-                if total_spend == 0:
-                    logger.warning(f"         ⚠️ {group} tem spend = 0! Verificar filtro de período")
 
         detailed = detailed_aggregated
 

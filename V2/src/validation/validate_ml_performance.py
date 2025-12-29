@@ -602,7 +602,8 @@ def main():
     print(flush=True)
 
     # Carregar relatórios Meta locais
-    reports_dir = 'files/validation/meta_reports'
+    # IMPORTANTE: Usar pasta específica com relatórios oficiais do período (não adsets_analysis)
+    reports_dir = 'files/validation/meta_reports/02:12 - 08:12'
     loader = MetaReportsLoader(reports_dir)
     costs_hierarchy_temp = loader.build_costs_hierarchy(start_date, end_date)
 
@@ -919,46 +920,23 @@ def main():
                 if matched_adsets:
                     logger.info(f"   ✅ {len(matched_adsets)} adsets matched identificados (Eventos ML vs Controle)")
 
-                    # 3. Comparar APENAS matched adsets
-                    # PROBLEMA: Filtrar apenas por nome pega TODOS os adsets com esse nome,
-                    # incluindo de campanhas "Otimização ML" que NÃO deveriam estar aqui!
-                    # Solução: Filtrar também por campaign_id para pegar apenas Eventos ML + Controle
+                    # IMPORTANTE: Usar matched_adsets_df retornado por identify_matched_adset_pairs
+                    # Este DataFrame já tem a coluna 'leads' criada a partir de 'leads_standard'
+                    logger.info(f"\n   🔍 DEBUG - Usando matched_adsets_df com 'leads' column:")
+                    logger.info(f"      Total de adsets: {len(matched_adsets_df)}")
+                    logger.info(f"      Tem 'leads'? {'leads' in matched_adsets_df.columns}")
+                    if 'leads' in matched_adsets_df.columns:
+                        logger.info(f"      Total de leads: {matched_adsets_df['leads'].sum():.0f}")
 
-                    # Primeiro, identificar quais campaign_ids são Eventos ML e Controle
-                    eventos_controle_campaign_ids = eventos_ml_campaign_ids + control_campaign_ids
-
-                    logger.info(f"\n   🔍 DEBUG - Filtrando matched adsets:")
-                    logger.info(f"      Matched adset names: {len(matched_adsets)}")
-                    logger.info(f"      Eventos ML campaigns: {len(eventos_ml_campaign_ids)}")
-                    logger.info(f"      Controle campaigns: {len(control_campaign_ids)}")
-                    logger.info(f"      Total campanhas (Eventos + Controle): {len(eventos_controle_campaign_ids)}")
-
-                    # Filtrar por nome E por campaign_id
-                    adsets_df_matched = adsets_df[
-                        adsets_df['adset_name'].isin(matched_adsets) &
-                        adsets_df['campaign_id'].isin(eventos_controle_campaign_ids)
-                    ].copy()
-
-                    logger.info(f"      Adsets ANTES do filtro (só por nome): {len(adsets_df[adsets_df['adset_name'].isin(matched_adsets)])}")
-                    logger.info(f"      Adsets DEPOIS do filtro (nome + campaign): {len(adsets_df_matched)}")
-
-                    if not adsets_df_matched.empty:
-                        # DEBUG: Verificar se total_spend existe em adsets_df_matched
-                        if 'total_spend' in adsets_df_matched.columns:
-                            total_spend_sum = adsets_df_matched['total_spend'].sum()
-                            logger.info(f"   📊 DEBUG: total_spend existe em adsets_df_matched")
-                            logger.info(f"      Total: R$ {total_spend_sum:,.2f}")
-                        else:
-                            logger.warning(f"   ⚠️ DEBUG: total_spend NÃO existe em adsets_df_matched")
-
+                    if not matched_adsets_df.empty:
                         adset_level_comparisons = compare_adset_performance(
-                            adsets_metrics_df=adsets_df_matched,  # Apenas matched!
+                            adsets_metrics_df=matched_adsets_df,  # Usar DF com 'leads' já criado!
                             matched_df=matched_df,
                             ml_type_map=ml_type_map,
                             product_value=config['product_value'],
                             comparison_group_map=comparison_group_map
                         )
-                        logger.info(f"   ✅ Comparação de matched adsets concluída ({len(adsets_df_matched)} adsets)")
+                        logger.info(f"   ✅ Comparação de matched adsets concluída ({len(matched_adsets_df)} adsets)")
                     else:
                         logger.warning("   ⚠️ Nenhum adset matched encontrado após filtragem")
                         adset_level_comparisons = None
