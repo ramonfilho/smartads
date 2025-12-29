@@ -189,7 +189,8 @@ def identify_matched_adset_pairs(
     adsets_df: pd.DataFrame,
     ml_campaign_ids: List[str],
     control_campaign_ids: List[str],
-    min_spend: float = MIN_SPEND
+    min_spend: float = MIN_SPEND,
+    use_dynamic_matching: bool = False
 ) -> Tuple[List[str], pd.DataFrame]:
     """
     Identifica adsets que aparecem tanto em campanhas ML quanto controle.
@@ -199,6 +200,8 @@ def identify_matched_adset_pairs(
         ml_campaign_ids: IDs das campanhas ML
         control_campaign_ids: IDs das campanhas controle
         min_spend: Gasto mínimo para incluir adset (default: R$ 200)
+        use_dynamic_matching: Se True, usa TODOS os adsets identificados dinamicamente.
+                              Se False (padrão), usa apenas MATCHED_ADSETS pré-definidos.
 
     Returns:
         Tuple (matched_adsets, adsets_metrics_df)
@@ -246,30 +249,43 @@ def identify_matched_adset_pairs(
     matched = list(ml_adsets.intersection(control_adsets))
 
     # DEBUG: Mostrar adsets matched
-    logger.info(f"   🔍 DEBUG - Adsets matched (interseção): {len(matched)}")
+    logger.info(f"   🔍 DEBUG - Adsets matched (interseção dinâmica): {len(matched)}")
     for adset in sorted(matched):
         logger.info(f"      • {repr(adset)}")
 
-    # MUDANÇA: Usar TODOS os matched adsets identificados, não filtrar por MATCHED_ADSETS
-    # A lista MATCHED_ADSETS pode estar desatualizada ou com nomes que não batem com o Excel
-    matched_final = matched
+    # DECISÃO: Usar identificação dinâmica OU lista pré-definida
+    if use_dynamic_matching:
+        logger.info(f"   🔧 Modo: DINÂMICO - usando todos os {len(matched)} adsets identificados")
+        matched_final = matched
+    else:
+        logger.info(f"   🔧 Modo: MANUAL - usando apenas MATCHED_ADSETS pré-definidos")
+        # Filtrar apenas adsets que estão na lista MATCHED_ADSETS
+        matched_final = [adset for adset in matched if adset in MATCHED_ADSETS]
 
-    # DEBUG: Mostrar comparação com lista esperada (apenas informativo)
-    in_list = [adset for adset in matched if adset in MATCHED_ADSETS]
-    not_in_list = [adset for adset in matched if adset not in MATCHED_ADSETS]
+        # DEBUG: Mostrar comparação com lista esperada
+        in_list = matched_final
+        not_in_list = [adset for adset in matched if adset not in MATCHED_ADSETS]
+        missing_from_intersection = [adset for adset in MATCHED_ADSETS if adset not in matched]
 
-    if in_list:
-        logger.info(f"   ✅ {len(in_list)} adsets matched estão na lista MATCHED_ADSETS")
+        if in_list:
+            logger.info(f"   ✅ {len(in_list)} adsets matched encontrados na interseção:")
+            for adset in sorted(in_list):
+                logger.info(f"      • {repr(adset)}")
 
-    if not_in_list:
-        logger.info(f"   ℹ️  {len(not_in_list)} adsets matched NÃO estão na lista MATCHED_ADSETS:")
-        for adset in sorted(not_in_list)[:5]:  # Mostrar apenas primeiros 5
-            logger.info(f"      • {repr(adset)}")
-        if len(not_in_list) > 5:
-            logger.info(f"      ... e mais {len(not_in_list) - 5}")
+        if not_in_list:
+            logger.info(f"   ⚠️  {len(not_in_list)} adsets matched NÃO estão na lista MATCHED_ADSETS (ignorados):")
+            for adset in sorted(not_in_list)[:5]:
+                logger.info(f"      • {repr(adset)}")
+            if len(not_in_list) > 5:
+                logger.info(f"      ... e mais {len(not_in_list) - 5}")
 
-    logger.info(f"   ✅ {len(matched_final)} adsets matched identificados (Eventos ML vs Controle)")
-    logger.info(f"      ML adsets: {len(ml_adsets)}, Controle adsets: {len(control_adsets)}")
+        if missing_from_intersection:
+            logger.warning(f"   ⚠️  {len(missing_from_intersection)} adsets de MATCHED_ADSETS NÃO encontrados na interseção:")
+            for adset in sorted(missing_from_intersection):
+                logger.warning(f"      • {repr(adset)}")
+
+    logger.info(f"   ✅ {len(matched_final)} adsets matched selecionados (Eventos ML vs Controle)")
+    logger.info(f"      ML adsets (total): {len(ml_adsets)}, Controle adsets (total): {len(control_adsets)}")
 
     # Criar DataFrame com métricas por adset
     adsets_metrics = adsets_df[adsets_df['adset_name'].isin(matched_final)].copy()
@@ -897,11 +913,41 @@ def compare_adset_performance(
     # IMPORTANTE: Usar Campaign ID + Adset Name para matching preciso
     # (evita ambiguidade quando há múltiplas campanhas com mesmo nome)
 
-    # Preparar campaign_id para merge (primeiros 15 dígitos - parte comum)
-    # UTMs têm 18 dígitos, Excel tem 21 (18 + "000"), primeiros 15 são a parte comum
+    # NOVO: Usar campaign_id COMPLETO para evitar colisões entre contas
+    # Apenas truncar quando necessário para compatibilidade
+    # Estratégia: primeiro tentar match completo, depois truncado se necessário
+
+    # Preservar IDs completos e criar versão truncada apenas para fallback
+    adsets_metrics_df['campaign_id_full'] = adsets_metrics_df['campaign_id'].astype(str)
     adsets_metrics_df['campaign_id_clean'] = adsets_metrics_df['campaign_id'].astype(str).str[:15]
+
+    conversions_by_campaign_adset['campaign_id_full'] = conversions_by_campaign_adset['campaign_id_from_utm'].astype(str)
     conversions_by_campaign_adset['campaign_id_clean'] = conversions_by_campaign_adset['campaign_id_from_utm'].astype(str).str[:15]
+
+    leads_by_campaign_adset['campaign_id_full'] = leads_by_campaign_adset['campaign_id_from_utm'].astype(str)
     leads_by_campaign_adset['campaign_id_clean'] = leads_by_campaign_adset['campaign_id_from_utm'].astype(str).str[:15]
+
+    # CRÍTICO: Detectar se há colisões (múltiplas contas com mesmo campaign_id_clean)
+    # Se houver, precisamos usar campaign_id_full para evitar mapeamento incorreto
+    collision_check = adsets_metrics_df.groupby('campaign_id_clean')['_account_name'].nunique()
+    collisions = collision_check[collision_check > 1]
+
+    if len(collisions) > 0:
+        logger.warning(f"\n   ⚠️ DETECTADAS {len(collisions)} COLISÕES DE CAMPAIGN_ID (mesmo ID, contas diferentes):")
+        for campaign_id_clean in collisions.index[:5]:  # Mostrar primeiros 5
+            accounts = adsets_metrics_df[adsets_metrics_df['campaign_id_clean'] == campaign_id_clean]['_account_name'].unique()
+            full_ids = adsets_metrics_df[adsets_metrics_df['campaign_id_clean'] == campaign_id_clean]['campaign_id_full'].unique()
+            logger.warning(f"      • ID truncado: {campaign_id_clean}")
+            logger.warning(f"        Contas: {', '.join(accounts)}")
+            logger.warning(f"        IDs completos: {', '.join(full_ids[:3])}")
+        logger.warning(f"   🔧 Usando IDs COMPLETOS para merge para evitar mapeamento incorreto")
+        use_full_id = True
+    else:
+        logger.info(f"   ✅ Sem colisões de campaign_id detectadas - usando IDs truncados (compatibilidade)")
+        use_full_id = False
+
+    # Definir coluna de merge baseado em detecção de colisões
+    merge_id_col = 'campaign_id_full' if use_full_id else 'campaign_id_clean'
 
     # DEBUG: Verificar matching antes do merge
     logger.info(f"\n   🔍 DEBUG - Preparando merge:")
@@ -921,9 +967,10 @@ def compare_adset_performance(
 
     # DEBUG: Identificar conversões que NÃO fazem match com Excel
     # Fazer merge inverso: quais conversões não encontram adset no Excel?
+    # NOVO: Usar mesmo merge_id_col definido acima
     conversions_not_in_excel = conversions_by_campaign_adset.merge(
-        adsets_metrics_df[['campaign_id_clean', 'adset_name']].drop_duplicates(),
-        on=['campaign_id_clean', 'adset_name'],
+        adsets_metrics_df[[merge_id_col, 'adset_name']].drop_duplicates(),
+        on=[merge_id_col, 'adset_name'],
         how='left',
         indicator=True
     )
@@ -961,9 +1008,11 @@ def compare_adset_performance(
 
     # MELHORADO: Merge com matching mais flexível de nomes
     # 1. Tentar merge exato primeiro
+    # NOVO: Usar ID completo ou truncado baseado em detecção de colisões (definido acima)
+
     adsets_full = adsets_metrics_df.merge(
         conversions_by_campaign_adset,
-        on=['campaign_id_clean', 'adset_name'],
+        on=[merge_id_col, 'adset_name'],
         how='left',
         suffixes=('', '_conv')
     )
@@ -980,8 +1029,8 @@ def compare_adset_performance(
     # NOVO: Merge com leads do matched_df
     # IMPORTANTE: Isso sobrescreve o 'leads' vindo do Excel com o contagem real do matched_df
     adsets_full = adsets_full.merge(
-        leads_by_campaign_adset[['campaign_id_clean', 'adset_name', 'leads_matched_df']],
-        on=['campaign_id_clean', 'adset_name'],
+        leads_by_campaign_adset[[merge_id_col, 'adset_name', 'leads_matched_df']],
+        on=[merge_id_col, 'adset_name'],
         how='left'
     )
 
@@ -1179,15 +1228,42 @@ def compare_adset_performance(
     # MUDANÇA IMPORTANTE: Não agrupar por adset_name
     # Cada linha representa um adset de uma campanha específica
     # Exemplo: "ADV | Lookalike 1%" na campanha A é diferente de "ADV | Lookalike 1%" na campanha B
-    detailed = adsets_full[['campaign_name', 'campaign_id', 'adset_name', 'adset_id', 'ml_type',
-                             'spend', 'leads', 'conversions', 'cpl', 'cpa',
-                             'conversion_rate', 'roas', 'revenue', 'margin', 'margin_pct']].copy()
 
-    # Adicionar account_id baseado no adset_id
+    # CRÍTICO: Incluir total_spend se disponível (para matched pairs)
+    detail_columns = ['campaign_name', 'campaign_id', 'adset_name', 'adset_id', 'ml_type',
+                      'spend', 'leads', 'conversions', 'cpl', 'cpa',
+                      'conversion_rate', 'roas', 'revenue', 'margin', 'margin_pct']
+
+    if 'total_spend' in adsets_full.columns:
+        detail_columns.append('total_spend')
+        logger.info(f"   📊 DEBUG: total_spend existe em adsets_full, incluindo em detailed")
+
+    detailed = adsets_full[detail_columns].copy()
+
+    # Adicionar account_id baseado no adset_id + campaign_id
     # O account_name vem do MetaReportsLoader (extraído do nome do arquivo Excel)
+    # CRÍTICO: Usar campaign_id + adset_id como chave composta para evitar ambiguidade
+    # quando o mesmo adset aparece em múltiplos relatórios/períodos
     if '_account_name' in adsets_metrics_df.columns:
-        account_map = adsets_metrics_df[['adset_id', '_account_name']].drop_duplicates().set_index('adset_id')['_account_name'].to_dict()
-        detailed['account_id'] = detailed['adset_id'].map(account_map)
+        # Criar chave composta: campaign_id + "|" + adset_id
+        adset_account_map_df = adsets_metrics_df[['campaign_id', 'adset_id', '_account_name']].drop_duplicates()
+        adset_account_map_df['map_key'] = adset_account_map_df['campaign_id'].astype(str) + "|" + adset_account_map_df['adset_id'].astype(str)
+
+        # Verificar se há duplicatas com a chave composta
+        duplicate_keys = adset_account_map_df[adset_account_map_df.duplicated(subset=['map_key'], keep=False)]
+        if len(duplicate_keys) > 0:
+            logger.warning(f"   ⚠️ {len(duplicate_keys)} duplicatas com mesma chave (campaign_id|adset_id) mas contas diferentes!")
+            for key in duplicate_keys['map_key'].unique()[:3]:
+                accounts = duplicate_keys[duplicate_keys['map_key'] == key]['_account_name'].unique()
+                logger.warning(f"      • {key}: {', '.join(accounts)}")
+
+        # Criar mapa usando chave composta
+        account_map = adset_account_map_df.set_index('map_key')['_account_name'].to_dict()
+
+        # Aplicar mapa ao detailed (que também precisa da chave composta)
+        detailed['map_key'] = detailed['campaign_id'].astype(str) + "|" + detailed['adset_id'].astype(str)
+        detailed['account_id'] = detailed['map_key'].map(account_map)
+        detailed = detailed.drop(columns=['map_key'])  # Remover coluna temporária
     elif 'account_id' in adsets_metrics_df.columns:
         account_map = adsets_metrics_df[['adset_id', 'account_id']].drop_duplicates().set_index('adset_id')['account_id'].to_dict()
         detailed['account_id'] = detailed['adset_id'].map(account_map)
@@ -1326,31 +1402,33 @@ def compare_adset_performance(
     logger.info("   ✅ Comparações de adsets calculadas")
     logger.info(f"      Adsets após filtro (Eventos ML + Controle): {len(detailed)}")
 
-    # CRÍTICO: Para matched pairs, agregar por (adset_name, comparison_group)
+    # CRÍTICO: Para matched pairs, agregar por (campaign_id, adset_id, comparison_group)
     # Detectamos matched pairs quando há poucos adset_names únicos (<< total de linhas)
     unique_adset_names = detailed['adset_name'].nunique()
     is_matched_pairs = unique_adset_names < 20 and len(detailed) > unique_adset_names * 2
 
     if is_matched_pairs:
         logger.info(f"\n   🔍 MATCHED PAIRS detectado ({unique_adset_names} adsets únicos, {len(detailed)} linhas)")
-        logger.info(f"   🔧 Agregando por (adset_name, comparison_group) para evitar duplicação...")
+        logger.info(f"   🔧 Agregando por (campaign_id, adset_id, comparison_group) para preservar instâncias por campanha...")
 
         # Decidir qual coluna de spend usar para agregação
         # Para matched pairs, preferir total_spend (histórico) se disponível
         spend_column = 'total_spend' if 'total_spend' in detailed.columns else 'spend'
 
-        # Agregar métricas por (adset_name, comparison_group)
+        # Agregar métricas por (campaign_id, adset_id, comparison_group)
+        # IMPORTANTE: Isso preserva cada combinação única de campanha+adset
+        # Exemplo: mesmo adset em campanhas diferentes = linhas separadas
         agg_dict = {
             'leads': 'sum',
             'conversions': 'sum',
             spend_column: 'sum',  # Usar total_spend se disponível
             'revenue': 'sum',
-            'campaign_name': 'first',  # Manter primeiro nome de campanha
-            'campaign_id': 'first',    # Manter primeiro ID de campanha
-            'adset_id': 'first'        # Manter primeiro ID de adset
+            'campaign_name': 'first',  # Manter nome de campanha
+            'adset_name': 'first',      # Manter nome de adset
+            'account_id': 'first'       # CRÍTICO: Preservar account_id durante agregação!
         }
 
-        detailed_aggregated = detailed.groupby(['adset_name', 'comparison_group'], as_index=False).agg(agg_dict)
+        detailed_aggregated = detailed.groupby(['campaign_id', 'adset_id', 'comparison_group'], as_index=False).agg(agg_dict)
 
         # Renomear spend_column para 'spend' para compatibilidade
         if spend_column != 'spend':
@@ -1367,9 +1445,8 @@ def compare_adset_performance(
         detailed_aggregated['margin_pct'] = (detailed_aggregated['margin'] / detailed_aggregated['revenue'].replace(0, 1)) * 100
 
         # Preservar colunas opcionais se existirem
-        if 'account_id' in detailed.columns:
-            account_map = detailed.groupby('adset_name')['account_id'].first().to_dict()
-            detailed_aggregated['account_id'] = detailed_aggregated['adset_name'].map(account_map)
+        # NOTA: account_id JÁ foi preservado na agregação (agg_dict linha 1472)
+        # NÃO re-mapear por adset_name pois o mesmo adset pode estar em múltiplas contas!
 
         if 'optimization_goal' in detailed.columns:
             opt_map = detailed.groupby('adset_name')['optimization_goal'].first().to_dict()
