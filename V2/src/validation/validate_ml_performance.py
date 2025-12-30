@@ -952,7 +952,8 @@ def main():
                     matched_adsets_faixa_a_list, matched_adsets_faixa_a = identify_matched_adsets_faixa_a(
                         adsets_df=adsets_df,
                         campaign_metrics=campaign_metrics,
-                        eventos_ml_campaign_ids=eventos_ml_campaign_ids
+                        eventos_ml_campaign_ids=eventos_ml_campaign_ids,
+                        matched_df=matched_df
                     )
                     if matched_adsets_faixa_a_list:
                         logger.info(f"   ✅ {len(matched_adsets_faixa_a_list)} adsets matched identificados (Eventos ML vs Faixa A)")

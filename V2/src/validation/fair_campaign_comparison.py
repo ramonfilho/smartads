@@ -371,7 +371,8 @@ def identify_matched_ad_pairs(
 def identify_matched_adsets_faixa_a(
     adsets_df: pd.DataFrame,
     campaign_metrics: pd.DataFrame,
-    eventos_ml_campaign_ids: List[str]
+    eventos_ml_campaign_ids: List[str],
+    matched_df: Optional[pd.DataFrame] = None
 ) -> Tuple[List[str], pd.DataFrame]:
     """
     Identifica adsets que aparecem tanto em campanhas Eventos ML quanto em campanhas Faixa A.
@@ -381,6 +382,7 @@ def identify_matched_adsets_faixa_a(
         adsets_df: DataFrame com adsets e suas métricas
         campaign_metrics: DataFrame com métricas de campanhas (para identificar quais têm Faixa A)
         eventos_ml_campaign_ids: IDs das campanhas Eventos ML
+        matched_df: DataFrame com conversões matched (leads→vendas) - OPCIONAL
 
     Returns:
         Tuple (matched_adsets, adsets_metrics_df)
@@ -502,45 +504,93 @@ def identify_matched_adsets_faixa_a(
         lambda cid: 'Eventos ML' if cid in eventos_ml_ids_15 else 'Faixa A'
     )
 
-    # Agregar métricas por grupo
-    agg_dict = {
+    # Agregar leads e spend dos relatórios Meta
+    spend_metrics = matched_adsets_data.groupby('comparison_group').agg({
         'leads': 'sum',
         'spend': 'sum'
-    }
+    }).reset_index()
 
-    # Adicionar outras colunas se existirem
-    for col in ['conversions', 'total_revenue', 'contribution_margin']:
-        if col in matched_adsets_data.columns:
-            agg_dict[col] = 'sum'
+    # Adicionar conversões do matched_df (se fornecido)
+    if matched_df is not None and not matched_df.empty:
+        # Normalizar whitespace em medium (adset_name)
+        if 'medium' in matched_df.columns:
+            matched_df_copy = matched_df.copy()
+            matched_df_copy['medium_norm'] = matched_df_copy['medium'].apply(normalize_whitespace)
 
-    aggregated = matched_adsets_data.groupby('comparison_group').agg(agg_dict).reset_index()
+            # Filtrar apenas matched adsets
+            matched_conversions = matched_df_copy[matched_df_copy['medium_norm'].isin(matched_adset_names)].copy()
+
+            if not matched_conversions.empty:
+                # Criar campaign_id_15 para classificação
+                matched_conversions['campaign_id_15'] = matched_conversions['campaign_id'].astype(str).str[:15]
+
+                # Filtrar apenas campanhas relevantes (Eventos ML ou Faixa A)
+                matched_conversions = matched_conversions[
+                    matched_conversions['campaign_id_15'].isin(all_relevant_campaign_ids_15)
+                ].copy()
+
+                # Classificar por grupo
+                matched_conversions['comparison_group'] = matched_conversions['campaign_id_15'].apply(
+                    lambda cid: 'Eventos ML' if cid in eventos_ml_ids_15 else 'Faixa A'
+                )
+
+                # Contar conversões por grupo
+                if 'converted' in matched_conversions.columns:
+                    converted = matched_conversions[matched_conversions['converted'] == True]
+
+                    conversion_metrics = converted.groupby('comparison_group').agg({
+                        'email': 'nunique',  # Conversões únicas
+                        'sale_value': 'sum'   # Receita total
+                    }).reset_index()
+
+                    conversion_metrics.columns = ['comparison_group', 'conversions', 'revenue']
+
+                    # Merge com spend_metrics
+                    aggregated = spend_metrics.merge(
+                        conversion_metrics,
+                        on='comparison_group',
+                        how='left'
+                    )
+
+                    # Preencher NaN com 0
+                    aggregated['conversions'] = aggregated['conversions'].fillna(0)
+                    aggregated['revenue'] = aggregated['revenue'].fillna(0)
+
+                    logger.info(f"   ✅ Conversões identificadas no matched_df:")
+                    for _, row in aggregated.iterrows():
+                        logger.info(f"      {row['comparison_group']}: {row['conversions']:.0f} conversões, R$ {row['revenue']:.2f}")
+                else:
+                    aggregated = spend_metrics.copy()
+                    aggregated['conversions'] = 0
+                    aggregated['revenue'] = 0
+            else:
+                aggregated = spend_metrics.copy()
+                aggregated['conversions'] = 0
+                aggregated['revenue'] = 0
+        else:
+            aggregated = spend_metrics.copy()
+            aggregated['conversions'] = 0
+            aggregated['revenue'] = 0
+    else:
+        aggregated = spend_metrics.copy()
+        aggregated['conversions'] = 0
+        aggregated['revenue'] = 0
 
     # Renomear colunas para português
     aggregated = aggregated.rename(columns={
         'leads': 'Leads',
         'conversions': 'Vendas',
         'spend': 'Valor gasto',
-        'total_revenue': 'Receita Total',
-        'contribution_margin': 'Margem de contribuição'
+        'revenue': 'Receita Total'
     })
 
     # Calcular métricas derivadas
-    if 'Vendas' in aggregated.columns:
-        aggregated['Taxa de conversão'] = (aggregated['Vendas'] / aggregated['Leads']) * 100
-    else:
-        aggregated['Vendas'] = 0
-        aggregated['Taxa de conversão'] = 0
-
+    aggregated['Taxa de conversão'] = (aggregated['Vendas'] / aggregated['Leads']) * 100
     aggregated['CPL'] = aggregated['Valor gasto'] / aggregated['Leads']
+    aggregated['ROAS'] = aggregated['Receita Total'] / aggregated['Valor gasto']
 
-    if 'Receita Total' in aggregated.columns:
-        aggregated['ROAS'] = aggregated['Receita Total'] / aggregated['Valor gasto']
-    else:
-        aggregated['Receita Total'] = 0
-        aggregated['ROAS'] = 0
-
-    if 'Margem de contribuição' not in aggregated.columns:
-        aggregated['Margem de contribuição'] = 0
+    # Calcular margem de contribuição (Receita - Gasto)
+    aggregated['Margem de contribuição'] = aggregated['Receita Total'] - aggregated['Valor gasto']
 
     # Substituir NaN/Inf por 0
     aggregated = aggregated.fillna(0)
