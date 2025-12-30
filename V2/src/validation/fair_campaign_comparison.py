@@ -368,6 +368,191 @@ def identify_matched_ad_pairs(
     return matched_final, ads_metrics
 
 
+def identify_matched_adsets_faixa_a(
+    adsets_df: pd.DataFrame,
+    campaign_metrics: pd.DataFrame,
+    eventos_ml_campaign_ids: List[str]
+) -> Tuple[List[str], pd.DataFrame]:
+    """
+    Identifica adsets que aparecem tanto em campanhas Eventos ML quanto em campanhas Faixa A.
+    Usa arquivos mapeados manualmente em adsets_analysis/faixa/.
+
+    Args:
+        adsets_df: DataFrame com adsets e suas métricas
+        campaign_metrics: DataFrame com métricas de campanhas (para identificar quais têm Faixa A)
+        eventos_ml_campaign_ids: IDs das campanhas Eventos ML
+
+    Returns:
+        Tuple (matched_adsets, adsets_metrics_df)
+        - matched_adsets: Lista de nomes de adsets matched
+        - adsets_metrics_df: DataFrame com métricas agregadas por grupo
+    """
+    logger.info("🔍 Identificando matched pairs de adsets (Eventos ML vs Faixa A)...")
+
+    # Carregar arquivos de mapeamento da pasta faixa
+    from pathlib import Path
+    import glob
+
+    base_path = Path("files/validation/meta_reports/adsets_analysis/faixa")
+    csv_files = glob.glob(str(base_path / "*.csv"))
+
+    if not csv_files:
+        logger.warning("   ⚠️ Nenhum arquivo CSV encontrado em adsets_analysis/faixa/")
+        return [], pd.DataFrame()
+
+    logger.info(f"   📂 Carregando {len(csv_files)} arquivos de mapeamento...")
+
+    # Carregar e combinar todos os arquivos
+    faixa_dfs = []
+    for csv_file in csv_files:
+        try:
+            df = pd.read_csv(csv_file)
+            faixa_dfs.append(df)
+        except Exception as e:
+            logger.warning(f"   ⚠️ Erro ao ler {Path(csv_file).name}: {e}")
+
+    if not faixa_dfs:
+        logger.warning("   ⚠️ Nenhum arquivo válido carregado")
+        return [], pd.DataFrame()
+
+    # Combinar todos os DataFrames
+    faixa_mapping = pd.concat(faixa_dfs, ignore_index=True)
+
+    # Identificar colunas de Eventos ML
+    evento_ml_cols = []
+    for col in faixa_mapping.columns:
+        if 'evento ml' in col.lower():
+            evento_ml_cols.append(col)
+
+    if not evento_ml_cols:
+        logger.warning("   ⚠️ Colunas 'Evento ML' não encontradas nos arquivos de mapeamento")
+        return [], pd.DataFrame()
+
+    logger.info(f"   📊 Colunas de Eventos ML encontradas: {evento_ml_cols}")
+
+    # Normalizar nome do adset
+    faixa_mapping['adset_name_normalized'] = faixa_mapping['Nome do conjunto de anúncios'].apply(normalize_whitespace)
+
+    # Identificar adsets matched: aqueles que têm valor > 0 em qualquer coluna de Eventos ML
+    matched_mask = faixa_mapping[evento_ml_cols].fillna(0).sum(axis=1) > 0
+    matched_adsets_df = faixa_mapping[matched_mask].copy()
+
+    if matched_adsets_df.empty:
+        logger.info("   ℹ️ Nenhum adset matched encontrado nos arquivos de mapeamento")
+        return [], pd.DataFrame()
+
+    # Lista de adsets matched (nomes normalizados)
+    matched_adset_names = matched_adsets_df['adset_name_normalized'].unique().tolist()
+
+    logger.info(f"   ✅ {len(matched_adset_names)} adsets matched identificados nos arquivos")
+
+    # DEBUG: Mostrar adsets matched
+    if matched_adset_names:
+        logger.info(f"   🔍 Adsets matched:")
+        for adset in sorted(matched_adset_names)[:10]:  # Mostrar apenas os primeiros 10
+            logger.info(f"      • {repr(adset)}")
+        if len(matched_adset_names) > 10:
+            logger.info(f"      ... e mais {len(matched_adset_names) - 10} adsets")
+
+    # CRÍTICO: Normalizar whitespace em adsets_df para matching consistente
+    adsets_df = adsets_df.copy()
+    adsets_df['adset_name'] = adsets_df['adset_name'].apply(normalize_whitespace)
+
+    # Extrair IDs das campanhas Faixa A diretamente dos arquivos de mapeamento
+    faixa_a_campaign_ids = []
+    if 'Identificação da campanha' in faixa_mapping.columns:
+        # Usar apenas os primeiros 15 dígitos do campaign_id para matching
+        campaign_ids_raw = faixa_mapping['Identificação da campanha'].dropna().unique()
+        for cid in campaign_ids_raw:
+            cid_str = str(cid).strip()
+            # Extrair apenas os primeiros 15 dígitos
+            if len(cid_str) >= 15:
+                faixa_a_campaign_ids.append(cid_str[:15])
+
+    logger.info(f"   📊 {len(faixa_a_campaign_ids)} campanhas Faixa A identificadas dos arquivos")
+    logger.info(f"   📊 {len(eventos_ml_campaign_ids)} campanhas Eventos ML")
+
+    # Filtrar adsets_df para incluir apenas matched adsets
+    matched_adsets_data = adsets_df[adsets_df['adset_name'].isin(matched_adset_names)].copy()
+
+    if matched_adsets_data.empty:
+        logger.warning("   ⚠️ Nenhum dado encontrado para adsets matched")
+        return matched_adset_names, pd.DataFrame()
+
+    # Criar coluna com primeiros 15 dígitos do campaign_id para matching
+    matched_adsets_data['campaign_id_15'] = matched_adsets_data['campaign_id'].astype(str).str[:15]
+
+    # Filtrar para incluir APENAS campanhas Eventos ML ou Faixa A (excluir Controle e outras)
+    eventos_ml_ids_15 = [str(cid)[:15] for cid in eventos_ml_campaign_ids]
+    all_relevant_campaign_ids_15 = set(eventos_ml_ids_15 + faixa_a_campaign_ids)
+    matched_adsets_data = matched_adsets_data[matched_adsets_data['campaign_id_15'].isin(all_relevant_campaign_ids_15)].copy()
+
+    if matched_adsets_data.empty:
+        logger.warning("   ⚠️ Nenhum dado encontrado para campanhas Eventos ML ou Faixa A")
+        return matched_adset_names, pd.DataFrame()
+
+    # Criar coluna 'leads' a partir dos relatórios Meta
+    if 'leads_standard' in matched_adsets_data.columns:
+        matched_adsets_data['leads'] = matched_adsets_data['leads_standard']
+    elif 'leads' not in matched_adsets_data.columns:
+        matched_adsets_data['leads'] = 0
+
+    # Classificar cada linha por grupo (Eventos ML ou Faixa A)
+    matched_adsets_data['comparison_group'] = matched_adsets_data['campaign_id_15'].apply(
+        lambda cid: 'Eventos ML' if cid in eventos_ml_ids_15 else 'Faixa A'
+    )
+
+    # Agregar métricas por grupo
+    agg_dict = {
+        'leads': 'sum',
+        'spend': 'sum'
+    }
+
+    # Adicionar outras colunas se existirem
+    for col in ['conversions', 'total_revenue', 'contribution_margin']:
+        if col in matched_adsets_data.columns:
+            agg_dict[col] = 'sum'
+
+    aggregated = matched_adsets_data.groupby('comparison_group').agg(agg_dict).reset_index()
+
+    # Renomear colunas para português
+    aggregated = aggregated.rename(columns={
+        'leads': 'Leads',
+        'conversions': 'Vendas',
+        'spend': 'Valor gasto',
+        'total_revenue': 'Receita Total',
+        'contribution_margin': 'Margem de contribuição'
+    })
+
+    # Calcular métricas derivadas
+    if 'Vendas' in aggregated.columns:
+        aggregated['Taxa de conversão'] = (aggregated['Vendas'] / aggregated['Leads']) * 100
+    else:
+        aggregated['Vendas'] = 0
+        aggregated['Taxa de conversão'] = 0
+
+    aggregated['CPL'] = aggregated['Valor gasto'] / aggregated['Leads']
+
+    if 'Receita Total' in aggregated.columns:
+        aggregated['ROAS'] = aggregated['Receita Total'] / aggregated['Valor gasto']
+    else:
+        aggregated['Receita Total'] = 0
+        aggregated['ROAS'] = 0
+
+    if 'Margem de contribuição' not in aggregated.columns:
+        aggregated['Margem de contribuição'] = 0
+
+    # Substituir NaN/Inf por 0
+    aggregated = aggregated.fillna(0)
+    aggregated = aggregated.replace([float('inf'), float('-inf')], 0)
+
+    logger.info(f"   ✅ Métricas agregadas por grupo:")
+    for _, row in aggregated.iterrows():
+        logger.info(f"      {row['comparison_group']}: {row['Leads']:.0f} leads, {row['Vendas']:.0f} vendas")
+
+    return matched_adset_names, aggregated
+
+
 # ============================================================================
 # FUNÇÕES DE COMPARAÇÃO DE PERFORMANCE
 # ============================================================================

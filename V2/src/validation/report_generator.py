@@ -46,7 +46,8 @@ class ValidationReportGenerator:
         adset_level_comparisons: Optional[Dict] = None,
         ad_level_comparisons: Optional[Dict] = None,
         ad_in_matched_adsets_comparisons: Optional[Dict] = None,
-        matched_ads_in_matched_adsets_comparisons: Optional[Dict] = None
+        matched_ads_in_matched_adsets_comparisons: Optional[Dict] = None,
+        matched_adsets_faixa_a: Optional[pd.DataFrame] = None
     ) -> str:
         """
         Gera relatório Excel completo com 5-6 abas.
@@ -220,7 +221,7 @@ class ValidationReportGenerator:
         # Aba 5: Comparação Faixa A (Eventos ML vs Faixa A - sistema legado)
         if campaign_metrics is not None and not campaign_metrics.empty and 'comparison_group' in campaign_metrics.columns:
             logger.info("   Gerando aba: Comparação Faixa A")
-            self._write_comparacao_faixa_a(writer, campaign_metrics, formats)
+            self._write_comparacao_faixa_a(writer, campaign_metrics, formats, matched_adsets_faixa_a)
 
         # Aba FINAL: Detalhes das Conversões (movida para última posição)
         if sales_df is not None:
@@ -830,7 +831,8 @@ class ValidationReportGenerator:
         self,
         writer: pd.ExcelWriter,
         campaign_metrics: pd.DataFrame,
-        formats: Dict
+        formats: Dict,
+        matched_adsets_faixa_a: Optional[pd.DataFrame] = None
     ):
         """
         Escreve aba 'Comparação Faixa A' comparando Eventos ML vs Faixa A (sistema legado).
@@ -840,6 +842,7 @@ class ValidationReportGenerator:
             writer: Excel writer
             campaign_metrics: DataFrame com métricas de campanhas
             formats: Formatos do Excel
+            matched_adsets_faixa_a: DataFrame com adsets matched (Eventos ML vs Faixa A)
         """
         worksheet = writer.book.add_worksheet('Comparação Faixa A')
         current_row = 0
@@ -895,11 +898,32 @@ class ValidationReportGenerator:
             if old_name in df_combined.columns and new_name not in df_combined.columns:
                 df_combined[new_name] = df_combined[old_name]
 
-        # Usar função customizada para escrever tabela com labels personalizados
+        # TABELA 1: All vs All (Campanhas)
+        worksheet.write(current_row, 0, '📊 COMPARAÇÃO POR CAMPANHAS (All vs All)', formats['title'])
+        current_row += 1
+        worksheet.write(current_row, 0, 'Todas as campanhas Eventos ML vs todas as campanhas Faixa A', formats['subtitle'])
+        current_row += 2
+
         current_row = self._write_faixa_a_table(
             worksheet, df_combined, formats, current_row,
-            label='Campanhas Eventos ML vs Campanhas Faixa A'
+            label='Campanhas (All vs All)'
         )
+
+        current_row += 2  # Espaçamento entre tabelas
+
+        # TABELA 2: Matched Pairs (Adsets)
+        if matched_adsets_faixa_a is not None and not matched_adsets_faixa_a.empty:
+            worksheet.write(current_row, 0, '📊 COMPARAÇÃO POR ADSETS MATCHED (Matched Pairs)', formats['title'])
+            current_row += 1
+            worksheet.write(current_row, 0, 'Apenas adsets que aparecem em Eventos ML E Faixa A (R$ 200+ gasto)', formats['subtitle'])
+            current_row += 2
+
+            current_row = self._write_faixa_a_table_adsets(
+                worksheet, matched_adsets_faixa_a, formats, current_row,
+                label='Adsets (Matched Pairs)'
+            )
+        else:
+            worksheet.write(current_row, 0, '⚠️ Nenhum adset matched encontrado (Eventos ML vs Faixa A)', formats['text'])
 
         # Ajustar larguras
         worksheet.set_column(0, 0, 25)
@@ -1004,6 +1028,127 @@ class ValidationReportGenerator:
 
         # Cabeçalhos
         headers = ['Métrica', 'Eventos ML', 'Faixa A (Legado)', 'Diferença %']
+        for col, header in enumerate(headers):
+            worksheet.write(row, col, header, formats['header'])
+        row += 1
+
+        # Função auxiliar para calcular diferença %
+        def calc_diff_pct(ml_val, fa_val):
+            if fa_val == 0:
+                return 0
+            return ((ml_val - fa_val) / fa_val) * 100
+
+        # Dados de comparação
+        comparison_data = [
+            ('Leads', ml_metrics['leads'], faixa_a_metrics['leads'], 'number'),
+            ('Vendas', ml_metrics['conversions'], faixa_a_metrics['conversions'], 'number'),
+            ('Taxa de conversão', ml_metrics['conversion_rate'] / 100, faixa_a_metrics['conversion_rate'] / 100, 'percent'),
+            ('Valor gasto', ml_metrics['spend'], faixa_a_metrics['spend'], 'currency'),
+            ('CPL', ml_metrics['cpl'], faixa_a_metrics['cpl'], 'currency'),
+            ('ROAS', ml_metrics['roas'], faixa_a_metrics['roas'], 'decimal'),
+            ('Receita Total', ml_metrics['revenue'], faixa_a_metrics['revenue'], 'currency'),
+            ('Margem Contribuição', ml_metrics['margin'], faixa_a_metrics['margin'], 'currency'),
+        ]
+
+        for metric, ml_value, fa_value, fmt_type in comparison_data:
+            worksheet.write(row, 0, metric, formats['text'])
+            worksheet.write(row, 1, ml_value, formats[fmt_type])
+            worksheet.write(row, 2, fa_value, formats[fmt_type])
+
+            # Calcular diferença %
+            diff_pct = calc_diff_pct(ml_value, fa_value) / 100 if fmt_type != 'percent' else calc_diff_pct(ml_value * 100, fa_value * 100) / 100
+            if diff_pct != 0:
+                cell_format = formats['positive'] if diff_pct > 0 else formats['negative']
+                worksheet.write(row, 3, diff_pct, cell_format)
+            else:
+                worksheet.write(row, 3, '-', formats['text'])
+            row += 1
+
+        # Vencedor
+        row += 1
+        if ml_metrics['roas'] > faixa_a_metrics['roas']:
+            diff_pct = calc_diff_pct(ml_metrics['roas'], faixa_a_metrics['roas'])
+            winner_text = f"🏆 VENCEDOR: Eventos ML (ROAS {diff_pct:.1f}% maior)"
+            worksheet.write(row, 0, winner_text, formats['header_green'])
+        elif faixa_a_metrics['roas'] > ml_metrics['roas']:
+            diff_pct = abs(calc_diff_pct(ml_metrics['roas'], faixa_a_metrics['roas']))
+            winner_text = f"⚠️ VENCEDOR: Faixa A (ROAS {diff_pct:.1f}% maior)"
+            worksheet.write(row, 0, winner_text, formats['header_red'])
+        else:
+            worksheet.write(row, 0, "➖ Empate técnico em ROAS", formats['header'])
+
+        return row + 2
+
+    def _write_faixa_a_table_adsets(
+        self,
+        worksheet,
+        df: pd.DataFrame,
+        formats: Dict,
+        start_row: int,
+        label: str
+    ) -> int:
+        """
+        Escreve uma tabela consolidada comparando adsets matched entre Eventos ML vs Faixa A.
+        Similar a _write_faixa_a_table mas para dados já agregados de adsets matched.
+
+        Args:
+            worksheet: Worksheet do Excel
+            df: DataFrame com métricas agregadas (já vem agrupado por comparison_group)
+            formats: Formatos do Excel
+            start_row: Linha inicial para escrever
+            label: Label para identificação
+
+        Returns:
+            Próxima linha disponível após a tabela
+        """
+        # O DataFrame já vem agregado por comparison_group
+        if df.empty:
+            worksheet.write(start_row, 0, 'Nenhum dado encontrado', formats['text'])
+            return start_row + 1
+
+        # Filtrar apenas Eventos ML e Faixa A
+        df_filtered = df[df['comparison_group'].isin(['Eventos ML', 'Faixa A'])].copy()
+
+        if df_filtered.empty:
+            worksheet.write(start_row, 0, 'Nenhum dado encontrado', formats['text'])
+            return start_row + 1
+
+        # Extrair dados de Eventos ML e Faixa A
+        ml_data = df_filtered[df_filtered['comparison_group'] == 'Eventos ML']
+        faixa_a_data = df_filtered[df_filtered['comparison_group'] == 'Faixa A']
+
+        if ml_data.empty and faixa_a_data.empty:
+            worksheet.write(start_row, 0, 'Sem dados para comparação', formats['text'])
+            return start_row + 1
+
+        # Extrair métricas
+        ml_metrics = {
+            'leads': ml_data['Leads'].iloc[0] if not ml_data.empty else 0,
+            'conversions': ml_data['Vendas'].iloc[0] if not ml_data.empty else 0,
+            'conversion_rate': ml_data['Taxa de conversão'].iloc[0] if not ml_data.empty else 0,
+            'spend': ml_data['Valor gasto'].iloc[0] if not ml_data.empty else 0,
+            'revenue': ml_data['Receita Total'].iloc[0] if not ml_data.empty else 0,
+            'cpl': ml_data['CPL'].iloc[0] if not ml_data.empty else 0,
+            'roas': ml_data['ROAS'].iloc[0] if not ml_data.empty else 0,
+            'margin': ml_data['Margem de contribuição'].iloc[0] if not ml_data.empty else 0,
+        }
+
+        faixa_a_metrics = {
+            'leads': faixa_a_data['Leads'].iloc[0] if not faixa_a_data.empty else 0,
+            'conversions': faixa_a_data['Vendas'].iloc[0] if not faixa_a_data.empty else 0,
+            'conversion_rate': faixa_a_data['Taxa de conversão'].iloc[0] if not faixa_a_data.empty else 0,
+            'spend': faixa_a_data['Valor gasto'].iloc[0] if not faixa_a_data.empty else 0,
+            'revenue': faixa_a_data['Receita Total'].iloc[0] if not faixa_a_data.empty else 0,
+            'cpl': faixa_a_data['CPL'].iloc[0] if not faixa_a_data.empty else 0,
+            'roas': faixa_a_data['ROAS'].iloc[0] if not faixa_a_data.empty else 0,
+            'margin': faixa_a_data['Margem de contribuição'].iloc[0] if not faixa_a_data.empty else 0,
+        }
+
+        # Escrever tabela
+        row = start_row
+
+        # Cabeçalhos
+        headers = ['Métrica', 'Eventos ML', 'Faixa A', 'Diferença %']
         for col, header in enumerate(headers):
             worksheet.write(row, col, header, formats['header'])
         row += 1
