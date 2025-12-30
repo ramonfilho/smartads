@@ -96,8 +96,46 @@ class ValidationReportGenerator:
 
         # Aba 3: Comparação por Adsets (MOVIDA ANTES DE COMPARAÇÃO ML)
         # Guardar DataFrames para consolidação na aba Comparação ML
-        # CRÍTICO: Usar comparison_group_metrics para nível de campanhas (não campaign_metrics)
-        campanhas_df = comparison_group_metrics if comparison_group_metrics is not None and not comparison_group_metrics.empty else None
+        # IMPORTANTE: Usar campaign_metrics agregado por comparison_group (não comparison_group_metrics)
+        # comparison_group_metrics vem do matched_df que pode ter mais leads do que os relatórios Meta
+        # Para consistência, usar leads dos relatórios Meta (campaign_metrics)
+
+        campanhas_df = None
+        if 'comparison_group' in campaign_metrics.columns and not campaign_metrics.empty:
+            # Filtrar apenas "Eventos ML" e "Controle" para consistência com adsets
+            campaign_filtered = campaign_metrics[
+                campaign_metrics['comparison_group'].isin(['Eventos ML', 'Controle'])
+            ].copy()
+
+            # Agregar por comparison_group
+            agg_dict = {
+                'leads': 'sum',
+                'conversions': 'sum',
+                'conversion_rate': lambda x: (campaign_filtered[campaign_filtered['comparison_group'] == x.name]['conversions'].sum() / campaign_filtered[campaign_filtered['comparison_group'] == x.name]['leads'].sum() * 100) if campaign_filtered[campaign_filtered['comparison_group'] == x.name]['leads'].sum() > 0 else 0,
+                'total_revenue': 'sum' if 'total_revenue' in campaign_filtered.columns else lambda x: 0,
+                'spend': 'sum',
+                'cpl': lambda x: (campaign_filtered[campaign_filtered['comparison_group'] == x.name]['spend'].sum() / campaign_filtered[campaign_filtered['comparison_group'] == x.name]['leads'].sum()) if campaign_filtered[campaign_filtered['comparison_group'] == x.name]['leads'].sum() > 0 else 0,
+                'roas': lambda x: (campaign_filtered[campaign_filtered['comparison_group'] == x.name]['total_revenue'].sum() / campaign_filtered[campaign_filtered['comparison_group'] == x.name]['spend'].sum()) if campaign_filtered[campaign_filtered['comparison_group'] == x.name]['spend'].sum() > 0 else 0 if 'total_revenue' in campaign_filtered.columns else 0,
+                'contribution_margin': 'sum' if 'contribution_margin' in campaign_filtered.columns else lambda x: 0
+            }
+
+            campanhas_df = campaign_filtered.groupby('comparison_group', as_index=False).agg({
+                'leads': 'sum',
+                'conversions': 'sum',
+                'total_revenue': 'sum' if 'total_revenue' in campaign_filtered.columns else lambda x: 0,
+                'spend': 'sum',
+                'contribution_margin': 'sum' if 'contribution_margin' in campaign_filtered.columns else lambda x: 0
+            })
+
+            # Calcular métricas derivadas
+            campanhas_df['conversion_rate'] = (campanhas_df['conversions'] / campanhas_df['leads'] * 100).fillna(0)
+            campanhas_df['cpl'] = (campanhas_df['spend'] / campanhas_df['leads']).fillna(0)
+            if 'total_revenue' in campanhas_df.columns:
+                campanhas_df['roas'] = (campanhas_df['total_revenue'] / campanhas_df['spend']).fillna(0)
+            else:
+                campanhas_df['roas'] = 0
+
+            campanhas_df['margin'] = campanhas_df.get('contribution_margin', 0)
         adsets_df = None
         ads_df = None
 
