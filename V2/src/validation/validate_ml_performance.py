@@ -1119,7 +1119,8 @@ def main():
         'Account IDs': account_ids_display,
         'Total de Leads': len(leads_df),
         'Total de Conversões': matching_stats['total_conversions'],
-        'Gerado em': datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        'Gerado em': datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+        'merge_otimizacao_ml_with_controle': config.get('merge_otimizacao_ml_with_controle', False)
     }
 
     report_gen = ValidationReportGenerator()
