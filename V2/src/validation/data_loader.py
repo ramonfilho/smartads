@@ -273,6 +273,15 @@ class SalesDataLoader:
         # Combinar todos os DataFrames
         df_combined = pd.concat(all_sales, ignore_index=True)
 
+        # Filtrar apenas vendas aprovadas (excluir canceladas, expiradas, reembolsadas, etc.)
+        if 'status' in df_combined.columns:
+            before = len(df_combined)
+            # Manter apenas vendas com status "Aprovada"
+            df_combined = df_combined[df_combined['status'] == 'Aprovada'].copy()
+            after = len(df_combined)
+            if before != after:
+                logger.info(f"   Filtradas {after} vendas aprovadas (excluídas {before - after} não aprovadas)")
+
         # Normalizar colunas
         df_norm = pd.DataFrame()
 
