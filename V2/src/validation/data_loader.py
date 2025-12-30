@@ -67,10 +67,21 @@ class LeadDataLoader:
         df = pd.read_csv(csv_path)
         logger.info(f"   {len(df)} linhas lidas do CSV")
 
-        # Verificar colunas obrigatórias
-        missing = [col for col in self.required_columns if col not in df.columns]
+        # Verificar colunas obrigatórias (aceitar 'Data' ou 'Data do Envio')
+        missing = []
+        for col in self.required_columns:
+            if col == 'Data':
+                if 'Data' not in df.columns and 'Data do Envio' not in df.columns:
+                    missing.append(col)
+            elif col not in df.columns:
+                missing.append(col)
+
         if missing:
             raise ValueError(f"Colunas obrigatórias ausentes: {missing}")
+
+        # Renomear 'Data do Envio' para 'Data' se necessário
+        if 'Data do Envio' in df.columns and 'Data' not in df.columns:
+            df = df.rename(columns={'Data do Envio': 'Data'})
 
         # Normalizar nomes de colunas
         df_norm = pd.DataFrame()
@@ -89,8 +100,20 @@ class LeadDataLoader:
         else:
             df_norm['telefone'] = None
 
-        # Data de captura
-        df_norm['data_captura'] = pd.to_datetime(df['Data'], errors='coerce')
+        # Data de captura - inferir formato baseado no primeiro registro válido
+        sample_date = df['Data'].dropna().iloc[0] if len(df['Data'].dropna()) > 0 else None
+
+        if sample_date and isinstance(sample_date, str):
+            # Detectar formato: se começa com 4 dígitos = YYYY-MM-DD, senão = DD/MM/YYYY
+            if sample_date.strip()[0:4].isdigit():
+                # Formato ISO: YYYY-MM-DD ou YYYY-MM-DD HH:MM:SS
+                df_norm['data_captura'] = pd.to_datetime(df['Data'], errors='coerce')
+            else:
+                # Formato brasileiro: DD/MM/YYYY
+                df_norm['data_captura'] = pd.to_datetime(df['Data'], format='%d/%m/%Y', errors='coerce')
+        else:
+            # Já é datetime ou fallback
+            df_norm['data_captura'] = pd.to_datetime(df['Data'], errors='coerce')
 
         # Campanha e UTMs
         df_norm['campaign'] = df['Campaign']
@@ -624,12 +647,46 @@ class CAPILeadDataLoader:
         """
         logger.info("🔗 Combinando leads Pesquisa + CAPI")
 
-        # 1. Carregar leads da pesquisa
-        survey_loader = LeadDataLoader()
-        survey_df = survey_loader.load_leads_csv(csv_path)
-        survey_df['source_type'] = 'survey'
+        # 1. Carregar leads de TODOS os arquivos de pesquisa
+        from glob import glob
 
-        logger.info(f"   📋 Pesquisa: {len(survey_df)} leads")
+        # Buscar todos os arquivos Pesquisa*.csv no diretório
+        leads_dir = Path(csv_path).parent
+        pesquisa_pattern = str(leads_dir / '*Pesquisa*.csv')
+        pesquisa_files = sorted(glob(pesquisa_pattern))
+
+        logger.info(f"   📂 Encontrados {len(pesquisa_files)} arquivos de pesquisa:")
+        for f in pesquisa_files:
+            logger.info(f"      - {Path(f).name}")
+
+        survey_loader = LeadDataLoader()
+        survey_dfs = []
+
+        for pesquisa_file in pesquisa_files:
+            try:
+                df = survey_loader.load_leads_csv(pesquisa_file)
+                df['source_type'] = 'survey'
+                df['survey_file'] = Path(pesquisa_file).name
+                survey_dfs.append(df)
+                logger.info(f"   ✅ {Path(pesquisa_file).name}: {len(df)} leads")
+            except Exception as e:
+                logger.warning(f"   ⚠️ Erro ao carregar {Path(pesquisa_file).name}: {e}")
+
+        if not survey_dfs:
+            raise ValueError("Nenhum arquivo de pesquisa foi carregado com sucesso")
+
+        # Combinar todos os DataFrames de pesquisa
+        survey_df = pd.concat(survey_dfs, ignore_index=True)
+
+        # Remover duplicatas (mesmo email + data_captura)
+        before_dedup = len(survey_df)
+        survey_df = survey_df.drop_duplicates(subset=['email', 'data_captura'], keep='first')
+        after_dedup = len(survey_df)
+
+        if before_dedup != after_dedup:
+            logger.info(f"   🔄 Removidas {before_dedup - after_dedup} duplicatas entre arquivos")
+
+        logger.info(f"   📋 Total Pesquisa combinada: {len(survey_df)} leads únicos")
 
         # 2. Filtrar por período
         from src.validation.matching import filter_by_period
