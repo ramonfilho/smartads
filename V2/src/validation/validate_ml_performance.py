@@ -904,7 +904,8 @@ def main():
                     matched_df=matched_df,
                     comparison_group_map=comparison_group_map,
                     product_value=config['product_value'],
-                    min_spend=0.0
+                    min_spend=0.0,
+                    config=config
                 )
                 logger.info(f"   ✅ Comparação de todos adsets concluída")
 

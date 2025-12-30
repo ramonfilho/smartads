@@ -102,9 +102,21 @@ class ValidationReportGenerator:
 
         campanhas_df = None
         if 'comparison_group' in campaign_metrics.columns and not campaign_metrics.empty:
+            # Se configurado, agrupar "Otimização ML" com "Controle"
+            campaign_for_filtering = campaign_metrics.copy()
+            merge_otimizacao = config_params.get('merge_otimizacao_ml_with_controle', False)
+
+            if merge_otimizacao:
+                logger.info("   ⚙️ Agrupando 'Otimização ML' com 'Controle' (merge_otimizacao_ml_with_controle=true)")
+                # Substituir 'Otimização ML' por 'Controle' antes da agregação
+                campaign_for_filtering.loc[
+                    campaign_for_filtering['comparison_group'] == 'Otimização ML',
+                    'comparison_group'
+                ] = 'Controle'
+
             # Filtrar apenas "Eventos ML" e "Controle" para consistência com adsets
-            campaign_filtered = campaign_metrics[
-                campaign_metrics['comparison_group'].isin(['Eventos ML', 'Controle'])
+            campaign_filtered = campaign_for_filtering[
+                campaign_for_filtering['comparison_group'].isin(['Eventos ML', 'Controle'])
             ].copy()
 
             # Agregar por comparison_group

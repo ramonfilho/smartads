@@ -377,7 +377,8 @@ def compare_all_adsets_performance(
     matched_df: pd.DataFrame,
     comparison_group_map: Dict[str, str],
     product_value: float = 2000.0,
-    min_spend: float = 0.0
+    min_spend: float = 0.0,
+    config: Optional[Dict] = None
 ) -> pd.DataFrame:
     """
     Compara performance de TODOS os adsets (Eventos ML vs Controle), sem filtrar por matched pairs.
@@ -702,6 +703,14 @@ def compare_all_adsets_performance(
             group_leads = adsets_full[adsets_full['comparison_group'] == group]['leads'].sum()
             group_count = len(adsets_full[adsets_full['comparison_group'] == group])
             logger.info(f"      {group}: {group_count} adsets, {group_leads:.0f} leads")
+
+    # Se configurado, agrupar "Otimização ML" com "Controle"
+    if config and config.get('merge_otimizacao_ml_with_controle', False):
+        logger.info("   ⚙️ Agrupando 'Otimização ML' com 'Controle' (merge_otimizacao_ml_with_controle=true)")
+        adsets_full.loc[
+            adsets_full['comparison_group'] == 'Otimização ML',
+            'comparison_group'
+        ] = 'Controle'
 
     # Filtrar apenas Eventos ML e Controle (remover Otimização ML e outros)
     # IMPORTANTE: Mostrar TODOS os adsets, independente de gasto, leads ou conversões

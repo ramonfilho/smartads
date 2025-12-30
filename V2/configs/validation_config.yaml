@@ -13,6 +13,11 @@ meta_account_ids:
 product_value: 2000.00  # Valor do produto em R$
 max_match_days: 30      # Janela máxima para matching leads-vendas
 
+# Agrupar campanhas "Otimização ML" junto com "Controle" na comparação?
+# False (padrão): Otimização ML é filtrado da comparação (apenas Eventos ML vs Controle)
+# True: Otimização ML é agrupado com Controle (Eventos ML vs [Controle + Otimização ML])
+merge_otimizacao_ml_with_controle: true
+
 # Padrões de campanha
 campaign_filters:
   base_pattern: "DEVLF | CAP | FRIO"  # Filtro base (campanhas de captação)
