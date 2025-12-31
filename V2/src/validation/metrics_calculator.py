@@ -504,6 +504,16 @@ class CampaignMetricsCalculator:
         if vendas_antes_groupby != vendas_depois_groupby:
             logger.warning(f"   ⚠️ PERDA DE VENDAS NO GROUPBY: {int(vendas_antes_groupby - vendas_depois_groupby)} vendas perdidas!")
 
+        # DEBUG: Mostrar campanhas com vendas e sua classificação
+        campanhas_com_vendas = campaign_stats[campaign_stats['conversions'] > 0].copy()
+        if len(campanhas_com_vendas) > 0:
+            logger.info(f"   📊 CAMPANHAS COM VENDAS ({len(campanhas_com_vendas)} campanhas):")
+            for _, row in campanhas_com_vendas.iterrows():
+                grupo = row['ml_type']
+                campanha = str(row['campaign'])[:80]
+                vendas = int(row['conversions'])
+                logger.info(f"      • [{grupo}] {campanha}: {vendas} vendas")
+
         # DEBUG: Verificar se comparison_group já existe no matched_df
         if 'comparison_group' in matched_df.columns:
             eventos_ml_matched = matched_df[matched_df['comparison_group'] == 'Eventos ML']

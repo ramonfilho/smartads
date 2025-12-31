@@ -512,12 +512,32 @@ class SalesDataLoader:
         combined = combined.sort_values('_priority')
 
         before = len(combined)
+        before_guru = len(combined[combined['origem'] == 'guru'])
+        before_tmb = len(combined[combined['origem'] == 'tmb'])
+
+        # Identificar duplicatas antes de remover
+        duplicates = combined[combined.duplicated(subset=['email', 'sale_date'], keep=False)]
+
         combined = combined.drop_duplicates(subset=['email', 'sale_date'], keep='first')
         combined = combined.drop(columns=['_priority'])
         after = len(combined)
 
         if before != after:
-            logger.info(f"   Removidas {before - after} duplicatas (priorizando Guru)")
+            logger.info(f"   🔧 Deduplicação de vendas:")
+            logger.info(f"      Antes: {before} vendas (Guru: {before_guru}, TMB: {before_tmb})")
+            logger.info(f"      Duplicatas encontradas: {before - after} vendas com mesmo email+data")
+            logger.info(f"      Depois: {after} vendas únicas")
+
+            # Mostrar alguns exemplos de duplicatas (primeiras 3)
+            if len(duplicates) > 0:
+                logger.info(f"      📋 Exemplos de duplicatas (primeiras {min(3, len(duplicates)//2)}):")
+                dup_emails = duplicates['email'].unique()[:3]
+                for email in dup_emails:
+                    dup_rows = duplicates[duplicates['email'] == email]
+                    if len(dup_rows) > 1:
+                        origins = ', '.join(dup_rows['origem'].tolist())
+                        date = dup_rows['sale_date'].iloc[0].strftime('%Y-%m-%d') if pd.notna(dup_rows['sale_date'].iloc[0]) else 'sem data'
+                        logger.info(f"         • {email[:20]}... ({date}) → {origins}")
 
         logger.info(f"   ✅ {len(combined)} vendas únicas combinadas")
         logger.info(f"      Guru: {len(combined[combined['origem'] == 'guru'])}")

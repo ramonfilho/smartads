@@ -573,8 +573,24 @@ def main():
     print(f"   Período de Captação (Leads/Campanhas): {start_date} a {end_date}", flush=True)
     print(f"   Período de Vendas (Matching): {sales_start} a {sales_end}", flush=True)
     print(flush=True)
+
+    # Armazenar estatísticas antes do filtro
+    sales_before = len(sales_df)
+    sales_guru_before = len(sales_df[sales_df['origem'] == 'guru']) if 'origem' in sales_df.columns else 0
+    sales_tmb_before = len(sales_df[sales_df['origem'] == 'tmb']) if 'origem' in sales_df.columns else 0
+
     leads_df = filter_by_period(leads_df, start_date, end_date, 'data_captura')
     sales_df = filter_by_period(sales_df, sales_start, sales_end, 'sale_date')
+
+    # Mostrar estatísticas detalhadas após filtro de vendas
+    sales_after = len(sales_df)
+    sales_guru_after = len(sales_df[sales_df['origem'] == 'guru']) if 'origem' in sales_df.columns else 0
+    sales_tmb_after = len(sales_df[sales_df['origem'] == 'tmb']) if 'origem' in sales_df.columns else 0
+
+    logger.info(f"📊 Vendas após filtro de período:")
+    logger.info(f"   Total: {sales_before} → {sales_after} vendas ({sales_after/sales_before*100:.1f}%)")
+    logger.info(f"   Guru: {sales_guru_before} → {sales_guru_after} vendas")
+    logger.info(f"   TMB: {sales_tmb_before} → {sales_tmb_after} vendas")
 
     if leads_df.empty:
         logger.error("❌ Nenhum lead no período especificado")
@@ -603,7 +619,13 @@ def main():
 
     # Carregar relatórios Meta locais
     # IMPORTANTE: Usar pasta específica com relatórios oficiais do período (não adsets_analysis)
-    reports_dir = 'files/validation/meta_reports/02:12 - 08:12'
+    # Construir caminho dinamicamente baseado nas datas fornecidas
+    from datetime import datetime
+    start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+    end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+    start_str = start_dt.strftime('%d:%m')
+    end_str = end_dt.strftime('%d:%m')
+    reports_dir = f'files/validation/meta_reports/{start_str} - {end_str}'
     loader = MetaReportsLoader(reports_dir)
     costs_hierarchy_temp = loader.build_costs_hierarchy(start_date, end_date)
 
