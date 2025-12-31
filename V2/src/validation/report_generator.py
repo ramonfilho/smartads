@@ -220,14 +220,16 @@ class ValidationReportGenerator:
         self._write_comparacao_ml(writer, ml_comparison, campanhas_df, all_adsets_comparison, adsets_df, ads_df, ads_in_adsets_df, matched_ads_in_adsets_df, formats)
 
         # Aba 5: Comparação Faixa A (Eventos ML vs Faixa A - sistema legado)
-        if campaign_metrics is not None and not campaign_metrics.empty and 'comparison_group' in campaign_metrics.columns:
-            logger.info("   Gerando aba: Comparação Faixa A")
-            self._write_comparacao_faixa_a(writer, campaign_metrics, formats, matched_adsets_faixa_a)
+        # COMENTADO: Abas de Faixa A desabilitadas temporariamente
+        # if campaign_metrics is not None and not campaign_metrics.empty and 'comparison_group' in campaign_metrics.columns:
+        #     logger.info("   Gerando aba: Comparação Faixa A")
+        #     self._write_comparacao_faixa_a(writer, campaign_metrics, formats, matched_adsets_faixa_a)
 
         # Aba 6: Instâncias - Faixa A (nova aba com cada linha do CSV)
-        if faixa_a_instances_detail is not None and not faixa_a_instances_detail.empty:
-            logger.info("   Gerando aba: Instâncias - Faixa A")
-            self._write_faixa_a_instances_detail(writer, faixa_a_instances_detail, formats)
+        # COMENTADO: Abas de Faixa A desabilitadas temporariamente
+        # if faixa_a_instances_detail is not None and not faixa_a_instances_detail.empty:
+        #     logger.info("   Gerando aba: Instâncias - Faixa A")
+        #     self._write_faixa_a_instances_detail(writer, faixa_a_instances_detail, formats)
 
         # Aba FINAL: Detalhes das Conversões (movida para última posição)
         if sales_df is not None:
