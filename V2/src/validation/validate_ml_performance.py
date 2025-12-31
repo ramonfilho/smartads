@@ -816,6 +816,7 @@ def main():
     ad_in_matched_adsets_comparisons = None
     matched_ads_in_matched_adsets_comparisons = None
     matched_adsets_faixa_a = None
+    faixa_a_instances_detail = None
 
     if not args.disable_fair_comparison and len(campaign_metrics) > 0:
         try:
@@ -825,7 +826,8 @@ def main():
                 compare_adset_performance,
                 compare_ads_in_matched_adsets,
                 compare_matched_ads_in_matched_adsets,
-                identify_matched_adsets_faixa_a
+                identify_matched_adsets_faixa_a,
+                get_faixa_a_instances_detail
             )
 
             print("\n📊 COMPARAÇÃO DE ADSETS E ADS (relatórios locais)...", flush=True)
@@ -962,6 +964,22 @@ def main():
                 except Exception as e:
                     logger.warning(f"   ⚠️ Erro ao identificar matched adsets Faixa A: {e}")
                     matched_adsets_faixa_a = None
+
+                # 3.1. Obter detalhes de cada instância de adset (Faixa A)
+                try:
+                    faixa_a_instances_detail = get_faixa_a_instances_detail(
+                        eventos_ml_campaign_ids=eventos_ml_campaign_ids,
+                        matched_df=matched_df
+                    )
+                    if not faixa_a_instances_detail.empty:
+                        logger.info(f"   ✅ {len(faixa_a_instances_detail)} instâncias de adsets processadas (Eventos ML vs Faixa A)")
+                    else:
+                        logger.info("   ℹ️ Nenhuma instância de adset encontrada")
+                except Exception as e:
+                    logger.warning(f"   ⚠️ Erro ao obter detalhes de instâncias Faixa A: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    faixa_a_instances_detail = None
 
                 # COMENTADO: Comparação de ads desabilitada temporariamente
                 # # 3. Comparar TODOS os ads (se houver ads_df)
@@ -1159,7 +1177,8 @@ def main():
         ad_level_comparisons=ad_level_comparisons,
         ad_in_matched_adsets_comparisons=ad_in_matched_adsets_comparisons,
         matched_ads_in_matched_adsets_comparisons=matched_ads_in_matched_adsets_comparisons,
-        matched_adsets_faixa_a=matched_adsets_faixa_a
+        matched_adsets_faixa_a=matched_adsets_faixa_a,
+        faixa_a_instances_detail=faixa_a_instances_detail
     )
     print(f"   ✅ Excel salvo: {excel_path}", flush=True)
     print(flush=True)

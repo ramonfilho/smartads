@@ -603,6 +603,201 @@ def identify_matched_adsets_faixa_a(
     return matched_adset_names, aggregated
 
 
+def get_faixa_a_instances_detail(
+    eventos_ml_campaign_ids: List[str],
+    matched_df: Optional[pd.DataFrame] = None
+) -> pd.DataFrame:
+    """
+    Retorna detalhes de CADA INSTÂNCIA de adset matched entre Eventos ML e Faixa A.
+
+    Cada linha do DataFrame retornado representa uma linha dos CSVs de Faixa A que foi
+    marcada como matched (tem valor em colunas 'Evento ML').
+
+    Args:
+        eventos_ml_campaign_ids: IDs das campanhas Eventos ML
+        matched_df: DataFrame com conversões matched (leads→vendas) - OPCIONAL
+
+    Returns:
+        DataFrame com colunas:
+        - adset_name: Nome do adset
+        - campaign_name: Nome da campanha
+        - campaign_id: ID da campanha
+        - comparison_group: 'Eventos ML' ou 'Faixa A'
+        - spend: Valor gasto
+        - leads: Número de leads
+        - conversions: Número de vendas
+        - revenue: Receita total
+        - roas: ROAS (receita / gasto)
+    """
+    from pathlib import Path
+    import glob
+
+    logger.info("📋 Carregando detalhes de instâncias de adsets matched (Faixa A)...")
+
+    # Carregar CSVs de Faixa A (mesmos arquivos de mapeamento)
+    base_path = Path("files/validation/meta_reports/adsets_analysis/faixa")
+    csv_files = glob.glob(str(base_path / "*.csv"))
+
+    if not csv_files:
+        logger.warning("   ⚠️ Nenhum arquivo CSV encontrado em adsets_analysis/faixa/")
+        return pd.DataFrame()
+
+    # Carregar CSVs de Eventos ML (para pegar spend/leads de Eventos ML)
+    eventos_ml_path = Path("files/validation/meta_reports/adsets_analysis/eventos_ml")
+    eventos_ml_csv_files = glob.glob(str(eventos_ml_path / "*.csv"))
+
+    # Combinar CSVs Faixa A
+    faixa_dfs = []
+    for csv_file in csv_files:
+        try:
+            df = pd.read_csv(csv_file)
+            faixa_dfs.append(df)
+        except Exception as e:
+            logger.warning(f"   ⚠️ Erro ao ler {Path(csv_file).name}: {e}")
+
+    # Combinar CSVs Eventos ML
+    eventos_ml_dfs = []
+    for csv_file in eventos_ml_csv_files:
+        try:
+            df = pd.read_csv(csv_file)
+            eventos_ml_dfs.append(df)
+        except Exception as e:
+            logger.warning(f"   ⚠️ Erro ao ler {Path(csv_file).name}: {e}")
+
+    if not faixa_dfs:
+        logger.warning("   ⚠️ Nenhum arquivo Faixa A válido carregado")
+        return pd.DataFrame()
+
+    faixa_mapping = pd.concat(faixa_dfs, ignore_index=True)
+    eventos_ml_mapping = pd.concat(eventos_ml_dfs, ignore_index=True) if eventos_ml_dfs else pd.DataFrame()
+
+    # Identificar colunas de Eventos ML
+    evento_ml_cols = [col for col in faixa_mapping.columns if 'evento ml' in col.lower()]
+
+    if not evento_ml_cols:
+        logger.warning("   ⚠️ Colunas 'Evento ML' não encontradas")
+        return pd.DataFrame()
+
+    # Normalizar nomes de adsets
+    faixa_mapping['adset_name_normalized'] = faixa_mapping['Nome do conjunto de anúncios'].apply(normalize_whitespace)
+    if not eventos_ml_mapping.empty and 'Nome do conjunto de anúncios' in eventos_ml_mapping.columns:
+        eventos_ml_mapping['adset_name_normalized'] = eventos_ml_mapping['Nome do conjunto de anúncios'].apply(normalize_whitespace)
+
+    # Filtrar apenas linhas matched (têm marcação Eventos ML)
+    matched_mask = faixa_mapping[evento_ml_cols].fillna(0).sum(axis=1) > 0
+    matched_rows = faixa_mapping[matched_mask].copy()
+
+    if matched_rows.empty:
+        logger.info("   ℹ️ Nenhuma instância matched encontrada")
+        return pd.DataFrame()
+
+    logger.info(f"   ✅ {len(matched_rows)} instâncias matched encontradas nos CSVs Faixa A")
+
+    # Preparar lista de resultados
+    results = []
+
+    # IDs de campanhas Eventos ML (primeiros 15 dígitos)
+    eventos_ml_ids_15 = [str(cid)[:15] for cid in eventos_ml_campaign_ids]
+
+    # PASSO 1: Processar TODAS as linhas de Faixa A matched
+    for idx, row in matched_rows.iterrows():
+        adset_name = row['adset_name_normalized']
+        campaign_name = row.get('Nome da campanha', '')
+        campaign_id = str(row.get('Identificação da campanha', ''))[:15]
+        spend = row.get('Valor usado (BRL)', 0)
+        leads = row.get('Leads', 0)
+
+        # Criar registro Faixa A
+        faixa_record = {
+            'adset_name': adset_name,
+            'campaign_name': campaign_name,
+            'campaign_id': campaign_id,
+            'comparison_group': 'Faixa A',
+            'spend': spend if pd.notna(spend) else 0,
+            'leads': leads if pd.notna(leads) else 0,
+            'conversions': 0,  # Será preenchido depois
+            'revenue': 0,      # Será preenchido depois
+            'roas': 0          # Será calculado depois
+        }
+        results.append(faixa_record)
+
+    # PASSO 2: Processar TODAS as instâncias de Eventos ML (independentemente)
+    # Coletar adsets únicos que foram matched
+    matched_adset_names = matched_rows['adset_name_normalized'].unique()
+
+    if not eventos_ml_mapping.empty:
+        # Filtrar apenas instâncias de Eventos ML que correspondem a adsets matched
+        eventos_ml_matched = eventos_ml_mapping[
+            eventos_ml_mapping['adset_name_normalized'].isin(matched_adset_names)
+        ]
+
+        for _, ml_row in eventos_ml_matched.iterrows():
+            adset_name = ml_row['adset_name_normalized']
+            ml_campaign_name = ml_row.get('Nome da campanha', '')
+            ml_campaign_id = str(ml_row.get('Identificação da campanha', ''))[:15]
+            ml_spend = ml_row.get('Valor usado (BRL)', 0)
+            ml_leads = ml_row.get('Leads', 0)
+
+            ml_record = {
+                'adset_name': adset_name,
+                'campaign_name': ml_campaign_name,
+                'campaign_id': ml_campaign_id,
+                'comparison_group': 'Eventos ML',
+                'spend': ml_spend if pd.notna(ml_spend) else 0,
+                'leads': ml_leads if pd.notna(ml_leads) else 0,
+                'conversions': 0,
+                'revenue': 0,
+                'roas': 0
+            }
+            results.append(ml_record)
+
+    if not results:
+        logger.warning("   ⚠️ Nenhum resultado processado")
+        return pd.DataFrame()
+
+    # Criar DataFrame
+    instances_df = pd.DataFrame(results)
+
+    # Adicionar conversões do matched_df
+    if matched_df is not None and not matched_df.empty and 'medium' in matched_df.columns:
+        logger.info("   📊 Adicionando conversões do matched_df...")
+
+        matched_df_copy = matched_df.copy()
+        matched_df_copy['medium_norm'] = matched_df_copy['medium'].apply(normalize_whitespace)
+        matched_df_copy['campaign_id_15'] = matched_df_copy['campaign_id'].astype(str).str[:15]
+
+        # Para cada instância, contar conversões
+        for idx, row in instances_df.iterrows():
+            adset_name = row['adset_name']
+            campaign_id = row['campaign_id']
+
+            # Filtrar conversões para este adset + campanha
+            instance_conversions = matched_df_copy[
+                (matched_df_copy['medium_norm'] == adset_name) &
+                (matched_df_copy['campaign_id_15'] == campaign_id) &
+                (matched_df_copy['converted'] == True)
+            ]
+
+            if not instance_conversions.empty:
+                conversions = len(instance_conversions['email'].unique())  # Conversões únicas
+                revenue = instance_conversions['sale_value'].sum()
+
+                instances_df.at[idx, 'conversions'] = conversions
+                instances_df.at[idx, 'revenue'] = revenue
+
+    # Calcular ROAS
+    instances_df['roas'] = instances_df.apply(
+        lambda row: row['revenue'] / row['spend'] if row['spend'] > 0 else 0,
+        axis=1
+    )
+
+    logger.info(f"   ✅ {len(instances_df)} instâncias processadas com conversões")
+    logger.info(f"      Eventos ML: {len(instances_df[instances_df['comparison_group'] == 'Eventos ML'])} instâncias")
+    logger.info(f"      Faixa A: {len(instances_df[instances_df['comparison_group'] == 'Faixa A'])} instâncias")
+
+    return instances_df
+
+
 # ============================================================================
 # FUNÇÕES DE COMPARAÇÃO DE PERFORMANCE
 # ============================================================================

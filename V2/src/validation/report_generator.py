@@ -47,7 +47,8 @@ class ValidationReportGenerator:
         ad_level_comparisons: Optional[Dict] = None,
         ad_in_matched_adsets_comparisons: Optional[Dict] = None,
         matched_ads_in_matched_adsets_comparisons: Optional[Dict] = None,
-        matched_adsets_faixa_a: Optional[pd.DataFrame] = None
+        matched_adsets_faixa_a: Optional[pd.DataFrame] = None,
+        faixa_a_instances_detail: Optional[pd.DataFrame] = None
     ) -> str:
         """
         Gera relatório Excel completo com 5-6 abas.
@@ -222,6 +223,11 @@ class ValidationReportGenerator:
         if campaign_metrics is not None and not campaign_metrics.empty and 'comparison_group' in campaign_metrics.columns:
             logger.info("   Gerando aba: Comparação Faixa A")
             self._write_comparacao_faixa_a(writer, campaign_metrics, formats, matched_adsets_faixa_a)
+
+        # Aba 6: Instâncias - Faixa A (nova aba com cada linha do CSV)
+        if faixa_a_instances_detail is not None and not faixa_a_instances_detail.empty:
+            logger.info("   Gerando aba: Instâncias - Faixa A")
+            self._write_faixa_a_instances_detail(writer, faixa_a_instances_detail, formats)
 
         # Aba FINAL: Detalhes das Conversões (movida para última posição)
         if sales_df is not None:
@@ -1199,6 +1205,181 @@ class ValidationReportGenerator:
             worksheet.write(row, 0, "➖ Empate técnico em ROAS", formats['header'])
 
         return row + 2
+
+    def _write_faixa_a_instances_detail(
+        self,
+        writer: pd.ExcelWriter,
+        instances_df: pd.DataFrame,
+        formats: Dict
+    ):
+        """
+        Escreve aba 'Detalhes por Instância - Faixa A' mostrando cada instância de adset matched.
+
+        Cada linha representa uma entrada dos CSVs (uma instância de adset numa campanha).
+
+        Args:
+            writer: Excel writer
+            instances_df: DataFrame com detalhes de cada instância
+            formats: Formatos do Excel
+        """
+        worksheet = writer.book.add_worksheet('Instâncias - Faixa A')
+        current_row = 0
+
+        # Título
+        worksheet.write(current_row, 0, '📋 DETALHES POR INSTÂNCIA - ADSETS MATCHED (EVENTOS ML vs FAIXA A)', formats['title'])
+        current_row += 1
+        worksheet.write(current_row, 0, 'Cada linha representa uma instância de adset (linha do CSV) matched entre Eventos ML e Faixa A', formats['subtitle'])
+        current_row += 2
+
+        # Separar por grupo
+        eventos_ml_instances = instances_df[instances_df['comparison_group'] == 'Eventos ML'].copy()
+        faixa_a_instances = instances_df[instances_df['comparison_group'] == 'Faixa A'].copy()
+
+        # Ordenar por adset_name e campaign_name
+        eventos_ml_instances = eventos_ml_instances.sort_values(['adset_name', 'campaign_name'])
+        faixa_a_instances = faixa_a_instances.sort_values(['adset_name', 'campaign_name'])
+
+        # EVENTOS ML
+        if not eventos_ml_instances.empty:
+            worksheet.write(current_row, 0, '🎯 EVENTOS ML (Campanhas com Eventos CAPI Customizados)', formats['header_green'])
+            current_row += 2
+
+            # Cabeçalhos
+            headers = ['Nome do Adset', 'Nome da Campanha', 'ID da Campanha', 'Gasto (R$)', 'Leads', 'Vendas', 'Receita (R$)', 'ROAS']
+            for col, header in enumerate(headers):
+                worksheet.write(current_row, col, header, formats['header'])
+            current_row += 1
+
+            # Dados
+            for _, row in eventos_ml_instances.iterrows():
+                worksheet.write(current_row, 0, row['adset_name'], formats['text'])
+                worksheet.write(current_row, 1, row['campaign_name'], formats['text'])
+                worksheet.write(current_row, 2, row['campaign_id'], formats['text'])
+                worksheet.write(current_row, 3, row['spend'], formats['currency'])
+                worksheet.write(current_row, 4, int(row['leads']), formats['number'])
+                worksheet.write(current_row, 5, int(row['conversions']), formats['number'])
+                worksheet.write(current_row, 6, row['revenue'], formats['currency'])
+                worksheet.write(current_row, 7, row['roas'], formats['decimal'])
+                current_row += 1
+
+            # Totais Eventos ML
+            total_ml_spend = eventos_ml_instances['spend'].sum()
+            total_ml_leads = eventos_ml_instances['leads'].sum()
+            total_ml_conversions = eventos_ml_instances['conversions'].sum()
+            total_ml_revenue = eventos_ml_instances['revenue'].sum()
+            total_ml_roas = total_ml_revenue / total_ml_spend if total_ml_spend > 0 else 0
+
+            worksheet.write(current_row, 0, 'TOTAL EVENTOS ML', formats['header_green'])
+            worksheet.write(current_row, 1, '', formats['header_green'])
+            worksheet.write(current_row, 2, '', formats['header_green'])
+            worksheet.write(current_row, 3, total_ml_spend, formats['currency'])
+            worksheet.write(current_row, 4, int(total_ml_leads), formats['number'])
+            worksheet.write(current_row, 5, int(total_ml_conversions), formats['number'])
+            worksheet.write(current_row, 6, total_ml_revenue, formats['currency'])
+            worksheet.write(current_row, 7, total_ml_roas, formats['decimal'])
+            current_row += 3
+
+        # FAIXA A
+        if not faixa_a_instances.empty:
+            worksheet.write(current_row, 0, '📊 FAIXA A (Sistema Legado)', formats['header'])
+            current_row += 2
+
+            # Cabeçalhos
+            headers = ['Nome do Adset', 'Nome da Campanha', 'ID da Campanha', 'Gasto (R$)', 'Leads', 'Vendas', 'Receita (R$)', 'ROAS']
+            for col, header in enumerate(headers):
+                worksheet.write(current_row, col, header, formats['header'])
+            current_row += 1
+
+            # Dados
+            for _, row in faixa_a_instances.iterrows():
+                worksheet.write(current_row, 0, row['adset_name'], formats['text'])
+                worksheet.write(current_row, 1, row['campaign_name'], formats['text'])
+                worksheet.write(current_row, 2, row['campaign_id'], formats['text'])
+                worksheet.write(current_row, 3, row['spend'], formats['currency'])
+                worksheet.write(current_row, 4, int(row['leads']), formats['number'])
+                worksheet.write(current_row, 5, int(row['conversions']), formats['number'])
+                worksheet.write(current_row, 6, row['revenue'], formats['currency'])
+                worksheet.write(current_row, 7, row['roas'], formats['decimal'])
+                current_row += 1
+
+            # Totais Faixa A
+            total_faixa_spend = faixa_a_instances['spend'].sum()
+            total_faixa_leads = faixa_a_instances['leads'].sum()
+            total_faixa_conversions = faixa_a_instances['conversions'].sum()
+            total_faixa_revenue = faixa_a_instances['revenue'].sum()
+            total_faixa_roas = total_faixa_revenue / total_faixa_spend if total_faixa_spend > 0 else 0
+
+            worksheet.write(current_row, 0, 'TOTAL FAIXA A', formats['header'])
+            worksheet.write(current_row, 1, '', formats['header'])
+            worksheet.write(current_row, 2, '', formats['header'])
+            worksheet.write(current_row, 3, total_faixa_spend, formats['currency'])
+            worksheet.write(current_row, 4, int(total_faixa_leads), formats['number'])
+            worksheet.write(current_row, 5, int(total_faixa_conversions), formats['number'])
+            worksheet.write(current_row, 6, total_faixa_revenue, formats['currency'])
+            worksheet.write(current_row, 7, total_faixa_roas, formats['decimal'])
+            current_row += 3
+
+        # Resumo comparativo
+        worksheet.write(current_row, 0, '📊 RESUMO COMPARATIVO', formats['title'])
+        current_row += 2
+
+        if not eventos_ml_instances.empty and not faixa_a_instances.empty:
+            summary_data = [
+                ('Número de Instâncias', len(eventos_ml_instances), len(faixa_a_instances)),
+                ('Gasto Total', total_ml_spend, total_faixa_spend),
+                ('Leads Totais', total_ml_leads, total_faixa_leads),
+                ('Vendas Totais', total_ml_conversions, total_faixa_conversions),
+                ('Receita Total', total_ml_revenue, total_faixa_revenue),
+                ('ROAS Médio', total_ml_roas, total_faixa_roas),
+            ]
+
+            # Cabeçalhos
+            worksheet.write(current_row, 0, 'Métrica', formats['header'])
+            worksheet.write(current_row, 1, 'Eventos ML', formats['header_green'])
+            worksheet.write(current_row, 2, 'Faixa A', formats['header'])
+            worksheet.write(current_row, 3, 'Diferença', formats['header'])
+            current_row += 1
+
+            # Dados
+            for metric_name, ml_value, faixa_value in summary_data:
+                worksheet.write(current_row, 0, metric_name, formats['text'])
+
+                # Formatar valores
+                if 'Gasto' in metric_name or 'Receita' in metric_name:
+                    worksheet.write(current_row, 1, ml_value, formats['currency'])
+                    worksheet.write(current_row, 2, faixa_value, formats['currency'])
+                elif 'ROAS' in metric_name:
+                    worksheet.write(current_row, 1, ml_value, formats['decimal'])
+                    worksheet.write(current_row, 2, faixa_value, formats['decimal'])
+                else:
+                    worksheet.write(current_row, 1, ml_value, formats['number'])
+                    worksheet.write(current_row, 2, faixa_value, formats['number'])
+
+                # Diferença %
+                if faixa_value > 0:
+                    diff_pct = ((ml_value - faixa_value) / faixa_value) * 100
+                    worksheet.write(current_row, 3, diff_pct / 100, formats['percent'])
+                else:
+                    worksheet.write(current_row, 3, 0, formats['percent'])
+
+                current_row += 1
+
+            # Vencedor
+            current_row += 1
+            if total_ml_roas > total_faixa_roas:
+                diff = ((total_ml_roas - total_faixa_roas) / total_faixa_roas * 100) if total_faixa_roas > 0 else 0
+                worksheet.write(current_row, 0, f'🏆 VENCEDOR: Eventos ML (ROAS {diff:.1f}% maior)', formats['header_green'])
+            elif total_faixa_roas > total_ml_roas:
+                diff = ((total_faixa_roas - total_ml_roas) / total_ml_roas * 100) if total_ml_roas > 0 else 0
+                worksheet.write(current_row, 0, f'🏆 VENCEDOR: Faixa A (ROAS {diff:.1f}% maior)', formats['header_red'])
+            else:
+                worksheet.write(current_row, 0, '🤝 EMPATE', formats['header'])
+
+        # Ajustar larguras de colunas
+        worksheet.set_column(0, 0, 40)  # Nome do Adset
+        worksheet.set_column(1, 1, 60)  # Nome da Campanha
+        worksheet.set_column(2, 2, 18)  # ID da Campanha
+        worksheet.set_column(3, 7, 15)  # Métricas
 
     def _write_consolidated_table(
         self,
