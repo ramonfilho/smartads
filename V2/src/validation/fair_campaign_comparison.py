@@ -21,6 +21,9 @@ import pandas as pd
 # Adicionar path para imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+# Importar ajuste TMB
+from src.validation.tmb_adjuster import adjust_revenue_for_tmb, FATOR_TMB_MEDIO
+
 # Meta Ads API
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
@@ -840,14 +843,18 @@ def compare_all_adsets_performance(
         if 'converted' in matched_df.columns:
             converted_leads = matched_df[matched_df['converted'] == True].copy()
 
+            # Aplicar ajuste TMB
+            converted_leads = adjust_revenue_for_tmb(converted_leads, fator=FATOR_TMB_MEDIO)
+
             conversions_by_campaign_adset = converted_leads.groupby(
                 ['campaign', 'medium', 'comparison_group']
             ).agg({
                 'email': 'nunique',  # Conversões únicas
-                'sale_value': 'sum'   # Receita real total
+                'sale_value': 'sum',   # Receita nominal
+                'sale_value_adjusted': 'sum'  # Receita ajustada TMB
             }).reset_index()
 
-            conversions_by_campaign_adset.columns = ['campaign_name', 'adset_name', 'comparison_group', 'conversions', 'revenue']
+            conversions_by_campaign_adset.columns = ['campaign_name', 'adset_name', 'comparison_group', 'conversions', 'revenue', 'revenue_adjusted']
 
             # Merge leads + conversões
             metrics_by_campaign_adset = leads_by_campaign_adset.merge(
@@ -857,11 +864,13 @@ def compare_all_adsets_performance(
             )
             metrics_by_campaign_adset['conversions'] = metrics_by_campaign_adset['conversions'].fillna(0)
             metrics_by_campaign_adset['revenue'] = metrics_by_campaign_adset['revenue'].fillna(0)
+            metrics_by_campaign_adset['revenue_adjusted'] = metrics_by_campaign_adset['revenue_adjusted'].fillna(0)
         else:
             # Se não tem conversões, usar apenas leads
             metrics_by_campaign_adset = leads_by_campaign_adset.copy()
             metrics_by_campaign_adset['conversions'] = 0
             metrics_by_campaign_adset['revenue'] = 0
+            metrics_by_campaign_adset['revenue_adjusted'] = 0
 
         # Extrair Campaign ID do final do nome
         def extract_campaign_id(campaign_name):
@@ -948,6 +957,8 @@ def compare_all_adsets_performance(
     adsets_full['leads_count'] = adsets_full['leads_count'].fillna(0)
     adsets_full['conversions'] = adsets_full['conversions'].fillna(0)
     adsets_full['revenue'] = adsets_full['revenue'].fillna(0)  # Receita real do matched_df
+    if 'revenue_adjusted' in adsets_full.columns:
+        adsets_full['revenue_adjusted'] = adsets_full['revenue_adjusted'].fillna(0)  # Receita ajustada TMB
 
     # CRÍTICO: Usar APENAS comparison_group do matched_df - NÃO preencher com mapeamento!
     # Isso garante que a classificação seja EXATAMENTE a mesma que na Tabela 1
@@ -1243,12 +1254,17 @@ def compare_all_adsets_performance(
                 except Exception as e:
                     logger.error(f"           ❌ Erro ao buscar emails: {e}")
 
+    # Garantir que revenue_adjusted existe antes da agregação
+    if 'revenue_adjusted' not in adsets_filtered.columns:
+        adsets_filtered['revenue_adjusted'] = 0
+
     # Agregar por comparison_group
     aggregated = adsets_filtered.groupby('comparison_group').agg({
         'leads': 'sum',
         'conversions': 'sum',
         'spend': 'sum',
         'revenue': 'sum',
+        'revenue_adjusted': 'sum',
         'margin': 'sum'
     }).reset_index()
 
@@ -1256,6 +1272,11 @@ def compare_all_adsets_performance(
     aggregated['conversion_rate'] = aggregated['conversions'] / aggregated['leads']
     aggregated['cpl'] = aggregated['spend'] / aggregated['leads']
     aggregated['roas'] = aggregated['revenue'] / aggregated['spend']
+
+    # Calcular ROAS Ajustado TMB e Margem Ajustada se disponível
+    if 'revenue_adjusted' in aggregated.columns:
+        aggregated['roas_adjusted'] = aggregated['revenue_adjusted'] / aggregated['spend']
+        aggregated['margin_adjusted'] = aggregated['revenue_adjusted'] - aggregated['spend']
 
     logger.info(f"   ✅ Comparação completa de adsets calculada")
     logger.info(f"      Eventos ML: {aggregated[aggregated['comparison_group']=='Eventos ML']['conversions'].sum():.0f} conversões")
@@ -1309,14 +1330,18 @@ def compare_adset_performance(
         # CRÍTICO: Contar emails únicos, não agregação de linhas (evita duplicatas)
         converted_leads = matched_df[matched_df['converted'] == True].copy()
 
+        # Aplicar ajuste TMB
+        converted_leads = adjust_revenue_for_tmb(converted_leads, fator=FATOR_TMB_MEDIO)
+
         conversions_by_campaign_adset = converted_leads.groupby(
             ['campaign', 'medium']  # campaign + medium = identificação única
         ).agg({
             'email': 'nunique',  # Conversões únicas
-            'sale_value': 'sum'   # Receita real total
+            'sale_value': 'sum',   # Receita nominal
+            'sale_value_adjusted': 'sum'  # Receita ajustada TMB
         }).reset_index()
 
-        conversions_by_campaign_adset.columns = ['campaign_name', 'adset_name', 'conversions', 'revenue']
+        conversions_by_campaign_adset.columns = ['campaign_name', 'adset_name', 'conversions', 'revenue', 'revenue_adjusted']
 
         # NOVO: Calcular LEADS (todos, não só convertidos) por campanha + adset
         # IMPORTANTE: Usar TODOS os leads do matched_df para garantir consistência
@@ -1515,7 +1540,7 @@ def compare_adset_performance(
         numeric_cols_to_sum.append('lead_qualified_hq')
 
     # Colunas que vêm do matched_df - NÃO somar (usar max para pegar maior valor)
-    numeric_cols_to_max = ['conversions', 'revenue', 'leads_matched_df']
+    numeric_cols_to_max = ['conversions', 'revenue', 'revenue_adjusted', 'leads_matched_df']
 
     # Colunas de identificação para agrupar
     group_cols = ['campaign_id', 'adset_id']
@@ -1636,6 +1661,11 @@ def compare_adset_performance(
     adsets_full['conversions'] = adsets_full['conversions'].fillna(0)
     adsets_full['revenue'] = adsets_full['revenue'].fillna(0)  # Receita real do matched_df
 
+    # Preencher revenue_adjusted (TMB) se disponível
+    if 'revenue_adjusted' in adsets_full.columns:
+        adsets_full['revenue_adjusted'] = adsets_full['revenue_adjusted'].fillna(0)
+        logger.info(f"   ✅ revenue_adjusted preenchida com zeros onde necessário")
+
     # Remover colunas temporárias
     adsets_full = adsets_full.drop(columns=['campaign_id_clean', 'campaign_id_from_utm', 'campaign_name_conv'], errors='ignore')
 
@@ -1723,8 +1753,16 @@ def compare_adset_performance(
     adsets_full['margin'] = adsets_full['revenue'] - adsets_full['spend']
     adsets_full['margin_pct'] = (adsets_full['margin'] / adsets_full['revenue'].replace(0, 1)) * 100
 
+    # Calcular ROAS Ajustado TMB se disponível
+    if 'revenue_adjusted' in adsets_full.columns:
+        adsets_full['roas_adjusted'] = adsets_full['revenue_adjusted'] / adsets_full['spend'].replace(0, 1)
+        logger.info(f"   ✅ ROAS Ajustado TMB calculado para adsets_full")
+    else:
+        logger.warning(f"   ⚠️ 'revenue_adjusted' NÃO encontrado em adsets_full")
+        logger.warning(f"   🔍 Colunas em adsets_full: {adsets_full.columns.tolist()}")
+
     # Agregação ML vs Controle
-    aggregated = adsets_full.groupby('ml_type').agg({
+    agg_dict_ml = {
         'adset_name': 'nunique',
         'spend': 'sum',
         'leads': 'sum',
@@ -1735,7 +1773,22 @@ def compare_adset_performance(
         'roas': 'mean',
         'margin': 'sum',
         'margin_pct': 'mean'
-    }).reset_index()
+    }
+
+    # Adicionar revenue e revenue_adjusted se disponíveis
+    if 'revenue' in adsets_full.columns:
+        agg_dict_ml['revenue'] = 'sum'
+    if 'revenue_adjusted' in adsets_full.columns:
+        agg_dict_ml['revenue_adjusted'] = 'sum'
+
+    aggregated = adsets_full.groupby('ml_type').agg(agg_dict_ml).reset_index()
+
+    # Recalcular ROAS e ROAS Ajustado TMB após agregação
+    if 'revenue' in aggregated.columns:
+        aggregated['roas'] = aggregated['revenue'] / aggregated['spend'].replace(0, 1)
+    if 'revenue_adjusted' in aggregated.columns:
+        aggregated['roas_adjusted'] = aggregated['revenue_adjusted'] / aggregated['spend'].replace(0, 1)
+        aggregated['margin_adjusted'] = aggregated['revenue_adjusted'] - aggregated['spend']
 
     # Detalhamento adset-a-adset (CADA CAMPANHA SEPARADA - NÃO AGREGAR)
     # MUDANÇA IMPORTANTE: Não agrupar por adset_name
@@ -1749,6 +1802,12 @@ def compare_adset_performance(
 
     if 'total_spend' in adsets_full.columns:
         detail_columns.append('total_spend')
+
+    # Adicionar colunas ajustadas TMB se disponíveis
+    if 'revenue_adjusted' in adsets_full.columns:
+        detail_columns.append('revenue_adjusted')
+    if 'roas_adjusted' in adsets_full.columns:
+        detail_columns.append('roas_adjusted')
 
     detailed = adsets_full[detail_columns].copy()
 
@@ -1940,6 +1999,10 @@ def compare_adset_performance(
             'account_id': 'first'       # CRÍTICO: Preservar account_id durante agregação!
         }
 
+        # Adicionar revenue_adjusted se disponível
+        if 'revenue_adjusted' in detailed.columns:
+            agg_dict['revenue_adjusted'] = 'sum'
+
         detailed_aggregated = detailed.groupby(['campaign_id', 'adset_id', 'comparison_group'], as_index=False).agg(agg_dict)
 
         # Renomear spend_column para 'spend' para compatibilidade
@@ -1955,6 +2018,10 @@ def compare_adset_performance(
         detailed_aggregated['roas'] = detailed_aggregated['revenue'] / detailed_aggregated['spend'].replace(0, 1)
         detailed_aggregated['margin'] = detailed_aggregated['revenue'] - detailed_aggregated['spend']
         detailed_aggregated['margin_pct'] = (detailed_aggregated['margin'] / detailed_aggregated['revenue'].replace(0, 1)) * 100
+
+        # Calcular ROAS Ajustado TMB se disponível
+        if 'revenue_adjusted' in detailed_aggregated.columns:
+            detailed_aggregated['roas_adjusted'] = detailed_aggregated['revenue_adjusted'] / detailed_aggregated['spend'].replace(0, 1)
 
         # Preservar colunas opcionais se existirem
         # NOTA: account_id JÁ foi preservado na agregação (agg_dict linha 1472)
@@ -2434,8 +2501,11 @@ def prepare_adset_comparison_for_excel(
     if not comparisons['detailed'].empty:
         df = comparisons['detailed'].copy()
 
+        # DEBUG: Ver quais colunas existem
+        logger.info(f"   🔍 DEBUG - Colunas em adsets detailed: {df.columns.tolist()}")
+
         # Renomear e reordenar colunas para formato similar à aba Campanhas
-        df = df.rename(columns={
+        column_mapping = {
             'account_id': 'Conta',
             'comparison_group': 'Grupo',
             'campaign_name': 'Campanha',
@@ -2450,7 +2520,15 @@ def prepare_adset_comparison_for_excel(
             'roas': 'ROAS',
             'revenue': 'Receita Total',
             'margin': 'Margem de contribuição'
-        })
+        }
+
+        # Adicionar mapeamentos de TMB ajustado se existirem
+        if 'revenue_adjusted' in df.columns:
+            column_mapping['revenue_adjusted'] = 'Receita Ajustada TMB'
+        if 'roas_adjusted' in df.columns:
+            column_mapping['roas_adjusted'] = 'ROAS Ajustado TMB'
+
+        df = df.rename(columns=column_mapping)
 
         # Mapear account_id para nomes amigáveis
         if 'Conta' in df.columns:
@@ -2484,6 +2562,14 @@ def prepare_adset_comparison_for_excel(
             'Taxa de conversão', 'Valor gasto', 'CPL', 'ROAS',
             'Receita Total', 'Margem de contribuição'
         ]
+
+        # Adicionar colunas ajustadas TMB se existirem
+        if 'Receita Ajustada TMB' in df.columns:
+            columns_order.append('Receita Ajustada TMB')
+        if 'ROAS Ajustado TMB' in df.columns:
+            columns_order.append('ROAS Ajustado TMB')
+        if 'Margem Ajustada TMB' in df.columns:
+            columns_order.append('Margem Ajustada TMB')
 
         # Incluir apenas colunas que existem
         available_columns = [col for col in columns_order if col in df.columns]

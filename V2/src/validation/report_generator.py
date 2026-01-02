@@ -137,6 +137,7 @@ class ValidationReportGenerator:
                 'leads': 'sum',
                 'conversions': 'sum',
                 'total_revenue': 'sum' if 'total_revenue' in campaign_filtered.columns else lambda x: 0,
+                'total_revenue_adjusted': 'sum' if 'total_revenue_adjusted' in campaign_filtered.columns else lambda x: 0,
                 'spend': 'sum',
                 'contribution_margin': 'sum' if 'contribution_margin' in campaign_filtered.columns else lambda x: 0
             })
@@ -148,6 +149,10 @@ class ValidationReportGenerator:
                 campanhas_df['roas'] = (campanhas_df['total_revenue'] / campanhas_df['spend']).fillna(0)
             else:
                 campanhas_df['roas'] = 0
+
+            # Calcular ROAS Ajustado TMB
+            if 'total_revenue_adjusted' in campanhas_df.columns:
+                campanhas_df['roas_adjusted'] = (campanhas_df['total_revenue_adjusted'] / campanhas_df['spend']).fillna(0)
 
             campanhas_df['margin'] = campanhas_df.get('contribution_margin', 0)
         adsets_df = None
@@ -776,23 +781,24 @@ class ValidationReportGenerator:
         current_row += 2  # Espaçamento
 
         # TABELA 2: Comparação por TODOS os Adsets (Eventos ML vs Controle)
-        worksheet.write(current_row, 0, '📊 COMPARAÇÃO POR ADSETS (All vs All)', formats['title'])
-        current_row += 1
-        worksheet.write(current_row, 0, 'Todos os adsets das campanhas Eventos ML vs Controle (sem filtros)', formats['subtitle'])
-        current_row += 2
+        # COMENTADO: Tabela redundante com a de campanhas acima
+        # worksheet.write(current_row, 0, '📊 COMPARAÇÃO POR ADSETS (All vs All)', formats['title'])
+        # current_row += 1
+        # worksheet.write(current_row, 0, 'Todos os adsets das campanhas Eventos ML vs Controle (sem filtros)', formats['subtitle'])
+        # current_row += 2
+        #
+        # if all_adsets_df is not None and not all_adsets_df.empty:
+        #     current_row = self._write_consolidated_table(
+        #         worksheet, all_adsets_df, formats, current_row,
+        #         label='Adsets (Todos)'
+        #     )
+        # else:
+        #     worksheet.write(current_row, 0, 'Dados indisponíveis', formats['text'])
+        #     current_row += 1
+        #
+        # current_row += 2  # Espaçamento
 
-        if all_adsets_df is not None and not all_adsets_df.empty:
-            current_row = self._write_consolidated_table(
-                worksheet, all_adsets_df, formats, current_row,
-                label='Adsets (Todos)'
-            )
-        else:
-            worksheet.write(current_row, 0, 'Dados indisponíveis', formats['text'])
-            current_row += 1
-
-        current_row += 2  # Espaçamento
-
-        # TABELA 3: Comparação por Adsets Matched Pairs
+        # TABELA 2: Comparação por Adsets Matched Pairs (renumerada de 3 para 2)
         # Importar lista de matched adsets para exibir no título
         from src.validation.fair_campaign_comparison import MATCHED_ADSETS
         matched_adsets_list = ', '.join(MATCHED_ADSETS)
@@ -995,6 +1001,14 @@ class ValidationReportGenerator:
         aggregated['Taxa de conversão'] = (aggregated['Vendas'] / aggregated['Leads']) * 100
         aggregated['CPL'] = aggregated['Valor gasto'] / aggregated['Leads']
         aggregated['ROAS'] = aggregated['Receita Total'] / aggregated['Valor gasto']
+
+        # Calcular ROAS Ajustado TMB (se receita ajustada existir)
+        if 'Receita Ajustada TMB' in aggregated.columns:
+            aggregated['ROAS Ajustado TMB'] = aggregated['Receita Ajustada TMB'] / aggregated['Valor gasto']
+
+            # Recalcular Margem Ajustada TMB após agregação (para garantir consistência)
+            if 'Margem Ajustada TMB' not in aggregated.columns:
+                aggregated['Margem Ajustada TMB'] = aggregated['Receita Ajustada TMB'] - aggregated['Valor gasto']
 
         # Substituir NaN/Inf por 0
         aggregated = aggregated.fillna(0)
@@ -1465,6 +1479,31 @@ class ValidationReportGenerator:
             df_filtered['Margem de contribuição'] = df_filtered['margin']
             agg_dict['Margem de contribuição'] = 'sum'
 
+        # Mapear: Receita Ajustada TMB (se existir)
+        if 'total_revenue_adjusted' in df_filtered.columns:
+            df_filtered['Receita Ajustada TMB'] = df_filtered['total_revenue_adjusted']
+            agg_dict['Receita Ajustada TMB'] = 'sum'
+
+            # Calcular Margem Ajustada TMB
+            if 'spend' in df_filtered.columns:
+                df_filtered['Margem Ajustada TMB'] = df_filtered['total_revenue_adjusted'] - df_filtered['spend']
+                agg_dict['Margem Ajustada TMB'] = 'sum'
+        elif 'revenue_adjusted' in df_filtered.columns:
+            # Para adsets, a coluna é 'revenue_adjusted' ao invés de 'total_revenue_adjusted'
+            df_filtered['Receita Ajustada TMB'] = df_filtered['revenue_adjusted']
+            agg_dict['Receita Ajustada TMB'] = 'sum'
+
+            # Calcular Margem Ajustada TMB
+            if 'spend' in df_filtered.columns or 'Valor gasto' in df_filtered.columns:
+                spend_col = 'spend' if 'spend' in df_filtered.columns else 'Valor gasto'
+                df_filtered['Margem Ajustada TMB'] = df_filtered['revenue_adjusted'] - df_filtered[spend_col]
+                agg_dict['Margem Ajustada TMB'] = 'sum'
+        elif 'Receita Ajustada TMB' in df_filtered.columns:
+            # Já está no formato esperado
+            agg_dict['Receita Ajustada TMB'] = 'sum'
+            if 'Margem Ajustada TMB' in df_filtered.columns:
+                agg_dict['Margem Ajustada TMB'] = 'sum'
+
         if not agg_dict:
             worksheet.write(start_row, 0, 'Colunas necessárias não encontradas', formats['text'])
             return start_row + 1
@@ -1476,6 +1515,14 @@ class ValidationReportGenerator:
         aggregated['Taxa de conversão'] = (aggregated['Vendas'] / aggregated['Leads']) * 100
         aggregated['CPL'] = aggregated['Valor gasto'] / aggregated['Leads']
         aggregated['ROAS'] = aggregated['Receita Total'] / aggregated['Valor gasto']
+
+        # Calcular ROAS Ajustado TMB (se receita ajustada existir)
+        if 'Receita Ajustada TMB' in aggregated.columns:
+            aggregated['ROAS Ajustado TMB'] = aggregated['Receita Ajustada TMB'] / aggregated['Valor gasto']
+
+            # Recalcular Margem Ajustada TMB após agregação (para garantir consistência)
+            if 'Margem Ajustada TMB' not in aggregated.columns:
+                aggregated['Margem Ajustada TMB'] = aggregated['Receita Ajustada TMB'] - aggregated['Valor gasto']
 
         # Substituir NaN/Inf por 0
         aggregated = aggregated.fillna(0)
@@ -1518,6 +1565,22 @@ class ValidationReportGenerator:
             ('Margem Contribuição', ml_row['Margem de contribuição'], ctrl_row['Margem de contribuição'], 'currency'),
         ]
 
+        # Adicionar métricas ajustadas TMB se existirem
+        if 'Receita Ajustada TMB' in ml_row and 'Receita Ajustada TMB' in ctrl_row:
+            comparison_data.append(
+                ('Receita Ajustada TMB', ml_row['Receita Ajustada TMB'], ctrl_row['Receita Ajustada TMB'], 'currency')
+            )
+
+        if 'ROAS Ajustado TMB' in ml_row and 'ROAS Ajustado TMB' in ctrl_row:
+            comparison_data.append(
+                ('ROAS Ajustado TMB', ml_row['ROAS Ajustado TMB'], ctrl_row['ROAS Ajustado TMB'], 'decimal')
+            )
+
+        if 'Margem Ajustada TMB' in ml_row and 'Margem Ajustada TMB' in ctrl_row:
+            comparison_data.append(
+                ('Margem Ajustada TMB', ml_row['Margem Ajustada TMB'], ctrl_row['Margem Ajustada TMB'], 'currency')
+            )
+
         for metric, ml_value, ctrl_value, fmt_type in comparison_data:
             worksheet.write(row, 0, metric, formats['text'])
             worksheet.write(row, 1, ml_value, formats[fmt_type])
@@ -1532,19 +1595,33 @@ class ValidationReportGenerator:
                 worksheet.write(row, 3, '-', formats['text'])
             row += 1
 
-        # Vencedor
+        # Vencedor - ROAS Nominal
         row += 1
         if ml_row['ROAS'] > ctrl_row['ROAS']:
             diff_pct = calc_diff_pct(ml_row['ROAS'], ctrl_row['ROAS']) * 100
-            winner_text = f"🏆 VENCEDOR: Eventos ML (ROAS {diff_pct:.1f}% maior)"
+            winner_text = f"🏆 VENCEDOR: Eventos ML (ROAS nominal {diff_pct:.1f}% maior)"
             worksheet.write(row, 0, winner_text, formats['header_green'])
         elif ctrl_row['ROAS'] > ml_row['ROAS']:
             diff_pct = abs(calc_diff_pct(ml_row['ROAS'], ctrl_row['ROAS'])) * 100
-            winner_text = f"⚠️ VENCEDOR: Controle (ROAS {diff_pct:.1f}% maior)"
+            winner_text = f"⚠️ VENCEDOR: Controle (ROAS nominal {diff_pct:.1f}% maior)"
             worksheet.write(row, 0, winner_text, formats['header_red'])
         else:
-            worksheet.write(row, 0, "➖ Empate técnico em ROAS", formats['header'])
+            worksheet.write(row, 0, "➖ Empate técnico em ROAS nominal", formats['header'])
         row += 1
+
+        # Vencedor - ROAS Ajustado TMB (se disponível)
+        if 'ROAS Ajustado TMB' in ml_row and 'ROAS Ajustado TMB' in ctrl_row:
+            if ml_row['ROAS Ajustado TMB'] > ctrl_row['ROAS Ajustado TMB']:
+                diff_pct = calc_diff_pct(ml_row['ROAS Ajustado TMB'], ctrl_row['ROAS Ajustado TMB']) * 100
+                winner_text = f"🏆 VENCEDOR: Eventos ML (ROAS Ajustado TMB {diff_pct:.1f}% maior)"
+                worksheet.write(row, 0, winner_text, formats['header_green'])
+            elif ctrl_row['ROAS Ajustado TMB'] > ml_row['ROAS Ajustado TMB']:
+                diff_pct = abs(calc_diff_pct(ml_row['ROAS Ajustado TMB'], ctrl_row['ROAS Ajustado TMB'])) * 100
+                winner_text = f"⚠️ VENCEDOR: Controle (ROAS Ajustado TMB {diff_pct:.1f}% maior)"
+                worksheet.write(row, 0, winner_text, formats['header_red'])
+            else:
+                worksheet.write(row, 0, "➖ Empate técnico em ROAS Ajustado TMB", formats['header'])
+            row += 1
 
         return row
 

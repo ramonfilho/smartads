@@ -22,6 +22,13 @@ from api.meta_integration import MetaAdsIntegration
 from api.economic_metrics import calculate_cpl, calculate_contribution_margin
 from api.business_config import CONVERSION_RATES, PRODUCT_VALUE
 
+# Importar módulo de ajuste TMB
+from src.validation.tmb_adjuster import (
+    add_adjusted_metrics_to_campaign_stats,
+    calculate_overall_adjusted_stats,
+    FATOR_TMB_MEDIO
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -811,6 +818,14 @@ class CampaignMetricsCalculator:
 
         logger.info(f"   ✅ Métricas calculadas para {len(campaign_stats)} campanhas")
 
+        # Adicionar métricas ajustadas por TMB
+        logger.info(f"   📊 Calculando métricas ajustadas por TMB...")
+        campaign_stats = add_adjusted_metrics_to_campaign_stats(
+            campaign_stats,
+            matched_df,
+            fator=FATOR_TMB_MEDIO
+        )
+
         return campaign_stats
 
     def _normalize_campaign_name(self, campaign_name: str) -> str:
@@ -1421,6 +1436,9 @@ def compare_ml_vs_non_ml(campaign_metrics: pd.DataFrame) -> Dict:
                 'cpl': 0,
                 'roas': 0,
                 'margin': 0,
+                'revenue_adjusted': 0,
+                'roas_adjusted': 0,
+                'margin_adjusted': 0,
             }
 
         total_leads = df['leads'].sum()
@@ -1433,6 +1451,11 @@ def compare_ml_vs_non_ml(campaign_metrics: pd.DataFrame) -> Dict:
         roas = (total_revenue / total_spend) if total_spend > 0 else 0
         margin = total_revenue - total_spend
 
+        # Métricas ajustadas por TMB (se disponíveis)
+        total_revenue_adjusted = df['total_revenue_adjusted'].sum() if 'total_revenue_adjusted' in df.columns else total_revenue
+        roas_adjusted = (total_revenue_adjusted / total_spend) if total_spend > 0 else 0
+        margin_adjusted = total_revenue_adjusted - total_spend
+
         return {
             'leads': int(total_leads),
             'conversions': int(total_conversions),
@@ -1442,6 +1465,9 @@ def compare_ml_vs_non_ml(campaign_metrics: pd.DataFrame) -> Dict:
             'cpl': round(cpl, 2),
             'roas': round(roas, 2),
             'margin': round(margin, 2),
+            'revenue_adjusted': round(total_revenue_adjusted, 2),
+            'roas_adjusted': round(roas_adjusted, 2),
+            'margin_adjusted': round(margin_adjusted, 2),
         }
 
     com_ml_agg = aggregate_metrics(com_ml)
@@ -1467,6 +1493,9 @@ def compare_ml_vs_non_ml(campaign_metrics: pd.DataFrame) -> Dict:
         'cpl_diff': calc_diff(com_ml_agg['cpl'], sem_ml_agg['cpl'], 'cpl'),
         'roas_diff': calc_diff(com_ml_agg['roas'], sem_ml_agg['roas'], 'roas'),
         'margin_diff': calc_diff(com_ml_agg['margin'], sem_ml_agg['margin'], 'margin'),
+        'revenue_adjusted_diff': calc_diff(com_ml_agg['revenue_adjusted'], sem_ml_agg['revenue_adjusted'], 'revenue_adjusted'),
+        'roas_adjusted_diff': calc_diff(com_ml_agg['roas_adjusted'], sem_ml_agg['roas_adjusted'], 'roas_adjusted'),
+        'margin_adjusted_diff': calc_diff(com_ml_agg['margin_adjusted'], sem_ml_agg['margin_adjusted'], 'margin_adjusted'),
     }
 
     logger.info(f"   COM_ML: {com_ml_agg['leads']} leads, {com_ml_agg['conversions']} conversões, ROAS {com_ml_agg['roas']:.2f}x")

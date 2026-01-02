@@ -266,25 +266,28 @@ def print_summary_table(ml_comparison: dict):
         ['Conversões', f"{com_ml.get('conversions', 0):,}", f"{sem_ml.get('conversions', 0):,}"],
         ['Taxa Conversão', f"{com_ml.get('conversion_rate', 0):.2f}%", f"{sem_ml.get('conversion_rate', 0):.2f}%"],
         ['Receita Total', f"R$ {com_ml.get('revenue', 0):,.2f}", f"R$ {sem_ml.get('revenue', 0):,.2f}"],
+        ['Receita Ajustada TMB', f"R$ {com_ml.get('revenue_adjusted', 0):,.2f}", f"R$ {sem_ml.get('revenue_adjusted', 0):,.2f}"],
         ['Gasto Total', f"R$ {com_ml.get('spend', 0):,.2f}", f"R$ {sem_ml.get('spend', 0):,.2f}"],
         ['CPL', f"R$ {com_ml.get('cpl', 0):,.2f}", f"R$ {sem_ml.get('cpl', 0):,.2f}"],
-        ['ROAS', f"{com_ml.get('roas', 0):.2f}x", f"{sem_ml.get('roas', 0):.2f}x"],
+        ['ROAS (nominal)', f"{com_ml.get('roas', 0):.2f}x", f"{sem_ml.get('roas', 0):.2f}x"],
+        ['ROAS Ajustado TMB', f"{com_ml.get('roas_adjusted', 0):.2f}x", f"{sem_ml.get('roas_adjusted', 0):.2f}x"],
         ['Margem Contrib.', f"R$ {com_ml.get('margin', 0):,.2f}", f"R$ {sem_ml.get('margin', 0):,.2f}"],
+        ['Margem Ajustada TMB', f"R$ {com_ml.get('margin_adjusted', 0):,.2f}", f"R$ {sem_ml.get('margin_adjusted', 0):,.2f}"],
     ]
 
     headers = ['Métrica', 'COM ML', 'SEM ML']
     print(tabulate(data, headers=headers, tablefmt='grid'), flush=True)
 
-    # Mostrar vencedor
+    # Mostrar vencedor (usando ROAS ajustado TMB)
     print(flush=True)
-    if com_ml.get('roas', 0) > sem_ml.get('roas', 0):
-        improvement = diff.get('roas_diff', 0)
-        print(f"🏆 VENCEDOR: COM ML (ROAS {improvement:.1f}% maior)", flush=True)
-    elif sem_ml.get('roas', 0) > com_ml.get('roas', 0):
-        decline = abs(diff.get('roas_diff', 0))
-        print(f"⚠️ VENCEDOR: SEM ML (ROAS {decline:.1f}% maior)", flush=True)
+    if com_ml.get('roas_adjusted', 0) > sem_ml.get('roas_adjusted', 0):
+        improvement = diff.get('roas_adjusted_diff', 0)
+        print(f"🏆 VENCEDOR: COM ML (ROAS Ajustado TMB {improvement:.1f}% maior)", flush=True)
+    elif sem_ml.get('roas_adjusted', 0) > com_ml.get('roas_adjusted', 0):
+        decline = abs(diff.get('roas_adjusted_diff', 0))
+        print(f"⚠️ VENCEDOR: SEM ML (ROAS Ajustado TMB {decline:.1f}% maior)", flush=True)
     else:
-        print("➖ Empate técnico em ROAS", flush=True)
+        print("➖ Empate técnico em ROAS Ajustado TMB", flush=True)
 
 
 def print_decile_table(decile_metrics):
